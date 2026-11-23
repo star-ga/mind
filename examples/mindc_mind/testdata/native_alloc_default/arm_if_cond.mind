@@ -1,0 +1,15 @@
+// A free under a if condition inside a while loop, 1,100 x 1 MB: a bump arena (1 GiB) overflows, so the image must reclaim. Exit status 33.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, i);
+        acc = acc + __mind_load_i64(p) - i;
+        if __mind_free(p) == 1 {
+            acc = acc + 1;
+        }
+        i = i + 1;
+    }
+    return acc + 33;
+}

@@ -207,18 +207,27 @@ fn the_os_module_holds_three_straight_line_wrappers() {
         3,
         "every wrapper is public and there is no other function"
     );
-    // The extern block is the one std.cpu_affinity had, byte for byte.
+    // The extern block: the two affinity calls take the mask as the C pointer
+    // (`const cpu_set_t *` to set, `cpu_set_t *` to get), the same forms as
+    // std.iouring declares (the std manifest lint pins that agreement), and the
+    // errno cell reader.
     for decl in [
-        "unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;",
-        "unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;",
+        "unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: *const u8) -> i32;",
+        "unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: *mut u8) -> i32;",
         "unsafe fn __errno_location() -> *mut i32;",
     ] {
         assert!(code.contains(decl), "missing extern `{decl}`");
     }
     // Each wrapper reaches its OS call, with pid 0, and calls nothing else of the module.
     let wants: [(&str, &str); 3] = [
-        ("cpu_affinity_sys_set", "sched_setaffinity(0, "),
-        ("cpu_affinity_sys_get", "sched_getaffinity(0, "),
+        (
+            "cpu_affinity_sys_set",
+            "sched_setaffinity(0, size, mask as *const u8)",
+        ),
+        (
+            "cpu_affinity_sys_get",
+            "sched_getaffinity(0, size, mask as *mut u8)",
+        ),
         ("cpu_affinity_sys_errno", "__errno_location()"),
     ];
     for ((name, body), (want_name, call)) in fns.iter().zip(wants) {
@@ -263,5 +272,57 @@ fn the_effect_module_is_declared_and_only_the_two_decisions_are_protected() {
     assert!(
         read("std/os_evidence.mind").contains("#[protection]\npub fn cpu_affinity_pin_ev("),
         "cpu_affinity_pin_ev carries the marker"
+    );
+}
+
+/// `(found, bare)` for `text`: the number of `pub fn *_ev` verdict wrappers, and
+/// the names of those whose line before is not `#[protection]`.
+fn ev_wrappers_without_marker(text: &str) -> (usize, Vec<String>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let (mut found, mut bare) = (0, Vec::new());
+    for (i, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix("pub fn ") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.ends_with("_ev") {
+            continue;
+        }
+        found += 1;
+        if i == 0 || lines[i - 1] != "#[protection]" {
+            bare.push(name);
+        }
+    }
+    (found, bare)
+}
+
+/// Every `_ev` verdict wrapper of the std evidence modules carries
+/// `#[protection]`, the marker the arch gate scores. `procgroup_record_verdicts`
+/// writes records only and is not a wrapper. Positive control: the scan finds
+/// the six wrappers, and it flags a sample wrapper without the marker.
+#[test]
+fn every_std_evidence_verdict_wrapper_is_protected() {
+    let mut found = 0;
+    for rel in ["std/os_evidence.mind", "std/x509_evidence.mind"] {
+        let (n, bare) = ev_wrappers_without_marker(&read(rel));
+        assert!(
+            bare.is_empty(),
+            "{rel}: verdict wrappers without #[protection]: {bare:?}"
+        );
+        found += n;
+    }
+    assert_eq!(
+        found, 6,
+        "fs_read_dir_checked_ev, procgroup_spawn_ev, procgroup_wait_all_ev, \
+         cpu_affinity_pin_ev, x509_verify_server_chain_ev, x509_verify_server_chain_budget_ev"
+    );
+    let sample = "#[protection]\npub fn a_ev() {}\n\npub fn b_ev() {}\npub fn c() {}\n";
+    assert_eq!(
+        ev_wrappers_without_marker(sample),
+        (2, vec!["b_ev".to_string()]),
+        "the scan flags a wrapper without the marker"
     );
 }

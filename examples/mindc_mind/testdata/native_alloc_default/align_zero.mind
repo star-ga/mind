@@ -1,0 +1,15 @@
+// Blocks handed out by the reclaiming allocator are 8-byte aligned and read zero, also after a block was freed and written. Exit status 33.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < 300 {
+        let n: i64 = 24 + 8 * (i % 13);
+        let p: i64 = __mind_alloc(n);
+        bad = bad + p % 8 + __mind_load_i64(p) + __mind_load_i64(p + n - 8);
+        __mind_store_i64(p, 0 - 1);
+        __mind_store_i64(p + n - 8, 0 - 1);
+        let z: i64 = __mind_free(p);
+        i = i + 1;
+    }
+    return bad + 33;
+}

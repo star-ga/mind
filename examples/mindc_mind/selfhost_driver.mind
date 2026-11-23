@@ -428,9 +428,193 @@ pub fn nb_report_unsupported(src: i64, user_lo: i64, src_len: i64) -> i64 {
         let _w3: i64 = __mind_write(2, dst, n3, 0 - 1);
         return 3;
     }
+    let sw: i64 = nblr_string_word(src, user_lo, src_len);
+    if sw != 0 {
+        return nb_report_lane(sw, src, user_lo, src_len);
+    }
     let n4: i64 = nb_diag_generic(dst);
     let _w4: i64 = __mind_write(2, dst, n4, 0 - 1);
     return 3;
+}
+
+// Lane refusal report (lane frame): ONE line on fd 2 and the exit status 3, in the shape of the
+// host's lane refusals (the helpers are nb_lane_report.mind). `word` is a lane reason word
+// (nb_lane_keys.mind). The fn name comes from a flat pass over the composed source's tokens.
+pub fn nb_report_lane(word: i64, src: i64, user_lo: i64, src_len: i64) -> i64 {
+    let key: i64 = nb_lane_key_of(word);
+    let site: i64 = nb_lane_site_of(word);
+    let buf: i64 = __mind_alloc(512 + src_len);
+    let cap: i64 = nblr_cap();
+    let toks: Vec = lex_capped(src, src_len, cap);
+    let name_tok: i64 = nblr_fn_tok(toks, site, cap);
+    let name_lo: i64 = nblr_name_lo(toks, name_tok);
+    let name_len: i64 = nblr_name_len(toks, name_tok);
+    let p0: i64 = nb_lane_frag(buf, 0);
+    let p1: i64 = p0 + nblr_put_key(buf + p0, key);
+    let p2: i64 = p1 + nb_lane_frag(buf + p1, 1);
+    let p3: i64 = p2 + nblr_put_fn(buf + p2, src, name_lo, name_len);
+    let p4: i64 = p3 + nblr_put_pos(buf + p3, src, user_lo, src_len, site);
+    let p5: i64 = p4 + nblr_put_tail(buf + p4, src, src_len, key, site);
+    let _w: i64 = __mind_write(2, buf, p5, 0 - 1);
+    return 3;
+}
+
+// The stage's token budget: the smaller of the stack and arena caps (the stage's own rule).
+pub fn nblr_cap() -> i64 {
+    let scap: i64 = nb_stack_tok_cap();
+    let acap: i64 = nb_arena_tok_cap();
+    if acap < scap {
+        return acap;
+    }
+    scap
+}
+
+// The start and the length of the fn name token, 0 and 0 when there is none (no fn holds the
+// site, or the token after `fn` is not a name).
+pub fn nblr_name_lo(toks: Vec, name_tok: i64) -> i64 {
+    if name_tok < 0 {
+        return 0;
+    }
+    tok_lo(toks, name_tok)
+}
+
+pub fn nblr_name_len(toks: Vec, name_tok: i64) -> i64 {
+    if name_tok < 0 {
+        return 0;
+    }
+    if tok_kind(toks, name_tok) != tk_ident() {
+        return 0;
+    }
+    tok_hi(toks, name_tok) - tok_lo(toks, name_tok)
+}
+
+// The index of the name token of the top-level fn that holds the site, or -1 when the site lies in
+// no fn or the stream is over the budget cap: one flat pass over the tokens up to the site.
+pub fn nblr_fn_tok(toks: Vec, site: i64, cap: i64) -> i64 {
+    let n: i64 = tok_count(toks);
+    if n > cap {
+        return 0 - 1;
+    }
+    let mut depth: i64 = 0;
+    let mut name: i64 = 0 - 1;
+    let mut closed: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let k: i64 = tok_kind(toks, i);
+        let lo: i64 = tok_lo(toks, i);
+        let live: i64 = nblr_live(lo, site);
+        let isfn: i64 = nblr_is_fn(k, depth, live, tk_kw_fn());
+        name = nblr_pick(isfn, i + 1, name);
+        closed = nblr_closed(closed, isfn, k, tk_rbrace(), depth, live, lo, site);
+        depth = nblr_depth(depth, k, live, tk_lbrace(), tk_rbrace());
+        i = nblr_next(i, n, live);
+    }
+    nblr_pick(closed, 0 - 1, name)
+}
+
+// A refused string literal of the user region [user_lo, src_len), named: the lane word of
+// lane.string.raw_newline (40) or lane.string.escape (41) at the opening quote, else 0. It reads
+// only the failure path: the lexer's refusal of a literal (scan_string_end) leaves a tk_unsupported
+// token on its opening quote, and the first byte that made the scan fail names the kind. A stream
+// over the stage's token budget is left unnamed.
+pub fn nblr_string_word(src: i64, user_lo: i64, src_len: i64) -> i64 {
+    let cap: i64 = nblr_cap();
+    let toks: Vec = lex_capped(src + user_lo, src_len - user_lo, cap);
+    if tok_count(toks) > cap {
+        return 0;
+    }
+    let at: i64 = nblr_bad_quote(toks, src + user_lo);
+    if at < 0 {
+        return 0;
+    }
+    let key: i64 = nblr_str_fail(src, user_lo + at + 1, src_len);
+    if key == 0 {
+        return 0;
+    }
+    nb_lane_pack(key, user_lo + at)
+}
+
+pub fn nblr_first_quote(at: i64, toks: Vec, base: i64, i: i64) -> i64 {
+    if at >= 0 {
+        return at;
+    }
+    if tok_kind(toks, i) == tk_unsupported() {
+        if load_byte(base, tok_lo(toks, i)) == 34 {
+            return tok_lo(toks, i);
+        }
+    }
+    0 - 1
+}
+
+// The start (relative to base) of the first tk_unsupported token on a double quote, or -1.
+pub fn nblr_bad_quote(toks: Vec, base: i64) -> i64 {
+    let n: i64 = tok_count(toks);
+    let mut at: i64 = 0 - 1;
+    let mut i: i64 = 0;
+    while i < n {
+        at = nblr_first_quote(at, toks, base, i);
+        i = i + 1;
+    }
+    at
+}
+
+// The class of the byte at i inside a literal, as scan_str_leaf reads it: 3 closing quote,
+// 40 raw line feed, 41 an escape the lexer does not know (a backslash that ends the buffer too),
+// 1 a known escape pair, 0 any other byte.
+pub fn nblr_str_class(buf: i64, i: i64, hi: i64) -> i64 {
+    let b: i64 = load_byte(buf, i);
+    if b == 34 {
+        return 3;
+    }
+    if b == 92 {
+        if i + 1 >= hi {
+            return 41;
+        }
+        if string_escape_value(load_byte(buf, i + 1)) < 0 {
+            return 41;
+        }
+        return 1;
+    }
+    if b == 10 {
+        return 40;
+    }
+    0
+}
+
+pub fn nblr_str_keep(res: i64, c: i64) -> i64 {
+    if res != 0 {
+        return res;
+    }
+    if c == 40 {
+        return 40;
+    }
+    if c == 41 {
+        return 41;
+    }
+    0
+}
+
+pub fn nblr_str_adv(i: i64, hi: i64, c: i64) -> i64 {
+    if c == 1 {
+        return i + 2;
+    }
+    if c == 0 {
+        return i + 1;
+    }
+    hi
+}
+
+// 40, 41, or 0 (no failing byte before the closing quote: an unterminated literal) for the
+// literal whose content starts at p.
+pub fn nblr_str_fail(buf: i64, p: i64, hi: i64) -> i64 {
+    let mut res: i64 = 0;
+    let mut i: i64 = p;
+    while i < hi {
+        let c: i64 = nblr_str_class(buf, i, hi);
+        res = nblr_str_keep(res, c);
+        i = nblr_str_adv(i, hi, c);
+    }
+    res
 }
 
 // Native layout v2 (bounded / explicit memory profile). When the stdin image
@@ -495,6 +679,9 @@ pub fn nb_compile_image(user_lo: i64, src_len: i64) -> i64 {
     if __mind_load_i64(nb_layout_cell() + 40) == 2 {
         return nb_report_arena();
     }
+    if __mind_load_i64(nb_layout_cell() + 40) >= nb_lane_floor() {
+        return nb_report_lane(__mind_load_i64(nb_layout_cell() + 40), src, user_lo, src_len);
+    }
     return nb_report_unsupported(src, user_lo, src_len);
 }
 
@@ -553,17 +740,41 @@ pub fn nb_zero_words(p: i64, n: i64) -> i64 {
     nb_zero_words(p + 8, n - 1)
 }
 
+// Lane frame: the mode word (cell word 12: 1 lane, the default; 2 self, after nb_lane_self_magic())
+// and the test word (cell word 13: the rule word nb_lane_rules_run returns, 0 unless the input starts
+// with nb_lane_hook_magic()). Each magic is read from the first 16 bytes and the next 16 (hook) or the
+// next 8 (self) are read in its place, so the order is: hook and its word, then self, then the header.
+pub fn nb_main_mode(lay: i64, hdr: i64) -> i64 {
+    __mind_store_i64(lay + 96, 1);
+    __mind_store_i64(lay + 104, 0);
+    if __mind_load_i64(hdr) == nb_lane_hook_magic() {
+        __mind_store_i64(lay + 104, __mind_load_i64(hdr + 8));
+        let _r: i64 = nb_read_fully(0, hdr, 16, 0);
+    }
+    if __mind_load_i64(hdr) == nb_lane_self_magic() {
+        __mind_store_i64(lay + 96, 2);
+        __mind_store_i64(hdr, __mind_load_i64(hdr + 8));
+        return nb_read_fully(0, hdr + 8, 8, 0);
+    }
+    0
+}
+
 pub fn main() -> i64 {
     // The layout cell is the FIRST allocation, so in a native run it sits at
     // nb_layout_cell() (the bump allocator hands out arena+16 first). It stays
     // zero (no magic) unless a v2 header publishes a validated layout.
     // Words 5..11 of the cell are the stage's scratch words (nb_xcell): zeroed,
-    // then tagged with nb_xcell_magic().
-    let lay: i64 = __mind_alloc(96);
+    // then tagged with nb_xcell_magic(). Words 12 and 13 are the lane frame's
+    // mode and test words (nb_main_mode).
+    let lay: i64 = __mind_alloc(112);
     let _z: i64 = nb_zero_words(lay + 40, 6);
     __mind_store_i64(lay + 88, nb_xcell_magic());
     let hdr: i64 = __mind_alloc(48);
     let _h: i64 = nb_read_fully(0, hdr, 16, 0);
+    if __mind_load_i64(hdr) == nb_lane_key_magic() {
+        return nb_lane_dump();
+    }
+    let _m: i64 = nb_main_mode(lay, hdr);
     if __mind_load_i64(hdr) == nb_layout_magic() {
         return nb_main_v2(lay, hdr);
     }

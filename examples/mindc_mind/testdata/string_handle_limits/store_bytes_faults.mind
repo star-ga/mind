@@ -1,0 +1,8 @@
+fn poke(s: String) -> i64 {
+    __mind_store_i8(s.addr, 66);
+    return 0;
+}
+
+fn main() -> i64 {
+    return poke("x");
+}

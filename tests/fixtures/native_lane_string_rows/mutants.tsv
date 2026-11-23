@@ -1,0 +1,71 @@
+arm	clause	off	rows
+m_slot_check	S2	slot check off: any argument is accepted in a String slot	str_refused_computed_argument,edge_03,edge_19,s2_int_literal,s2_i64_param,s2_shadow_let,s2_call_result,s2_len_value,s2_addr_value,s2_spelling_not_binding,s6_argument,paren_int_refused
+m_binding_resolution	S2/S3	binding resolution off (spelling only, or shadow ignored): a name is a String parameter by spelling	s2_shadow_let,s2_spelling_not_binding,s3_shadow_addr,edge_30
+m_receiver_check	S3/S5	receiver check off: .len/.addr accepted on any receiver	edge_31,s3_nonstring_addr,s3_shadow_addr,s3_call_receiver,s6_receiver,edge_30
+m_print_check	S5	print check off: print(String) accepted	s5_print,s6_print
+m_const_check	S5	const check off: const of type String accepted	s5_const,s5_const_used
+m_s5_result	S5	result arm off	result,str_refused_result,edge_05,seed_result,s5_result,s6_result,s6_dead_refused
+m_s5_binding	S5	let-String arm off	binding,str_refused_annotated_let,edge_06,seed_binding_std,s5_binding,s6_binding
+m_s5_assign_name	S5	assign-to-name arm off	assign,str_refused_assign,edge_02,s5_assign_name,s6_assign
+m_s5_assign_field	S5	assign-to-field arm off	edge_29,s5_assign_len,s5_assign_addr
+m_s5_equality	S5	equality arm off	equality,str_refused_equality,edge_07,edge_08,edge_09,s5_eq,s5_neq,s6_equality,tie_first_eq_then_cap,dead_user_eq
+m_s5_other_operator	S5	binary-operator arm off (String + String, a < b): lane.binop.non_scalar	edge_24,edge_25,str_refused_string_sum,string_plus_string,s5_arith_add,s6_arith
+m_s5_unary_minus	S5	unary-minus arm off: lane.source.neg_type	edge_26,s5_neg
+m_s5_cast	S5	cast-of-String arm off: lane.source.cast	edge_22,str_cast,s5_cast_i64,s5_cast_ptr,cast_paren
+m_s5_condition_logical	S5	condition/logical arm off	edge_23,edge_27,edge_28,s5_cond_if,s5_logic_and,s6_cond
+m_s5_mix_i64	S5	mix-with-i64 arm off (String into an i64 slot, s + 1): lane.type.mismatch	edge_18,edge_20,s5_call_i64_slot,i64_slot_second
+m_s5_cap	S5	.cap arm off	cap,str_refused_cap,edge_01,s5_cap,tie_first_cap_then_eq,s6_dead_admitted_shape
+m_s5_field	S5	unknown-field arm off	edge_32,s5_field_unknown
+m_s5_use_extern_arg	S5	String-as-extern-argument arm off	s5_extern_arg,s6_extern_arg
+m_s5_use_return	S5	String-as-return-value arm off	s5_return_value,s6_return_value,edge_17,return_paren
+m_s5_literal	S5	literal-elsewhere arm off (source.string)	str_refused_let_literal,str_refused_literal_to_i64_parameter,edge_10,edge_12,edge_13,s5_literal_return,lit_field,s5_literal_left_equality,tie_literal_neq_left,tie_literal_receiver_arg
+m_s6_std_walk	S6/dead_fn	std walk off: refused shapes in std functions the image emits are not judged (needs the std carriers)	s6_std_reached_cap,s6_std_reached_eq
+m_s3_bounds_proof_back	S3	a per-read bounds proof reintroduced (lane.string.read_unbounded): admitted reads turn into refusals	read_unbounded,str_refused_unbounded_read,str_refused_unbounded_index,str_refused_empty_text_read,oob_load_i64,put_loop,s3_addr_plus_i,s3_copy_to_buffer
+m_s3_addr_use_back	S3	lane.string.addr_use reintroduced: .addr outside a load/write operand refused	addr_use,str_refused_store_via_let,str_refused_store_via_call,s3_addr_return,s3_addr_let,s3_addr_call,s3_extern_cast,s3_addr_mem
+m_s3_store_key_back	S3/S4	lane.string.store reintroduced: a store through .addr refused	store,str_refused_store,s4_store_literal,store_1,store_8
+m_s3_len_not_plain	S3	.len not a plain i64 (refused in arithmetic/condition)	s3_len_arith,str_len_reads,str_many_args,len_1
+m_field_ptr_cast	S3/ptr_cast	.addr / .len of a String parameter not a proven 64-bit source: the pointer cast refuses	fcast_addr_read,fcast_len_ptr,fcast_addr_arith,fcast_addr_extern
+m_cast_field_paren	S3/ptr_cast	parentheses around the receiver are opaque in the pointer-cast proof: (s).len is not a proven 64-bit source	paren_recv_ptr,paren_recv_ptr_nest,paren_recv_ptr_nest3,paren_recv_ptr_deep,paren_recv_ptr_ceiling,paren_recv_ptr_ceiling_bare
+m_cast_field_paren_one	S3/ptr_cast	one parenthesis unwrap in the pointer-cast proof: ((s)).len is not a proven 64-bit source	paren_recv_ptr_nest,paren_recv_ptr_nest3,paren_recv_ptr_deep,paren_recv_ptr_ceiling,paren_recv_ptr_ceiling_bare
+m_cast_field_paren_two	S3/ptr_cast	two parenthesis unwraps in the pointer-cast proof: a deeper receiver is not a proven 64-bit source	paren_recv_ptr_nest3,paren_recv_ptr_deep,paren_recv_ptr_ceiling,paren_recv_ptr_ceiling_bare
+m_cast_field_paren_fixed	S3/ptr_cast	a fixed count of parenthesis unwraps below the nesting ceiling of the running compiler in the pointer-cast proof (sixteen, or 18020): the deepest admitted receiver is not a proven 64-bit source	paren_recv_ptr_ceiling,paren_recv_ptr_ceiling_bare
+m_cast_field_paren_last	S3/ptr_cast	a fixed count of parenthesis unwraps from 18021 in the pointer-cast proof: a receiver at the nesting ceiling of the running compiler (18022 bounded, 208076 default profile) is not a proven 64-bit source	paren_recv_ptr_ceiling_bare
+m_s4_terminator	S4	hidden terminator reintroduced in the handle length or bytes	s4_nul_end,s4_empty,s4_each_escape,str_escape_lens,adm_3
+m_s4_literal_per_eval	S4/literal_once	literal handle built per evaluation again (arena stops)	lim_lit_over,loop_50m,loop_45000000
+m_r2_exact_name	exact_name	Named(_) typed as the word in place of the exact name String: string/Foo accepted	str_refused_lowercase_type,edge_15,edge_16
+m_uncalled_user_walked_off	S6/dead_fn	uncalled user function walked: arm off (a user function nothing calls is not judged)	s6_dead_refused,s6_dead_admitted_shape,dead_user_eq
+m_std_unreached_judged	S6/dead_fn	walk extended to std functions the image does not emit (a new refusal for an unreached std function; needs the std carriers)	s6_std_unreached_module,s6_std_unreached_fn
+m_parens_transparent	parens	parentheses transparent arm off: (s) and ("hi") are opaque nodes in a String slot (and in return)	argument,edge_04,edge_11,s2_paren_name,paren_literal,paren_name_double,return_paren,cast_paren
+m_let_infer	let_infer	unannotated let of a String value accepted (or keyed lane.source.binding_type)	edge_14,s5_unannotated_let,let_infer_mut,let_infer_in_loop
+m_intrinsic_arg	operand	String as intrinsic argument accepted	edge_21,str_to_free,intrinsic_store
+m_index_base	operand	String as index base accepted	str_index,index_var
+m_method_receiver	operand	String as method receiver accepted	method_len,method_addr
+m_raw_newline	raw_newline	raw line feed in a literal accepted	raw_newline,str_refused_raw_newline,rawlf_raw,rawlf_let
+m_escape_unknown	escape	unknown escape accepted or refused without the key lane.string.escape	unicode_escape,hex_escape,escape_unknown
+m_tie_first_position	tie	tie rule off: the walk reports by construct priority (or the last position) instead of the smallest source position, inner node at equal position	tie_first_cap_then_eq,tie_first_eq_then_cap,s5_literal_left_equality,tie_literal_neq_left
+m_cast_key	ptr_cast/ops	cast of the String reported as lane.string.use (extern argument) instead of lane.source.cast	s5_cast_ptr,cast_paren
+m_s3_addr_cast_extern	S3/ptr_cast	.addr cast to an extern pointer refused	addr_cast_admit,s3_extern_cast
+m_std_const_region	S6	user-region test of the item walk off: a std const is judged, so one std const that holds a string refuses every program	std_const_lit_unread,std_const_string_unread
+# Exact source edit of an arm, so the mutant can be made again. old is replaced by new, once, in file.
+# m_binding_resolution: spelling only. In nbls_ident_is_str, drop the shadow test and resolve the name
+# against every kept fn, not only the current one: a name is a String parameter by its spelling.
+# m_receiver_check: in nbls_v_field, the test `> 0` becomes `> 99`.
+# m_s5_field: the final `22` of nbls_field_key becomes `0`.
+# m_tie_first_position: in nbls_note, a later site replaces an earlier one (the first-site test keeps a larger site).
+# The equal-site rows tie_add_assign_i64 and tie_add_assign_str are outside this arm: `if depth <` becomes `if depth >`.
+# m_s6_std_walk: in nbls_entry, the zone-1 test that calls nbls_fn is replaced by `return 0`.
+# m_std_const_region: in nbls_entry, the first test of zone 0 (an item below user_lo returns 0) is deleted.
+# else branch: in nbls_v_if, the push of both branches becomes a push of the then branch only.
+# while condition: the while arm pushes only the body.
+# let scope: in nbls_v_block, env_after runs before the push of the statement.
+# comment skip: the `//` block of nbls_lex_step is deleted.
+# char skip: both `return p + 4` and `return p + 3` in the char arm of nbls_lex_step become `return p + 1`.
+# ident site: nbls_v_ident notes ast_span_hi instead of ast_span_lo.
+# trailing comma: the comma skip in nbls_ret_lo is deleted.
+# result-head comment: the `//` arm of nbls_gap_step is deleted.
+# list children: the struct-literal, array-literal, enum-constructor, addr-of, deref and deref-assign arms return 0.
+# exact type length: the `!= 6` test in nbls_ty_is_string is deleted.
+# exact result name: the nbls_idchar_at test in nbls_ret_pos is deleted.
+# cast field parentheses: in the field arm of nb_ptrc_src_w64, strip_parens(ast_child0(node)) becomes ast_child0(node).
+# cast field one parenthesis: in that same arm, strip_parens(ast_child0(node)) becomes one ast_paren unwrap.
+# cast field two parentheses: in that same arm, strip_parens(ast_child0(node)) becomes two ast_paren unwraps.

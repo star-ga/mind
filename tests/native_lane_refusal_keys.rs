@@ -14,7 +14,9 @@
 //! The ratchet reads every `"lane.<...>"` literal in the lane profile and the
 //! native bridge sources. A key with no row and no `UNREACHABLE` entry fails, and
 //! so does a row or entry whose key is gone from the source. A change that adds
-//! a key therefore lands with its row.
+//! a key therefore lands with its row. A key in `COMPILER_OWNED` is decided by
+//! the native compiler alone: the Rust source must not name it, and its row
+//! still holds the end-to-end build check.
 
 // The build rows write a POSIX shell shim (tests/harness_portability.rs).
 #![cfg(unix)]
@@ -44,7 +46,6 @@ const ROWS: &[Row] = &[
         "__mind_realloc(0, 0)",
         "__mind_realloc(0, 8)",
     ),
-    row("lane.alloc.free_in_loop", "__mind_free(p); ", ""),
     row("lane.binop.non_scalar", "h() + h()", "1 + 1"),
     row("lane.bool.width", "let b: bool = 1;", "let b: i64 = 1;"),
     row("lane.call.arity", "__mind_alloc()", "__mind_alloc(8)"),
@@ -85,28 +86,13 @@ const ROWS: &[Row] = &[
         "",
     ),
     row(
-        "lane.extern.result_type",
-        "extern \"C\" { fn close(fd: i32) -> u32; }",
-        "",
-    ),
-    row(
         "lane.extern.signature_mismatch",
         "extern \"C\" { fn close(fd: i64) -> i32; }",
         "",
     ),
     row(
-        "lane.extern.type",
-        "extern \"C\" { fn close(fd: f64) -> i32; }",
-        "",
-    ),
-    row(
         "lane.extern.unknown_symbol",
         "extern \"C\" { fn nosuchsymbol(x: i32) -> i32; }",
-        "",
-    ),
-    row(
-        "lane.extern.varargs",
-        "extern \"C\" { fn close(fd: i32, ...) -> i32; }",
         "",
     ),
     row("lane.source.array_element", "[x, 2]", "[1, 2]"),
@@ -154,7 +140,6 @@ const ROWS: &[Row] = &[
     row("lane.source.reference", "let r = &x; ", ""),
     row("lane.source.region", "region { let x: i64 = 1; } ", ""),
     row("lane.source.set", "let s = {1, 2}; ", ""),
-    row("lane.source.string", "\"hi\"", "1"),
     row("lane.source.struct", "struct Q { h: i64 } ", ""),
     row("lane.source.tensor", "let g = grad(1); ", ""),
     row("lane.source.top_level", "struct P { x: i64 }", ""),
@@ -293,6 +278,16 @@ const UNREACHABLE: &[(&str, &str)] = &[
     ),
 ];
 
+/// Keys the native compiler names and the Rust host does not: the host types an
+/// `extern "C"` declaration by its ABI classes and judges no extern signature
+/// (calling convention, arity, widths); the compiler's rows decide. Each key keeps
+/// its fixture row, whose build check passes only under a compiler that names the key.
+const COMPILER_OWNED: &[&str] = &[
+    "lane.extern.arity",
+    "lane.extern.callconv",
+    "lane.extern.signature_mismatch",
+];
+
 fn repo() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
@@ -379,9 +374,15 @@ fn every_lane_key_has_a_fixture_row_or_an_unreachable_entry() {
         if !tabled.insert(key) {
             errors.push(format!("`{key}` is tabled more than once"));
         }
-        if !keys.contains_key(key) {
+        let owned = COMPILER_OWNED.contains(&key);
+        if !owned && !keys.contains_key(key) {
             errors.push(format!(
                 "{kind} `{key}` names a key that is no longer in the source"
+            ));
+        }
+        if owned && keys.contains_key(key) {
+            errors.push(format!(
+                "{kind} `{key}` is compiler-owned but the Rust source names it"
             ));
         }
     }
@@ -426,8 +427,10 @@ fn every_lane_key_has_a_fixture_row_or_an_unreachable_entry() {
         }
     }
     println!(
-        "native_lane_refusal_keys: {} lane.* keys in source = {} fixture rows + {} unreachable",
+        "native_lane_refusal_keys: {} lane.* keys in source + {} compiler-owned = {} fixture rows \
+         + {} unreachable",
         keys.len(),
+        COMPILER_OWNED.len(),
         ROWS.len(),
         UNREACHABLE.len()
     );
@@ -436,7 +439,10 @@ fn every_lane_key_has_a_fixture_row_or_an_unreachable_entry() {
         "refusal-key ratchet:\n{}",
         errors.join("\n")
     );
-    assert_eq!(keys.len(), ROWS.len() + UNREACHABLE.len());
+    assert_eq!(
+        keys.len() + COMPILER_OWNED.len(),
+        ROWS.len() + UNREACHABLE.len()
+    );
 }
 
 /// Runs the committed seed behind a private shim carrying the lane marker, as
@@ -451,7 +457,7 @@ mod build {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
-    const MARK: &[u8] = b"\x48\xb8nblane01";
+    const MARK: &[u8] = b"\x48\xb8nblane02";
     const EXTERN_MARK: &[u8] = b"\x48\xb8nbextc01";
 
     struct Built {

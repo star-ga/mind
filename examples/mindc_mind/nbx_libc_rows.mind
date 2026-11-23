@@ -1,0 +1,64 @@
+// Copyright 2026 STARGA Inc.
+// libc extern rows past the frozen nbx_row table (rows 89..98): path and
+// environment reads, the creat call, poll, and the socket-address family. Each
+// row is an nbx_put record bound through libc.so.6 at GLIBC_2.2.5, the same
+// binding as the rows before it; the part calls no main.mind fn (nb_part_dispatch).
+
+import nb_emit_core;
+
+// Capability mark: LIBC ROWS V3. This compiler binds the ten rows below. Compiled
+// natively this body is `movabs rax, imm64` whose little-endian immediate spells
+// "nblibc03"; an earlier seed does not carry it and refuses a program that
+// declares one of these rows (nbx_build finds no row: exit 3, no artifact).
+pub fn nb_cap_libc_rows_v3() -> i64 {
+    3688557369143091822
+}
+
+// Rows 89..98 of nbx_row, as nbx_put records with vlen 11 ("GLIBC_2.2.5").
+// Type codes are the nbx_code set: 1 i32, 3 i64, 4 *const u8, 5 *mut u8.
+// A result of code 4 (getenv) is admitted by nbx_row_sig since this block; every
+// other result code keeps its refusal there, and a declaration is bound only when
+// its whole signature equals the row (nbx_check_row).
+pub fn nbxl_row(i: i64, out: i64) -> i64 {
+    // readlink(*const u8, *mut u8, i64) -> i64
+    if i == 89 {
+        return nbx_put(out, 8, 7741240723757950322, 0, 0, 11, 3328827817059765319, 3485234, 50660355, 0, 3);
+    }
+    // bind(i32, *const u8, i32) -> i32
+    if i == 90 {
+        return nbx_put(out, 4, 1684957538, 0, 0, 11, 3328827817059765319, 3485234, 17039617, 0, 3);
+    }
+    // getsockname(i32, *mut u8, *mut u8) -> i32
+    if i == 91 {
+        return nbx_put(out, 11, 7956562497009640807, 6647137, 0, 11, 3328827817059765319, 3485234, 84214017, 0, 3);
+    }
+    // sendto(i32, *const u8, i64, i32, *const u8, i32) -> i64
+    if i == 92 {
+        return nbx_put(out, 6, 122545691846003, 0, 0, 11, 3328827817059765319, 3485234, 285877368783107, 0, 6);
+    }
+    // recvfrom(i32, *mut u8, i64, i32, *mut u8, *mut u8) -> i64
+    if i == 93 {
+        return nbx_put(out, 8, 7885647256947484018, 0, 0, 11, 3328827817059765319, 3485234, 1412876787319043, 0, 6);
+    }
+    // getenv(*const u8) -> *const u8
+    if i == 94 {
+        return nbx_put(out, 6, 130216520607079, 0, 0, 11, 3328827817059765319, 3485234, 1028, 0, 1);
+    }
+    // creat(*const u8, i32) -> i32
+    if i == 95 {
+        return nbx_put(out, 5, 499850244707, 0, 0, 11, 3328827817059765319, 3485234, 66561, 0, 2);
+    }
+    // poll(*mut u8, i64, i32) -> i32
+    if i == 96 {
+        return nbx_put(out, 4, 1819045744, 0, 0, 11, 3328827817059765319, 3485234, 16975105, 0, 3);
+    }
+    // listen(i32, i32) -> i32
+    if i == 97 {
+        return nbx_put(out, 6, 121382024472940, 0, 0, 11, 3328827817059765319, 3485234, 65793, 0, 2);
+    }
+    // getsockopt(i32, i32, i32, *mut u8, *mut u8) -> i32
+    if i == 98 {
+        return nbx_put(out, 10, 8028620091047568743, 29808, 0, 11, 3328827817059765319, 3485234, 5519049818369, 0, 5);
+    }
+    0
+}

@@ -1,5 +1,5 @@
 // Copyright 2026 STARGA Inc.
-// Epilogue register rows of the resident ymm bank (R-02e, kinds 94-99, ruling A-3
+// Epilogue register rows of the resident ymm bank (R-02e, kinds 94-99, added
 // 2026-11-09): six register-form (d, a, b) ops on literal ymm0..14, discard-only,
 // each ONE call into the shared verified encoder (nb_x86_vex.mind nbv_op_rrr): no
 // prefix byte is pushed here. Operand shape, literal fences, the leaf walk and

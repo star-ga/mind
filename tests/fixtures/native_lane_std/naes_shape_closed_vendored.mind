@@ -1,7 +1,7 @@
-// A NAES-T1 unit shape: a closed, primitive image (no import, no string
+// An external unit shape: a closed, primitive image (no import, no string
 // literal) that vendors the fourteen std.sha256 private helpers as of
 // 8b12cbee, twelve of them identical to the seed's; `sha_compress_block` (two
-// arguments) and `sha_w_set` (the store as a statement, as NAES writes it)
+// arguments) and `sha_w_set` (the store as a statement, as that unit writes it)
 // diverge. It defines its own `toml_copy_bytes` (std/toml.mind has a private one
 // with another body) and reads a clock through scratch allocated once in
 // `main`. Omission drops the seed, so the vendored copies are the only

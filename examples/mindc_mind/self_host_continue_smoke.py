@@ -50,6 +50,7 @@ import pathlib
 import os
 import tempfile
 import sys
+from _selfhost_sources import start_child
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -70,7 +71,7 @@ def compile_elf(compiler: pathlib.Path, prog: str):
     std = std_blob()
     comb = std + prog.encode()
     img = struct.pack("<qq", len(std), len(comb)) + comb
-    r = subprocess.run([str(compiler)], input=img, stdout=subprocess.PIPE,
+    r = start_child([str(compiler)], img, stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, timeout=120)
     out = r.stdout
     if len(out) < 4 or out[:4] != b"\x7fELF":

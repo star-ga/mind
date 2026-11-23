@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""H2b exclusion positive controls (Ruling Q1.3(b), Schedule R7).
+"""H2b exclusion positive controls.
 
 For EVERY per-file `.gitignore` exclusion under /examples/*.mind this gate
-asserts the Q1.3(b) positive controls, and for the R7 caller rows it also
+asserts the positive controls of each exclusion, and for the caller rows it also
 asserts the external digest pin and the sealed-import note.
 
 Checks, per excluded path (ALL exclusions — not only the catalogue):
@@ -18,7 +18,7 @@ Checks, additionally per catalogue entry (the 18 pinned rows):
 
   4. the file's bytes match the committed external digest;
   5. the reason cites this pin site;
-  6. caller rows name the sealed module they import (R7).
+  6. caller rows name the sealed module they import.
 
 Structural floors (the empty / truncated catalogue must NOT pass):
 
@@ -106,7 +106,7 @@ EXPECTED_EXCLUSION_FLOOR = 116
 EXPECTED_CATALOGUE_SIZE = 18
 EXPECTED_CALLER_SIZE = 16
 
-# Reason-class vocabulary of Ruling Q1.2.
+# Reason-class vocabulary of the .gitignore exclusion lines.
 REASON_CLASSES = ("refusal-fixture", "digest-pinned-gate-input", "syntax-under-test")
 
 # Minimal assertion machinery a real owning gate must carry. A stub that
@@ -270,7 +270,7 @@ def main() -> int:
     else:
         asserted += _passed("EXCLUSION_FLOOR", str(len(reasons)))
 
-    # --- per-exclusion Q1.3(b) positive controls (ALL exclusions) ----------
+    # --- per-exclusion positive controls (ALL exclusions) ----------------
     for path, reason in sorted(reasons.items()):
         tracked = True
         if args.mutant_track and path == sorted(reasons)[0]:
@@ -298,7 +298,7 @@ def main() -> int:
             asserted += _passed("ANATOMY", path)
 
         # Strict reason-class / gate / owning-gate checks apply to the H2b
-        # per-file exclusion block (the 107 rows carrying a Q1.2 reason class).
+        # per-file exclusion block (the 107 rows carrying a reason class).
         # Pre-H2b exclusions (aspirational examples, etc.) predate that
         # vocabulary and are covered by the tracking + ANATOMY controls above.
         cls = reason_class(reason)

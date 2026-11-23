@@ -3,6 +3,7 @@
 
 import argparse, csv, hashlib, json, os, re, resource, shutil, struct, subprocess, sys
 from pathlib import Path
+from _selfhost_sources import start_child
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -366,6 +367,11 @@ def mutation_plans(product):
     return plans
 
 
+def _row_fns(lib, ref, name):
+    """The fixture fn t_<name> of a built library and its C reference ref_<name>, by the name of an ABI row."""
+    return getattr(lib, "t_" + name), getattr(ref, "ref_" + name)
+
+
 def abi_rows(a):
     """extern "C" ABI rows: the MLIR-route build of each fixture against gcc
     callees; refusal rows need their E-code. `selfhost` stays for the
@@ -400,7 +406,9 @@ def abi_rows(a):
             out.unlink()
         q = direct_compile(d / r["fixture"], a.selfhost.resolve(), out)
         err = q.stderr.decode(errors="replace")
-        codes = sorted(set(re.findall(r"\bE20(?:39|40)\b", err)))
+        # The row states the form it asserts: a lane key (the compiler's own verdict) or the type checker's E-codes.
+        form = r"(?<![A-Za-z0-9_.])lane(?:\.[a-z0-9_]+)+(?![A-Za-z0-9_])" if r["selfhost"].startswith("refuse:lane.") else r"\bE20(?:39|40)\b"
+        codes = sorted(set(re.findall(form, err)))
         built = q.returncode == 0 and out.exists()
         got = "accept" if built and not codes else "refuse:" + (",".join(codes) or "-")
         return got == r["selfhost"], f"selfhost={got} want={r['selfhost']} rc={q.returncode} {err.splitlines()[:1]}"
@@ -413,7 +421,7 @@ def abi_rows(a):
             ok, detail = False, "rust=build-failed " + repr(libs[r["fixture"]])[:300]
         elif r["kind"] == "value":
             ty = {"i64": ctypes.c_int64, "f32": ctypes.c_float, "f64": ctypes.c_double}[r["ret"]]
-            f, g = getattr(libs[r["fixture"]], "t_" + r["name"]), getattr(c, "ref_" + r["name"])
+            f, g = _row_fns(libs[r["fixture"]], c, r["name"])
             f.restype = g.restype = ty
             got, want = f(), g()
             ok = bytes(ty(got)) == bytes(ty(want))
@@ -507,6 +515,7 @@ def main():
     inputs.update({str(a.seed): a.seed_sha256, str(a.mindc): a.mindc_sha256})
     sys.path.insert(0, str(HERE))
     from _stdlib_manifest import seed_modules
+    from _selfhost_sources import self_mode_image
     modules = seed_modules()
     prefix = b"\n".join(captured[str((ROOT / "std" / (n + ".mind")).resolve())]
                           for n in modules) + b"\n"
@@ -550,9 +559,9 @@ def main():
     intact()
 
     def run(name, args, data=None, cwd=None, timeout=600):
-        q = subprocess.run(
+        q = start_child(
             list(map(str, args)),
-            input=data,
+            data,
             capture_output=True,
             cwd=cwd,
             env=env,
@@ -599,7 +608,7 @@ def main():
             packet_sha256=sha(packet), producer_harness_sha256=old_inputs[runner],
             runner_harness_sha256=inputs[runner]), indent=2) + "\n")
     else:
-        q = run("native-build", [a.seed], packet)
+        q = run("native-build", [a.seed], self_mode_image(packet, a.seed))
         assert q.returncode == 0 and q.stdout.startswith(b"\x7fELF") and not q.stderr, (
             q.returncode,
             q.stderr[-1000:],
@@ -741,7 +750,7 @@ def main():
             head[5] = len(altered)
             mutant_packet = struct.pack("<6q", *head) + altered
             (e / (name + ".build.packet")).write_bytes(mutant_packet)
-            q = run(name + "-build", [a.seed], mutant_packet)
+            q = run(name + "-build", [a.seed], self_mode_image(mutant_packet, a.seed))
             assert (
                 q.returncode == 0
                 and q.stderr == b""

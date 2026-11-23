@@ -506,6 +506,11 @@ def _st_check_pair_base(failures: list[str]) -> None:
                rc == 4 and base is None and not stubbed and miss in out and empty not in out, f"rc={rc}\n{out}")
 
 
+def _code_strings(fn) -> list[str]:
+    """The string constants of the code of `fn`, for a self-test row that reads what a fn names."""
+    return [c for c in fn.__code__.co_consts if isinstance(c, str)]
+
+
 def self_test() -> int:
     """Prove the pair contract. Exit 0 when every case holds, else 1.
 
@@ -534,8 +539,7 @@ def self_test() -> int:
     _st_report(failures, "the pair script asks for a core and names a noisy host",
            "pick-core" in shell and "noisy-line" in shell and "exit 2" in shell)
     _st_report(failures, "the pair module reads the SMT sibling list",
-           any("thread_siblings_list" in c for c in _siblings.__code__.co_consts
-               if isinstance(c, str)))
+           any("thread_siblings_list" in c for c in _code_strings(_siblings)))
     _st_report(failures, "the fail bound is still 3 percent",
            math.isclose(math.log(1.03), PAIR_FAIL_BOUND))
     _st_report(failures, "the noisy width is still 12 percent",

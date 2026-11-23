@@ -36,7 +36,7 @@ fi
 # legs — a maintainer who still has .git/hooks/pre-commit symlinked at this file
 # runs exactly the same code.
 #
-# ANATOMY.md is regenerated on main only (architecture ruling 17). It is a
+# ANATOMY.md is regenerated on main only. It is a
 # committed, generated file that every landing changes, so a PR branch that also
 # regenerated it conflicted with main on the next landing, and GitHub starts no
 # pull_request workflow on a conflicting PR. The refresh therefore runs when
@@ -63,8 +63,9 @@ set -euo pipefail
 # per-file check flagged an edition-2024 crate + reformatted an unrelated comment,
 # blocking a `cargo fmt --check`-clean commit). Correctness > the theoretical
 # "undeclared file" gap. Only run when Rust is staged; parse+compare, no build.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
 if command -v cargo >/dev/null 2>&1 \
-   && git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
+   && printf '%s\n' "$staged" | grep '\.rs$' >/dev/null; then
   if ! cargo fmt --check >/dev/null 2>&1; then
     echo "pre-commit: rustfmt drift (cargo fmt --check fails the CI Format Check)." >&2
     echo "  run 'cargo fmt', then re-stage." >&2

@@ -19,10 +19,13 @@
 
 mod native_lane_extern_support;
 
-use libmind::ir::native_lane_profile::{LaneSeed, profile_lane_admits_seeded};
+use libmind::ir::native_lane_profile::{
+    LaneSeed, profile_lane_admits_seeded, profile_lane_admits_source,
+};
 use native_lane_extern_support::{
     CLOSE_EXTERN, Case, FIXED_SIGNATURE_CORPUS, FSTAT_EXTERN, MINDC, NET_ROWS, U32_CLOSE_RANGE,
-    WIDE_ROWS, build_apart, compiler_library, mint_library, repo, run, self_host_refusal,
+    WIDE_ROWS, build_apart, builds_apart, compiler_library, decl_key_at, mint_library, repo, run,
+    self_host_refusal,
 };
 use std::collections::BTreeSet;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -203,9 +206,13 @@ fn a_vendored_seed_helper_keeps_extern_calls_terminal() {
     let stderr = String::from_utf8_lossy(&build.stderr);
     assert_eq!(build.status.code(), Some(3), "{stderr}");
     assert!(!binary.exists(), "a refused build wrote an artifact");
+    // The compiler names the key and the position of the declaration name
+    // (line 3, column 8: `    fn open`), not the declaration's text.
     assert!(
-        stderr.contains("lane.extern.unknown_symbol") && stderr.contains("open"),
-        "the refusal must name the off-table declaration:\n{stderr}"
+        stderr.contains(
+            "(lane.extern.unknown_symbol) at line 3, column 8 of the composed user image"
+        ),
+        "the refusal must name the off-table declaration by key and position:\n{stderr}"
     );
 }
 
@@ -599,6 +606,22 @@ fn seed_binding_mutants_are_caught() {
     }
     assert_ne!(bytes(all, SEED_CALL_ONLY), bytes(&fresh, SEED_CALL_ONLY));
     assert!(bytes(&fresh, SEED_CLOSE).is_some());
+    // A second declaration of the seed's `close` with equal types is accepted;
+    // one that differs is refused by its key.
+    assert!(
+        bytes(&fresh, SAME_SYMBOL).is_some(),
+        "an identical declaration"
+    );
+    // The call matches the differing declaration, so only the compiler can refuse it.
+    let differs = SAME_SYMBOL.replacen("fn close(fd: i32)", "fn close(fd: i64)", 1);
+    let differs = differs.replacen("close((0 - 1) as i32)", "close(0 - 1)", 1);
+    assert_ne!(differs, SAME_SYMBOL);
+    let refusal = self_host_refusal(&fresh, &differs);
+    let refusal = refusal.expect("a differing second declaration is refused");
+    assert!(
+        refusal.contains("(lane.extern.signature_mismatch)"),
+        "{refusal}"
+    );
     let seed = std_blob();
     assert!(flat(no_edge.compiler(), &seed, USER_CALLS_SEED_DECLARATION).is_some());
     assert_eq!(
@@ -607,4 +630,161 @@ fn seed_binding_mutants_are_caught() {
     );
     assert!(flat(no_private.compiler(), &seed, &r15()).is_some());
     assert_eq!(flat(fresh.compiler(), &seed, &r15()), None);
+}
+
+/// The host types an extern declaration by its ABI classes and holds no table
+/// of symbols, so the native compiler alone decides which symbols exist and
+/// with which widths. Each program below is well typed for the host (it admits
+/// the declaration and its call), so only the compiler can refuse it: exit 3
+/// with the bridge's compiler-rejection line and no artifact. The control, the
+/// row's own declaration, builds and runs. The mutant is a compiler that no
+/// longer compares the declared signature word with its row: it builds the
+/// wrong-width declaration, so the refusal above is that comparison.
+#[test]
+fn the_compiler_refuses_the_externs_the_host_no_longer_names() {
+    let case = Case::new(true);
+    let close = |decl: &str| format!("extern \"C\" {{ {decl} }}");
+    let wrong_width = (close("fn close(fd: i64) -> i32;"), "close(0) as i64");
+    let refused = [
+        (
+            "unknown symbol",
+            close("fn nosuchsymbol(x: i32) -> i32;"),
+            "nosuchsymbol(0 as i32) as i64",
+        ),
+        (
+            "unknown symbol, never called",
+            close("fn nosuchsymbol(x: i32) -> i32;"),
+            "7",
+        ),
+        (
+            "known symbol with one parameter too many",
+            close("fn close(fd: i32, extra: i32) -> i32;"),
+            "close(0 as i32, 0 as i32) as i64",
+        ),
+        (
+            "known symbol with one parameter too few",
+            close("fn close() -> i32;"),
+            "close() as i64",
+        ),
+        (
+            "known symbol with i64 where the row has i32",
+            wrong_width.0.clone(),
+            wrong_width.1,
+        ),
+        (
+            "known symbol with a wrong result width",
+            close("fn close(fd: i32) -> i64;"),
+            "close(0 as i32)",
+        ),
+        (
+            "known symbol declared twice with other widths",
+            format!(
+                "{}\n{}",
+                close("fn close(fd: i32) -> i32;"),
+                close("fn close(fd: i64) -> i32;")
+            ),
+            "close(0 as i32) as i64",
+        ),
+    ];
+    let mut built = Vec::new();
+    for (label, externs, call) in &refused {
+        let source = format!("{externs}\nfn main() -> i64 {{ return {call}; }}\n");
+        let ast = libmind::parser::parse(&source).expect(label);
+        assert_eq!(profile_lane_admits_source(&ast, true), Ok(()), "{label}");
+        if self_host_refusal(&case, &source).is_none() {
+            built.push(*label);
+        }
+    }
+    assert!(
+        built.is_empty(),
+        "the compiler must refuse what the host admits: {built:?}"
+    );
+    let control = format!(
+        "{}\nfn main() -> i64 {{ let fd: i64 = 0 - 1; return (close(fd as i32) as i64) + 8; }}\n",
+        close("fn close(fd: i32) -> i32;")
+    );
+    let binary = case.builds(&control);
+    assert_eq!(
+        Command::new(binary).output().unwrap().status.code(),
+        Some(7)
+    );
+    let library = compiler_library();
+    let compare = "    if sig != __mind_load_i64(rec + 56) {\n";
+    assert_eq!(library.matches(compare).count(), 1, "{compare} moved");
+    let off = "    if sig != sig {\n";
+    let mutant = Case::with_compiler(mint_library(&library.replacen(compare, off, 1)));
+    let source = format!(
+        "{}\nfn main() -> i64 {{ return {}; }}\n",
+        wrong_width.0, wrong_width.1
+    );
+    assert!(builds_apart(&mutant, &source), "the width compare is gone");
+}
+
+/// An extern named like a compiler intrinsic. The host holds no list of names,
+/// so it admits the bare declaration and refuses only a call of it, as
+/// `lane.call.ambiguous`. The build still refuses the declaration itself before
+/// the compiler sees it: the bridge's closure admission names
+/// `closure.reserved_intrinsic_definition` (exit 3, no artifact).
+#[test]
+fn an_intrinsic_name_declared_as_an_extern_is_refused_before_the_compiler() {
+    let case = Case::new(true);
+    let source =
+        "extern \"C\" { fn __mind_alloc(x: i64) -> i64; }\nfn main() -> i64 { return 7; }\n";
+    let ast = libmind::parser::parse(source).unwrap();
+    assert_eq!(profile_lane_admits_source(&ast, true), Ok(()));
+    let (build, binary) = build_apart(&case, source);
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert_eq!(build.status.code(), Some(3), "{stderr}");
+    assert!(!binary.exists(), "a refused build wrote an artifact");
+    assert!(
+        stderr.contains("closure.reserved_intrinsic_definition") && stderr.contains("__mind_alloc"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("pure-MIND compiler rejected the program"),
+        "the compiler must not be the one that refused it:\n{stderr}"
+    );
+}
+
+/// A call of a table extern with an argument of another class passes the
+/// host and is refused by the compiler key at the call, in fn `main`, with the
+/// symbol. A call with another argument count stays with the host closure
+/// check, which names its key and the symbol; the compiler's key 65 for it is
+/// the direct-feed row family `xk_call_arity_*`.
+#[test]
+fn extern_call_arity_and_argument_class_refuse_by_name_at_the_call() {
+    let case = Case::new(true);
+    let call = |args: &str| {
+        format!(
+            "extern \"C\" {{ fn close(fd: i32) -> i32; }}\nfn main() -> i64 {{ close({args}); return 7; }}\n"
+        )
+    };
+    case.refuses_named(
+        &call("1.5"),
+        "f64 argument",
+        "(lane.extern.signature_mismatch) in fn `main` at line 2, column 20 of the composed user image. Symbol `close`.",
+    );
+    for (args, got) in [("", 0), ("1, 2", 2)] {
+        let source = call(args);
+        case.refuses_named(&source, args, "(closure.intrinsic_arity)");
+        case.refuses_named(
+            &source,
+            args,
+            &format!("`main` calls `close` with {got} arguments; expected 1"),
+        );
+    }
+    // An uncalled declaration whose types differ from its row is refused at its
+    // name, beside a called one that equals its row (no host key at the call).
+    let beside = "extern \"C\" { unsafe fn close(fd: i32) -> i32; unsafe fn fsync(fd: [i32; 4]) -> i32; }\nfn main() -> i64 { close(1); return 7; }\n";
+    case.refuses_named(
+        beside,
+        "uncalled fsync array",
+        &decl_key_at("signature_mismatch", 57, "fsync"),
+    );
+    native_lane_extern_support::extern_results_pass_through(&case);
+    let fixed =
+        "extern \"C\" { fn close(fd: i32) -> i32; }\nfn main() -> i64 { close(1); return 7; }\n";
+    let binary = case.builds(fixed);
+    let run = Command::new(&binary).output().unwrap();
+    assert_eq!(run.status.code(), Some(7), "{fixed}\n{run:?}");
 }

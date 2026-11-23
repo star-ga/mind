@@ -1,0 +1,80 @@
+// The seven older rows the same program family declares: socket, setsockopt,
+// inet_pton, connect, send, recv and close. A UDP socket sends a 10-byte
+// datagram to a bound peer through connect and send, and the peer reads it with
+// recv; every result is checked.
+extern "C" {
+    unsafe fn socket(domain: i32, kind: i32, protocol: i32) -> i32;
+    unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn send(sockfd: i32, buf: *const u8, len: i64, flags: i32) -> i64;
+    unsafe fn recv(sockfd: i32, buf: *mut u8, len: i64, flags: i32) -> i64;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32;
+    unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+    unsafe fn bind(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+}
+
+fn main() -> i64 {
+    let rx: i64 = socket(2 as i32, 2 as i32, 0 as i32) as i64;
+    let tx: i64 = socket(2 as i32, 2 as i32, 0 as i32) as i64;
+    if rx < 0 {
+        return 1;
+    }
+    if tx < 0 {
+        return 2;
+    }
+    let one: i64 = __mind_alloc(8);
+    __mind_store_i64(one, 1);
+    if setsockopt(tx as i32, 1 as i32, 2 as i32, one as *const u8, 4 as i32) as i64 != 0 {
+        return 3;
+    }
+    let text: i64 = __mind_alloc(16);
+    // "127.0.0.1"
+    __mind_store_i64(text, 3328210909095473713);
+    __mind_store_i64(text + 8, 49);
+    let sin: i64 = __mind_alloc(16);
+    __mind_store_i64(sin, 2);
+    __mind_store_i64(sin + 8, 0);
+    let dst: i64 = sin + 4;
+    if inet_pton(2 as i32, text as *const u8, dst as *mut u8) as i64 != 1 {
+        return 4;
+    }
+    if __mind_load_i32(sin + 4) != 16777343 {
+        return 5;
+    }
+    if bind(rx as i32, sin as *const u8, 16 as i32) as i64 != 0 {
+        return 6;
+    }
+    let dest: i64 = __mind_alloc(16);
+    let dlen: i64 = __mind_alloc(8);
+    __mind_store_i64(dest, 0);
+    __mind_store_i64(dest + 8, 0);
+    __mind_store_i64(dlen, 16);
+    if getsockname(rx as i32, dest as *mut u8, dlen as *mut u8) as i64 != 0 {
+        return 7;
+    }
+    if connect(tx as i32, dest as *const u8, 16 as i32) as i64 != 0 {
+        return 8;
+    }
+    let msg: i64 = __mind_alloc(16);
+    // "hello-udp!"
+    __mind_store_i64(msg, 7238741932651603304);
+    __mind_store_i64(msg + 8, 8560);
+    if send(tx as i32, msg as *const u8, 10, 0 as i32) != 10 {
+        return 9;
+    }
+    let buf: i64 = __mind_alloc(64);
+    if recv(rx as i32, buf as *mut u8, 64, 0 as i32) != 10 {
+        return 10;
+    }
+    if __mind_load_i64(buf) != 7238741932651603304 {
+        return 11;
+    }
+    if close(tx as i32) as i64 != 0 {
+        return 12;
+    }
+    if close(rx as i32) as i64 != 0 {
+        return 13;
+    }
+    return 42;
+}

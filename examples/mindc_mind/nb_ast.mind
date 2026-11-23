@@ -44,6 +44,211 @@ pub fn ast_str_lit() -> i64 {
     34
 }
 
+// ===== AST kind tags =====
+
+pub fn ast_int_lit() -> i64 {
+    1
+}
+pub fn ast_ident() -> i64 {
+    2
+}
+pub fn ast_binop() -> i64 {
+    3
+}
+pub fn ast_call() -> i64 {
+    4
+}
+pub fn ast_fn_def() -> i64 {
+    5
+}
+pub fn ast_let() -> i64 {
+    6
+}
+pub fn ast_use() -> i64 {
+    7
+}
+pub fn ast_return() -> i64 {
+    8
+}
+pub fn ast_param() -> i64 {
+    9
+}
+pub fn ast_block() -> i64 {
+    10
+}
+pub fn ast_program() -> i64 {
+    11
+}
+pub fn ast_paren() -> i64 {
+    12
+}
+pub fn ast_struct_def() -> i64 {
+    13
+}
+pub fn ast_neg() -> i64 {
+    14
+}
+pub fn ast_not() -> i64 {
+    15
+}
+pub fn ast_if() -> i64 {
+    16
+}
+pub fn ast_field() -> i64 {
+    17
+}
+pub fn ast_method() -> i64 {
+    18
+}
+// `Ident { f: e, ... }` struct-literal CONSTRUCTION expression. PARSE-ONLY for
+// now: the parser builds this node, but flatten_ast / flatten_ast_le reject it
+// (fail-closed, no byte emit yet — the desugar/lowering half lands separately).
+// Mirrors the Rust front-end's ast::Node::StructLit { name, fields }.
+pub fn ast_struct_lit() -> i64 {
+    19
+}
+// `while COND { BODY }` loop statement. child0 = cond expr, child1 = body block,
+// child2 = 0 (no else). Mirrors the Rust front-end's ast::Node::While.
+pub fn ast_while() -> i64 {
+    20
+}
+// `NAME = VALUE` assignment statement (loop-carried mutation). child0 = name
+// leaf (ast_ident), child2 = value expr. Mirrors ast::Node::Assign.
+pub fn ast_assign() -> i64 {
+    21
+}
+// `break;` / `continue;` loop-control statements (bare leaves). Mirror
+// ast::Node::Break / ast::Node::Continue.
+pub fn ast_break() -> i64 {
+    22
+}
+pub fn ast_continue() -> i64 {
+    23
+}
+// `<digits>.<digits>` float literal (the tk_float token, kind 36). PARSE-ONLY
+// for now: the parser builds this leaf and its [lo, hi) span captures the raw
+// float-literal source text (the bits are re-derived from that span at lower
+// time). flatten_ast / the emitters do not yet lower it — dtype threading
+// through nb_expr -> the SSE2 encoders is a separate follow-up construct.
+// Mirrors the Rust front-end's ast::Node::FloatLit.
+pub fn ast_float_lit() -> i64 {
+    24
+}
+// Typed scalar cast expression. child0 = operand; child1/child2 = target source
+// span; aux = target width (or the f64 sentinel). The retained target controls
+// canonical mic@3 conversion naming and native signed/unsigned semantics.
+pub fn ast_cast() -> i64 {
+    25
+}
+// UNSUPPORTED-construct POISON marker (fail-closed boundary). Produced by
+// parse_primary_ns's fallback for any token with NO real production (tuples,
+// refs `&x`/`*r`, enum paths, leftover tokens of a mis-parsed unsupported
+// statement) and by the lexer's tk_unsupported bytes (`[`, `"`, `'`, ...).
+// EVERY emitter refuses it: the native path (nb_expr/nb_stmt default arm)
+// poisons the per-fn lcell+80 flag so the whole compile returns a 0-byte
+// EmitState; the mic@3 flatten walkers already fail closed on any unknown kind.
+// A refused construct is an HONEST 0-byte "not implemented", never a running
+// ELF with a wrong value. main.mind's own source never produces this node
+// (supported-subset only), so the self-compile is byte-identical.
+pub fn ast_unsupported() -> i64 {
+    26
+}
+// ===== Fixed i64 arrays =====
+// `[e0, e1, ...]` array LITERAL: child1 = elems vec addr (one node ptr per
+// element, 8-byte stride), aux = element count. Lowers to the SAME alloc +
+// base+8*i store ABI the struct-literal arm uses (heap block of n*8 bytes,
+// the value is the base pointer). Elements are i64-only this pass; a FLOAT
+// element fail-closes (poison).
+pub fn ast_array_lit() -> i64 {
+    27
+}
+// `BASE[IDX]` index READ: child0 = base expr, child1 = index expr. Lowers to
+// __mind_load_i64(base + idx*8). Composes as a postfix (chains, binop
+// operands, call args, return values).
+pub fn ast_index() -> i64 {
+    28
+}
+// `BASE[IDX] = RHS ;` index WRITE statement: child0 = base expr, child1 =
+// index expr, child2 = rhs expr. Lowers to __mind_store_i64(base + idx*8, rhs).
+pub fn ast_index_assign() -> i64 {
+    29
+}
+// ===== Single-payload enum CONSTRUCTION (the Option/Result tier) =====
+// `Name::Variant(payload)` / `Name::Variant` of a SINGLE-PAYLOAD enum: child0
+// = synthetic tag int-lit (the variant's 0-based decl ordinal), child1 = the
+// payload expression node (0 when payload-free), aux = has_payload (1/0). The
+// span covers the whole source construction text (`O::Some(5)` / `O::None`).
+// The statement-level ect_desugar pass rewrites these into the oracle's
+// alloc/store record chain (lower.rs emit_boxed_enum_record). Any ctor that
+// SURVIVES that pass (nested/expression positions it does not rewrite) fails
+// closed downstream — flatten rejects the unknown kind (0 bytes, never a
+// wrong-value CONST_ARRAY, which is what the historical array-literal desugar
+// emitted once the const-array path moved to OP_CONST_ARRAY).
+pub fn ast_enum_ctor() -> i64 {
+    35
+}
+
+// ===== i64 references (native-ELF surface ONLY; every other surface refuses) =====
+// `&NAME` ADDRESS-OF expression: child0 = operand expr. SUPPORTED subset: the
+// operand is an ast_ident naming a full-width (64) scalar (non-struct,
+// non-array) INT binding — a `let` local OR a plain i64 PARAM (every param is
+// registered into the let-env by nb_register_struct_params with slot == its
+// SysV home slot, so `&param` lea's the live home slot and inherits the same
+// width/descriptor/dtype guards). Everything else (a literal, a narrow i8/i16/
+// i32 binding, a struct/array binding, a float slot) POISONS (fail-closed
+// 0-byte refusal, never a wrong-address lea). Soundness contract: nb_lower_fn
+// pre-scans the fn body into an address-taken registry (lcell+88); a DIRECT
+// assignment to an address-taken name refuses fn-wide (an assignment rebinds
+// the name to a fresh slot, detaching every held address); a bare ident
+// let/assign capture of an address-taken name COPIES the value instead of
+// aliasing the writable slot; `return &NAME` (explicit or implicit tail)
+// refuses (dangling frame address); an address-taking fn that can REACH ITSELF
+// through the call graph — direct OR mutual recursion, any cycle length —
+// refuses (reentrant frame-corruption guard, nb_cyc_self closure). The mic@3
+// flatten walkers and
+// the MLIR path refuse this kind via their fail-closed default arms.
+// main.mind's own source has no prefix `&`, so this node is never produced
+// during self-compile.
+// deferred: `&a[i]` / `&p.f` (element/field addresses) refuse — upgrade path:
+//   reuse the index-address computation before the lea.
+pub fn ast_addr_of() -> i64 {
+    30
+}
+// `*EXPR` DEREF READ expression: child0 = operand (an ast_ident resolving to a
+// let-bound slot or a param home slot holding an address). Lowers to
+// __mind_load_i64(slot) -> fresh dst slot. A non-ident operand (e.g. `**r`)
+// poisons (fail-closed).
+pub fn ast_deref() -> i64 {
+    31
+}
+// `*TARGET = VALUE ;` DEREF-WRITE statement: child0 = target operand (an
+// ast_ident holding an address), child2 = value expr. Lowers to
+// __mind_store_i64(target_slot, value_slot) — a MEMORY store through the held
+// address, not a name rebind: the pointed-to slot's next read (always a fresh
+// [rbp+disp] load in this model) observes the store, including in the CALLER
+// after a callee writes through a passed `&x` (the pass-by-ref write-back case).
+pub fn ast_deref_assign() -> i64 {
+    32
+}
+// `RECV.FIELD = VALUE ;` struct field-WRITE statement (native-ELF surface
+// ONLY; every other surface refuses via its fail-closed default arm): child0 =
+// the ast_field TARGET node (which carries the receiver expr at its child0 and
+// the field-name span at its child1/child2), child2 = value expr. Structs are
+// memory-backed (the binding's slot holds a base pointer; fields live at
+// 8*declared-index), so this lowers to __mind_store_i64(base + field_offset,
+// value) — a MEMORY store, not a name rebind: the next field READ (always a
+// fresh load through the base pointer) observes it in straight-line code,
+// across if branches and across while iterations WITHOUT the loop-carry
+// machinery. SUPPORTED subset: single-level `ident.field` on an i64 field of a
+// struct binding nb_field_offset can resolve. FAIL-CLOSED refusals (poison ->
+// 0-byte ELF, never a silent drop): nested paths (`p.q.x = v`, non-ident
+// receiver), an unbound/non-struct receiver, an unknown field, a FLOAT field,
+// a FLOAT rhs. main.mind's own source has no field-store statements, so this
+// node is never produced during self-compile.
+pub fn ast_field_assign() -> i64 {
+    33
+}
+
 // ===== Binop operator tags =====
 
 pub fn op_add() -> i64 {

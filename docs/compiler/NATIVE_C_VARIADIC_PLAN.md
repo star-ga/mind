@@ -330,9 +330,13 @@ The original review report SHA-256 is
 That review found a transport custody defect: the launcher invoked the live
 repository run.sh after enumerating a captured copy. The corrected trusted
 launcher requires `--seal-sha256`, verifies the owner-reviewed manifest and
-all captured file hashes, checks required runner/wrapper identity, and invokes
-only the captured `fixtures/run.sh`. Enumeration-only repository imports no
-longer run on the execution path. Use an owner-controlled capture directory
+all captured file hashes, checks required runner/wrapper identity, builds each
+captured packet with the native compiler through `start_child`, and invokes only
+the captured `fixtures/run.sh`. Enumeration-only repository imports no longer
+run on the execution path. The one repository import there is the stdin start
+helper `_selfhost_sources.py` (`bounded_native_builds`, with the build bounds
+above): enumeration captures it as `start_child.py`, and execution refuses a
+live module that differs from it. Use an owner-controlled capture directory
 with no concurrent writers. A malicious replacement launcher or concurrent
 filesystem attacker is outside this cooperative transport boundary.
 

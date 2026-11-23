@@ -7,6 +7,7 @@ Executable fixtures are MIND. Python only supplies bytes and observes processes.
 """
 import argparse, hashlib, json, os, resource, subprocess, time
 from pathlib import Path
+from _selfhost_sources import start_child
 HERE=Path(__file__).resolve().parent
 CASES=HERE/'native_stream_io_cases.json'
 def sha(b):return hashlib.sha256(b).hexdigest()
@@ -46,7 +47,7 @@ def main():
     receipts=[];results=[]
     def run(label,exe,data):
         start=time.monotonic();timeout=False
-        try:q=subprocess.run([str(exe)],input=data,capture_output=True,env=env,preexec_fn=limits,timeout=30);rc,so,se=q.returncode,q.stdout,q.stderr
+        try:q=start_child([str(exe)],data,capture_output=True,env=env,preexec_fn=limits,timeout=30);rc,so,se=q.returncode,q.stdout,q.stderr
         except subprocess.TimeoutExpired as ex:rc,so,se,timeout=None,ex.stdout or b'',ex.stderr or b'',True
         (e/(label+'.stdout')).write_bytes(so);(e/(label+'.stderr')).write_bytes(se)
         item=dict(label=label,executable=str(exe),stdin_sha256=sha(data),exit=rc,timeout=timeout,stdout_sha256=sha(so),stderr_sha256=sha(se),seconds=time.monotonic()-start)

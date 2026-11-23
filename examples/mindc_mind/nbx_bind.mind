@@ -132,9 +132,10 @@ pub fn nbs_zero(bytes: i64) -> i64 {
     p
 }
 
-// An empty registry over src[0..end) with room for 4096 rows.
+// An empty registry over src[0..end) with room for 4096 rows. Word 6 (the tolerant
+// flag of nb_cabi_build_mode) stays 0: a seed block is parsed strictly.
 pub fn nbs_registry(src: i64, end: i64) -> i64 {
-    let r: i64 = nbs_zero(48);
+    let r: i64 = nbs_zero(56);
     __mind_store_i64(r, src);
     __mind_store_i64(r + 8, end);
     __mind_store_i64(r + 16, __mind_alloc(4096 * 8));

@@ -1,0 +1,14 @@
+extern "C" {
+    unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let p: i64 = __mind_alloc(64);
+    __mind_store_i64(p, 0);
+    let r: i64 = listen(minus_one as i32, 1 as i32) as i64;
+    if r != minus_one {
+        return 1;
+    }
+    return 42;
+}

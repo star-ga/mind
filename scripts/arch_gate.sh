@@ -77,7 +77,7 @@ LOG="$WORK/head-scan.log"
 out=$("$AM_BIN" check-rules --repo . --fixture "$FIX" --rules .arch-mind/rules.mind --mode enforce 2>&1)
 rc=$?
 echo "$out"
-n=$(printf '%s\n' "$out" | sed -n 's/^rules: \([0-9][0-9]*\).*/\1/p' | head -1)
+n=$(sed -n '/^rules: \([0-9][0-9]*\).*/{s//\1/p;q;}' <<<"$out")
 [ -n "$n" ] && [ "$n" -ge 1 ] || {
   echo "::error::check-rules reported no rules; a pass would assert nothing"
   exit 1

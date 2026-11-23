@@ -1,0 +1,8 @@
+// A free in the condition of the only loop: each evaluation allocates and frees 1 MB, 1,101 times, so a bump arena (1 GiB) overflows. Exit status 33.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    while __mind_free(__mind_alloc(1000000)) + i < 1100 {
+        i = i + 1;
+    }
+    return i - 1100 + 33;
+}

@@ -45,7 +45,7 @@ _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
 _FROZEN = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 sys.path.insert(0, str(_HERE))
-from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import compiler_library, self_mode_image, start_child  # noqa: E402
 
 _STDLIB_MODULES = [
     "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
@@ -77,8 +77,8 @@ def build_grown_stdin() -> bytes:
 
 
 def run_elf(elf_path: pathlib.Path, stdin_image: bytes, what: str) -> bytes:
-    r = subprocess.run(
-        [str(elf_path)], input=stdin_image, stdout=subprocess.PIPE,
+    r = start_child(
+        [str(elf_path)], self_mode_image(stdin_image, elf_path), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, timeout=180,
     )
     if r.returncode != 0:

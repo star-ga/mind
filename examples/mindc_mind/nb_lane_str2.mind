@@ -1,0 +1,456 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The string rule of the native lane, part 3 of 3: the call handlers, the node
+// handlers and the entry nb_lane_str_walk. The rule and the walk record are in
+// nb_lane_str.mind, the byte scans in nb_lane_scan.mind. A handler is one flat
+// step: it notes its own refusals and pushes its children with the context it
+// gives them; no handler recurses into the tree. A call finds its callee among the kept fns that have a String
+// param (the table); only a String NAME argument needs the wider lookup.
+
+import nb_ast;
+import nb_lastdef;
+import nb_lane_keys;
+import nb_lane_scan;
+import nb_lane_str;
+
+// ---- calls ----
+
+// 1 iff some argument of the call is a String name.
+pub fn nbls_any_str_arg(w: i64, call: i64, env: i64) -> i64 {
+    let args: i64 = ast_child1(call);
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    while i < ast_aux(call) {
+        r = r | nbls_ident_is_str(w, nbls_unwrap(__mind_load_i64(args + i * 8)), env);
+        i = i + 1;
+    }
+    r
+}
+
+// The context of the arguments in a non-String slot: 4 print, 3 an intrinsic,
+// 1 a known fn (or a call with no String name argument, where it is unused),
+// 2 an extern or an unknown callee.
+pub fn nbls_arg_ctx(w: i64, call: i64, tab: i64, env: i64) -> i64 {
+    let src: i64 = __mind_load_i64(w);
+    let lo: i64 = ast_span_lo(ast_child0(call));
+    let hi: i64 = ast_span_hi(ast_child0(call));
+    if hi - lo == 5 {
+        if nbls_word(src, lo, 1099511627775, 500068610672) == 1 {
+            return 4;
+        }
+    }
+    if hi - lo >= 8 {
+        if nbls_word(src, lo, 72057594037927935, 26850548165467999) == 1 {
+            return 3;
+        }
+    }
+    if tab != 0 {
+        return 1;
+    }
+    if nbls_any_str_arg(w, call, env) == 0 {
+        return 1;
+    }
+    if nbls_find(w, 56, lo, hi) != 0 {
+        return 1;
+    }
+    2
+}
+
+// One argument: a String slot takes a literal or a String name (nothing to
+// push) and notes lane.string.argument for anything else; another slot pushes
+// the argument with the call's context (a print literal needs no push).
+pub fn nbls_one_arg(w: i64, a: i64, i: i64, env: i64, depth: i64) -> i64 {
+    let tab: i64 = __mind_load_i64(w + 104);
+    let u: i64 = nbls_unwrap(a);
+    if tab != 0 {
+        if nbls_slot_is_str(__mind_load_i64(w), tab, i) == 1 {
+            if nbls_is_strval(w, u, env) == 1 {
+                return 0;
+            }
+            let mut site: i64 = ast_span_lo(a);
+            if site == 0 {
+                site = __mind_load_i64(w + 120);
+            }
+            let _n: i64 = nbls_note(w, 32, site, depth);
+            return nbls_push(w, a, 0, env, depth);
+        }
+    }
+    if __mind_load_i64(w + 112) == 4 {
+        if ast_kind(u) == ast_str_lit() {
+            return 0;
+        }
+    }
+    nbls_push(w, a, __mind_load_i64(w + 112), env, depth)
+}
+
+pub fn nbls_v_call(w: i64, call: i64, env: i64, depth: i64) -> i64 {
+    let lo: i64 = ast_span_lo(ast_child0(call));
+    let tab: i64 = nbls_find(w, 72, lo, ast_span_hi(ast_child0(call)));
+    __mind_store_i64(w + 104, tab);
+    __mind_store_i64(w + 112, nbls_arg_ctx(w, call, tab, env));
+    __mind_store_i64(w + 120, lo);
+    let args: i64 = ast_child1(call);
+    let mut i: i64 = 0;
+    while i < ast_aux(call) {
+        let _a: i64 = nbls_one_arg(w, __mind_load_i64(args + i * 8), i, env, depth + 1);
+        i = i + 1;
+    }
+    0
+}
+
+// ---- other nodes ----
+
+pub fn nbls_v_ident(w: i64, node: i64, ctx: i64, env: i64, depth: i64) -> i64 {
+    if nbls_ident_is_str(w, node, env) == 0 {
+        return 0;
+    }
+    nbls_note(w, nbls_ident_key(ctx), ast_span_lo(node), depth)
+}
+
+// == and != give the operands context 5; another operator 6 when both
+// operands are String values, else 7.
+pub fn nbls_v_binop(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    let op: i64 = ast_aux(node);
+    let l: i64 = ast_child0(node);
+    let r: i64 = ast_child1(node);
+    let mut c: i64 = 5;
+    if op != op_eq() {
+        if op != op_ne() {
+            c = 7;
+            if nbls_is_strval(w, l, env) + nbls_is_strval(w, r, env) == 2 {
+                c = 6;
+            }
+        }
+    }
+    nbls_push2(w, l, c, r, c, env, depth + 1)
+}
+
+// 1 iff the if is the desugar of `&&` or `||` (its then block starts where it
+// starts) and its condition c is the wrapper `x != 0` (synthetic zero).
+pub fn nbls_if_logic(node: i64, c: i64) -> i64 {
+    if ast_span_lo(ast_child1(node)) != ast_span_lo(node) {
+        return 0;
+    }
+    if ast_kind(c) != ast_binop() {
+        return 0;
+    }
+    if ast_aux(c) != op_ne() {
+        return 0;
+    }
+    let z: i64 = ast_child1(c);
+    if ast_kind(z) == ast_int_lit() {
+        if ast_child1(z) == 1 {
+            if ast_child0(z) == 0 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+pub fn nbls_v_if(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    let c: i64 = ast_child0(node);
+    let mut cond: i64 = c;
+    if nbls_if_logic(node, c) == 1 {
+        cond = ast_child0(c);
+    }
+    let _c: i64 = nbls_push(w, cond, 11, env, depth + 1);
+    nbls_push2(w, ast_child1(node), 0, ast_child2(node), 0, env, depth + 1)
+}
+
+pub fn nbls_v_block(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    let sa: i64 = ast_child0(node);
+    let mut i: i64 = 0;
+    let mut e: i64 = env;
+    while i < ast_aux(node) {
+        let st: i64 = __mind_load_i64(sa + i * 8);
+        let _p: i64 = nbls_push(w, st, 0, e, depth + 1);
+        e = nbls_env_after(w, st, e);
+        i = i + 1;
+    }
+    0
+}
+
+// A let: a String annotation is lane.string.binding at the let; an unannotated
+// init gets context 14, an init under another type 15.
+pub fn nbls_v_let(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    let ty: i64 = ast_child1(node);
+    if nbls_ty_is_string(__mind_load_i64(w), ty) == 1 {
+        let _n: i64 = nbls_note(w, 34, ast_span_lo(node), depth);
+        return nbls_push(w, ast_child2(node), 0, env, depth + 1);
+    }
+    if ty == 0 {
+        return nbls_push(w, ast_child2(node), 14, env, depth + 1);
+    }
+    nbls_push(w, ast_child2(node), 15, env, depth + 1)
+}
+
+// A field read or a method call. On a String name `.addr` and `.len` are plain
+// values, `.cap` is lane.string.cap, a method call lane.source.method_call and
+// any other field lane.source.struct. A field read on a receiver that is known
+// to be a scalar, or on a String param's name that a let shadows, is
+// lane.source.struct; a receiver of a record type is not judged here (the seed
+// reads its fields). The receiver is walked.
+pub fn nbls_v_field(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    let recv: i64 = ast_child0(node);
+    let mut key: i64 = 24;
+    if ast_kind(node) == ast_field() {
+        key = nbls_field_key(__mind_load_i64(w), ast_child1(node), ast_child2(node));
+    }
+    if nbls_ident_is_str(w, nbls_unwrap(recv), env) == 1 {
+        if key == 0 {
+            return 0;
+        }
+        return nbls_note(w, key, ast_span_lo(node), depth);
+    }
+    if ast_kind(node) == ast_field() {
+        if nbls_expr_scalar(w, recv, env) + nbls_ident_shadows_str(w, nbls_unwrap(recv), env) > 0 {
+            let _n: i64 = nbls_note(w, 22, ast_span_lo(node), depth);
+        }
+    }
+    nbls_push(w, recv, 0, env, depth + 1)
+}
+
+// `name = value`: an assignment to a String name is lane.string.assign.
+pub fn nbls_v_assign(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    if nbls_ident_is_str(w, ast_child0(node), env) == 1 {
+        let _n: i64 = nbls_note(w, 36, ast_span_lo(node), depth);
+    }
+    nbls_push(w, ast_child2(node), 0, env, depth + 1)
+}
+
+// `recv.field = value`: a field of a String name is lane.string.assign, any
+// other target is walked as a field read.
+pub fn nbls_v_fassign(w: i64, node: i64, env: i64, depth: i64) -> i64 {
+    let tgt: i64 = ast_child0(node);
+    if nbls_ident_is_str(w, nbls_unwrap(ast_child0(tgt)), env) == 1 {
+        let _n: i64 = nbls_note(w, 36, ast_span_lo(node), depth);
+        return nbls_push(w, ast_child2(node), 0, env, depth + 1);
+    }
+    nbls_push2(w, tgt, 0, ast_child2(node), 0, env, depth + 1)
+}
+
+// The items of a list node: n entries from addr, `step` words apart, the item
+// at word `off` of each entry (struct literal fields: step 3, off 2).
+pub fn nbls_v_list(w: i64, addr: i64, n: i64, step: i64, off: i64, env: i64, depth: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        let _p: i64 = nbls_push(w, __mind_load_i64(addr + (i * step + off) * 8), 0, env, depth + 1);
+        i = i + 1;
+    }
+    0
+}
+
+// Visit one node: its own refusals, then its children with their contexts.
+pub fn nbls_visit(w: i64, node: i64, ctx: i64, env: i64, depth: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    let d: i64 = depth + 1;
+    if k == ast_ident() {
+        return nbls_v_ident(w, node, ctx, env, depth);
+    }
+    if k == ast_str_lit() {
+        return nbls_note(w, 16, ast_span_lo(node), depth);
+    }
+    if k == ast_binop() {
+        return nbls_v_binop(w, node, env, depth);
+    }
+    if k == ast_call() {
+        return nbls_v_call(w, node, env, depth);
+    }
+    if k == ast_let() {
+        return nbls_v_let(w, node, env, depth);
+    }
+    if k == ast_block() {
+        return nbls_v_block(w, node, env, depth);
+    }
+    if k == ast_paren() {
+        return nbls_push(w, ast_child0(node), ctx, env, d);
+    }
+    if k == ast_neg() {
+        return nbls_push(w, ast_child0(node), 8, env, d);
+    }
+    if k == ast_not() {
+        return nbls_push(w, ast_child0(node), 9, env, d);
+    }
+    if k == ast_cast() {
+        return nbls_push(w, ast_child0(node), 10, env, d);
+    }
+    if k == ast_if() {
+        return nbls_v_if(w, node, env, depth);
+    }
+    if k == ast_while() {
+        return nbls_push2(w, ast_child0(node), 11, ast_child1(node), 0, env, d);
+    }
+    if k == ast_field() {
+        return nbls_v_field(w, node, env, depth);
+    }
+    if k == ast_method() {
+        return nbls_v_field(w, node, env, depth);
+    }
+    if k == ast_assign() {
+        return nbls_v_assign(w, node, env, depth);
+    }
+    if k == ast_field_assign() {
+        return nbls_v_fassign(w, node, env, depth);
+    }
+    if k == ast_struct_lit() {
+        return nbls_v_list(w, ast_child1(node), ast_aux(node), 3, 2, env, depth);
+    }
+    if k == ast_array_lit() {
+        return nbls_v_list(w, ast_child1(node), ast_aux(node), 1, 0, env, depth);
+    }
+    if k == ast_index() {
+        return nbls_push2(w, ast_child0(node), 12, ast_child1(node), 0, env, d);
+    }
+    if k == ast_index_assign() {
+        let _b: i64 = nbls_push2(w, ast_child0(node), 12, ast_child1(node), 0, env, d);
+        return nbls_push(w, ast_child2(node), 0, env, d);
+    }
+    if k == ast_deref_assign() {
+        return nbls_push2(w, ast_child0(node), 0, ast_child2(node), 0, env, d);
+    }
+    if k == ast_enum_ctor() {
+        return nbls_push(w, ast_child1(node), 0, env, d);
+    }
+    if k == ast_return() {
+        return nbls_push(w, ast_child0(node), 0, env, d);
+    }
+    if k == ast_addr_of() {
+        return nbls_push(w, ast_child0(node), 0, env, d);
+    }
+    if k == ast_deref() {
+        return nbls_push(w, ast_child0(node), 0, env, d);
+    }
+    0
+}
+
+// ---- entry ----
+
+pub fn nbls_drain(w: i64) -> i64 {
+    while __mind_load_i64(w + 48) > 0 {
+        let at: i64 = nbls_pop(w);
+        let _v: i64 = nbls_visit(w, __mind_load_i64(at), __mind_load_i64(at + 8), __mind_load_i64(at + 16), __mind_load_i64(at + 24));
+    }
+    0
+}
+
+// A const item is a leaf, so its initializer is not a child the walk can push.
+// Read the span the way the lexer does and note the first well-formed string
+// literal as lane.source.string. A const whose type is String is already noted
+// at the start of the item, which is earlier, so that key stays the one reported.
+pub fn nbls_const_lits(w: i64, it: i64) -> i64 {
+    let src: i64 = __mind_load_i64(w);
+    let lo: i64 = ast_span_lo(it);
+    let hi: i64 = ast_span_hi(it);
+    if nbls_word(src, lo, 1099511627775, 500152823651) == 0 {
+        return 0;
+    }
+    if nbls_idchar_at(src, lo + 5, hi) == 1 {
+        return 0;
+    }
+    let found: i64 = __mind_alloc(8);
+    __mind_store_i64(found, 0 - 1);
+    let mut p: i64 = lo;
+    while p < hi {
+        p = nbls_seek_lit(src, p, hi, found);
+    }
+    let site: i64 = __mind_load_i64(found);
+    if site >= 0 {
+        return nbls_note(w, 16, site, 1);
+    }
+    0
+}
+
+// Walk one fn: a String result, then its body.
+pub fn nbls_fn(w: i64, f: i64) -> i64 {
+    __mind_store_i64(w + 88, f);
+    let rp: i64 = nbls_ret_pos(__mind_load_i64(w), f);
+    if rp >= 0 {
+        let _n: i64 = nbls_note(w, 33, rp, 0);
+    }
+    let _p: i64 = nbls_push(w, ast_child2(f), 0, 0, 1);
+    nbls_drain(w)
+}
+
+// One entry of an array: with zone 0 a top-level item of the user region (a
+// const, or a fn); with zone 1 a kept fn, walked when it is in the std region.
+// A std item is judged only as a kept fn: a std const is never judged.
+pub fn nbls_entry(w: i64, it: i64, zone: i64) -> i64 {
+    let k: i64 = ast_kind(it);
+    if zone == 0 {
+        if ast_span_lo(it) < __mind_load_i64(w + 96) {
+            return 0;
+        }
+        if k == ast_struct_def() {
+            let cp: i64 = nbls_const_pos(__mind_load_i64(w), it);
+            if cp >= 0 {
+                let _n: i64 = nbls_note(w, 35, cp, 0);
+            }
+            return nbls_const_lits(w, it);
+        }
+        if k == ast_fn_def() {
+            return nbls_fn(w, it);
+        }
+        return 0;
+    }
+    if ast_span_lo(it) < __mind_load_i64(w + 96) {
+        return nbls_fn(w, it);
+    }
+    0
+}
+
+pub fn nbls_entries(w: i64, addr: i64, n: i64, zone: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        let _a: i64 = nbls_entry(w, __mind_load_i64(addr + i * 8), zone);
+        i = i + 1;
+    }
+    0
+}
+
+pub fn nbls_new(src: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
+    let w: i64 = __mind_alloc(128);
+    let cap: i64 = 4096;
+    __mind_store_i64(w, src);
+    __mind_store_i64(w + 8, 4294967296);
+    __mind_store_i64(w + 16, 0);
+    __mind_store_i64(w + 24, 0);
+    __mind_store_i64(w + 32, __mind_alloc(cap * 32));
+    __mind_store_i64(w + 40, cap);
+    __mind_store_i64(w + 48, 0);
+    __mind_store_i64(w + 56, fns);
+    __mind_store_i64(w + 64, n_fns);
+    __mind_store_i64(w + 72, __mind_alloc((n_fns + 1) * 8));
+    __mind_store_i64(w + 80, 0);
+    __mind_store_i64(w + 88, 0);
+    __mind_store_i64(w + 96, user_lo);
+    __mind_store_i64(w + 104, 0);
+    __mind_store_i64(w + 112, 0);
+    __mind_store_i64(w + 120, 0);
+    w
+}
+
+// The string rule of the native lane. src is the composed image (src_len bytes),
+// items the top-level items, user_lo the start of the user region, fns the kept
+// fns. Returns 0, or nb_lane_pack(key, site) of the first refusal: of the walk's
+// refusals and the first literal the lexer refuses (key 40 or 41, read from the
+// bytes) the smaller site wins, and at one site the literal.
+pub fn nb_lane_str_walk(src: i64, src_len: i64, items_addr: i64, items_len: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
+    let w: i64 = nbls_new(src, user_lo, fns, n_fns);
+    let _t: i64 = nbls_tab_fill(w);
+    let _a: i64 = nbls_entries(w, items_addr, items_len, 0);
+    let _b: i64 = nbls_entries(w, fns, n_fns, 1);
+    let site: i64 = __mind_load_i64(w + 8);
+    let lw: i64 = nbls_lex_scan(src, user_lo, src_len);
+    if lw != 0 {
+        if lw % 4294967296 <= site {
+            return lw;
+        }
+    }
+    if site >= 4294967296 {
+        return 0;
+    }
+    nb_lane_pack(__mind_load_i64(w + 16), site)
+}

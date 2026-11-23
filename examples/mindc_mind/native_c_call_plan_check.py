@@ -13,6 +13,7 @@ import resource
 import struct
 import subprocess
 from _stdlib_manifest import seed_blob
+from _selfhost_sources import start_child
 
 HERE = Path(__file__).resolve().parent
 
@@ -145,7 +146,7 @@ def build_drivers(args):
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
     def build(label, argv, data=None, cwd=None):
-        r = subprocess.run(list(map(str, argv)), input=data, capture_output=True,
+        r = start_child(list(map(str, argv)), data, capture_output=True,
                            timeout=240, preexec_fn=compiler_limits, env=env, cwd=cwd)
         (out / (label + '.stdout')).write_bytes(r.stdout)
         (out / (label + '.stderr')).write_bytes(r.stderr)
@@ -216,7 +217,7 @@ def main():
         for name, data, want in rows:
             assert (args.evidence / (name + '.input')).read_bytes() == data
             assert (args.evidence / (name + '.expected')).read_bytes() == want
-            r = subprocess.run([str(exe.resolve())], input=data, capture_output=True,
+            r = start_child([str(exe.resolve())], data, capture_output=True,
                                timeout=15, preexec_fn=limited)
             stem = args.evidence / (label + '-' + name)
             stem.with_suffix('.stdout').write_bytes(r.stdout)

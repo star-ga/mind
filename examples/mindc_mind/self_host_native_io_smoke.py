@@ -17,6 +17,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from self_host_native_cf_smoke import v2_header, image
+from _selfhost_sources import start_child  # noqa: E402
 
 OFFSETS = [('sub', '0 - 1', True), ('negative', '-1', True),
            ('parentheses', '(0 - 1)', True), ('fold', '1 - 2', True),
@@ -129,7 +130,7 @@ def main():
     assert manifest.read_text()==packet,'enumeration drift';assert a.native and a.mlir
     records=[]
     def run(name,cmd,stdin=b'',cwd=None):
-        q=subprocess.run(list(map(str,cmd)),input=stdin,capture_output=True,cwd=cwd or e,timeout=150,preexec_fn=limit)
+        q=start_child(list(map(str,cmd)),stdin,capture_output=True,cwd=cwd or e,timeout=150,preexec_fn=limit)
         (e/(name+'.stdout')).write_bytes(q.stdout);(e/(name+'.stderr')).write_bytes(q.stderr)
         rec=dict(name=name,argv=list(map(str,cmd)),exit=q.returncode,stdout_sha256=hashlib.sha256(q.stdout).hexdigest(),stderr_sha256=hashlib.sha256(q.stderr).hexdigest())
         (e/(name+'.json')).write_text(json.dumps(rec,indent=2)+'\n');records.append(rec);return q

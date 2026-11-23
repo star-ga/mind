@@ -1,4 +1,4 @@
-/* A test-only stand-in for libcuda.so.1 (ruling 16b): the thirteen driver
+/* A test-only stand-in for libcuda.so.1: the thirteen driver
  * rows with deterministic, pointer-value-free behaviour, so the same native
  * and MLIR programs exit alike against it on a host with no GPU. Compiled by
  * the lane's test harness with cc, for this fixture only, and published to

@@ -23,7 +23,7 @@ cargo build --quiet 2>&1
 echo "[regen_fixtures] Running Rust fixture export..."
 # If a dedicated bin target exists, use it. Otherwise use cargo test to
 # emit the residual_block fixture via a test that writes to stdout.
-if cargo test --quiet -- --list 2>/dev/null | grep -q "mic2_roundtrip"; then
+if cargo test --quiet -- --list 2>/dev/null | grep "mic2_roundtrip" >/dev/null; then
   cargo test --quiet mic2_roundtrip -- --nocapture 2>/dev/null \
     | grep -v "^test\|^running\|^ok\|^FAILED" \
     > "$FIXTURES/residual_block.micb.bin" || true

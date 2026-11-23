@@ -1,0 +1,24 @@
+// Loop-carried copy through a mutable temp declared before the loop:
+// n0 = a + b + i; b = a; a = n0. a, b = 1, 2; four trips give a = 18.
+// main returns 42 only for that value.
+fn f() -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = 2;
+    let mut i: i64 = 0;
+    let mut n0: i64 = 0;
+    while i < 4 {
+        n0 = a + b + i;
+        b = a;
+        a = n0;
+        i = i + 1;
+    }
+    return a;
+}
+
+fn main() -> i64 {
+    let v: i64 = f();
+    if v == 18 {
+        return 42;
+    }
+    return 43;
+}

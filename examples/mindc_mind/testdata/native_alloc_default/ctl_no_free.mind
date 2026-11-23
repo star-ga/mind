@@ -1,0 +1,6 @@
+// A program with no free. BUMP: the image equals the base compiler's. Exit status 33.
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(64);
+    __mind_store_i64(p, 30);
+    return __mind_load_i64(p) + 3;
+}

@@ -593,6 +593,56 @@ def fmt(runners: set[str]) -> str:
     return ",".join(r for r in order if r in runners) or "none"
 
 
+_BOUNDED_ELF = ROOT / "examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf"
+_LANE_MARK = b"nblane02"
+# The first manifest line of a fixture tree that scripts/test_smoke_wiring_lint.py builds. Only such a
+# tree may lack the committed bounded seed; in any other tree an absent seed is an error.
+FIXTURE_HEAD = "# fixture manifest"
+
+
+def _mark_claim_errors(note: str, doc: str, has_mark: bool) -> list[str]:
+    """The value-shapes text must say whether the bounded seed contains nblane02, and be right."""
+    possess = (
+        "carries the nblane02 mark" in note
+        or ("carries the native-lane-v1 mark" in note and "does not carry" not in note)
+        or "carries the mark since the reseed" in doc
+    )
+    denies = "does not carry" in note or "does not carry nblane02" in doc
+    errors: list[str] = []
+    if not possess and not denies:
+        errors.append(
+            "value-shapes text states no mark claim: its SMOKE_WIRING.tsv note or docstring must say "
+            "whether the committed bounded seed carries nblane02 (`carries the nblane02 mark` / `does not carry`)"
+        )
+    if possess and not has_mark:
+        errors.append(
+            "value-shapes text claims the committed bounded seed carries nblane02, "
+            "but testdata/selfhost_loop_bounded/stage1.elf does not"
+        )
+    if denies and has_mark:
+        errors.append(
+            "value-shapes text says the committed bounded seed does not carry the mark, "
+            "but testdata/selfhost_loop_bounded/stage1.elf has nblane02: raise the text"
+        )
+    return errors
+
+
+def bounded_seed_mark_errors(rows: dict) -> list[str]:
+    """The mark claim against the committed bounded seed. An absent seed gives no verdict only in a
+    fixture tree of this lint's own test (manifest head FIXTURE_HEAD); anywhere else it is an error."""
+    if not _BOUNDED_ELF.is_file():
+        if MANIFEST.read_text(encoding="utf-8").split("\n", 1)[0] == FIXTURE_HEAD:
+            return []
+        return [f"MISSING: {_BOUNDED_ELF} does not exist: the value-shapes mark claim can not be checked "
+                "(only a fixture tree of scripts/test_smoke_wiring_lint.py may lack the bounded seed)"]
+    note = rows.get("native_lane_value_shapes_smoke", (set(), "", ""))[2]
+    doc_path = SMOKE_DIR / "native_lane_value_shapes_smoke.py"
+    doc = ""
+    if doc_path.is_file():
+        doc = ast.get_docstring(ast.parse(doc_path.read_text(encoding="utf-8"))) or ""
+    return _mark_claim_errors(note, doc, _LANE_MARK in _BOUNDED_ELF.read_bytes())
+
+
 def main() -> int:
     argv = sys.argv[1:]
     actual = actual_wiring()
@@ -636,6 +686,7 @@ def main() -> int:
         return 0
 
     errors: list[str] = preflight_branch_errors()
+    errors += bounded_seed_mark_errors(rows)
     errors += scan_marker_violations()
     errors += scan_verdict_shape_violations()
 

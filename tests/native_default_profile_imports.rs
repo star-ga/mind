@@ -23,7 +23,9 @@
 //! The current fixture is a host executable that drains and captures the input
 //! image, then returns fixed bytes beginning with ELF magic. It does not compile
 //! MIND or produce an executable ELF. These controls prove admission and source
-//! transport, not native code generation or cross-platform byte identity.
+//! transport, not native code generation or cross-platform byte identity. The
+//! host runs only a compiler that carries the native-lane-v1 mark `nblane02`, so
+//! the fixture is built with that mark (`--cfg native_lane_mark`).
 
 #![cfg(all(not(feature = "cross-module-imports"), feature = "std-surface"))]
 
@@ -54,6 +56,8 @@ fn native_fixture() -> PathBuf {
                     "2024",
                     "--crate-name",
                     "draining_native_compiler",
+                    "--cfg",
+                    "native_lane_mark",
                 ])
                 .arg(repo_path(
                     "tests/native_bridge_support/draining_native_compiler.rs",
@@ -205,11 +209,13 @@ fn the_plain_spelling_is_refused_too() {
 /// the wrong fix: `std` imports are satisfied by the seed blob and are NOT local
 /// dependencies. The old scan refused this program; the featured profile accepts
 /// it. A default build must accept it too, or the two profiles disagree about
-/// what a valid program is.
+/// what a valid program is. The module is a `seed` row of the std manifest
+/// (`std.sha256`). `std.math` is no seed module: the lane refuses it by name
+/// (`lane.import.not_seed`), and that is still not a local-dependency verdict.
 #[test]
 fn a_std_only_import_is_not_a_local_dependency_and_builds() {
     let p = Project::new();
-    let src = "import std.math;\n\nfn main() -> i64 {\n    return 7;\n}\n";
+    let src = "import std.sha256;\n\nfn main() -> i64 {\n    return 7;\n}\n";
     let (code, err, art) = p.build(src);
     assert_eq!(
         code, 0,
@@ -217,6 +223,13 @@ fn a_std_only_import_is_not_a_local_dependency_and_builds() {
     );
     assert!(art.is_some(), "a successful build must emit an artifact");
     assert_fixture_drained(&p, src);
+    let (code, err, art) = p.build("import std.math;\n\nfn main() -> i64 {\n    return 7;\n}\n");
+    assert_eq!(code, 3, "a std module outside the seed is refused: {err}");
+    assert!(art.is_none(), "a refusal must write no artifact");
+    assert!(
+        err.contains("(lane.import.not_seed)") && !err.contains("scope.imports_need_feature"),
+        "`std.math` is refused by the seed rule, never as a local dependency: {err}"
+    );
 }
 
 /// A source with no local imports must reach the fixture, and its fixed output

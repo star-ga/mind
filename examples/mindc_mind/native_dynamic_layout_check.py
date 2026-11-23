@@ -14,6 +14,7 @@ import resource
 import struct
 import subprocess
 import sys
+from _selfhost_sources import start_child
 
 HERE = Path(__file__).resolve().parent
 LIMIT = 2 * 1024 ** 3
@@ -99,7 +100,7 @@ def main():
     observations = []
 
     def run(label, argv, data=None, cwd=None, timeout=120):
-        result = subprocess.run([str(x) for x in argv], input=data,
+        result = start_child([str(x) for x in argv], data,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 cwd=cwd, env=env, timeout=timeout, preexec_fn=limited)
         stem = f"{len(observations):03d}-{label}"

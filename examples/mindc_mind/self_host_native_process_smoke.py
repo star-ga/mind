@@ -12,6 +12,7 @@ import tempfile
 
 from _selfhost_so import resolve_mindc
 from _stdlib_manifest import seed_blob
+from _selfhost_sources import self_mode_image
 from self_host_loop_smoke import build_seed, _FROZEN
 from self_host_native_sys_smoke import run_elf, c_string
 
@@ -239,7 +240,7 @@ def main():
         tmp = pathlib.Path(td)
         _, seed, _ = build_seed()
         stage1 = tmp / 'stage1.elf'
-        stage1.write_bytes(run_elf(_FROZEN, seed))
+        stage1.write_bytes(run_elf(_FROZEN, self_mode_image(seed, _FROZEN)))
         stage1.chmod(0o755)
         print('stage1 sha256=' + hashlib.sha256(stage1.read_bytes()).hexdigest(), flush=True)
         return check(stage1, resolve_mindc(), tmp)

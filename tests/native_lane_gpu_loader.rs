@@ -1,7 +1,7 @@
 // Copyright 2026 STARGA Inc.
 // Licensed under the Apache License, Version 2.0.
 
-//! The native-lane GPU loader (ruling 16b): `DT_NEEDED libcuda.so.1` next to
+//! The native-lane GPU loader (MC-6): `DT_NEEDED libcuda.so.1` next to
 //! `libc.so.6`, unversioned `_v2` driver symbols through eagerly bound GOT
 //! slots, pointer-to-pointer and `*mut i64` out-params, a `void**` argument
 //! array, and the 11-argument `cuLaunchKernel` row whose parameters 6..10
@@ -339,7 +339,7 @@ fn runs_alike_on_both_backends(fixture: &str) -> Vec<u8> {
 /// thirteen of `nbx_row` and the MC-6 block of `nbcu_row`) still emits
 /// byte-identical ELF for every program that imports none of them (the
 /// libc-only corpus and the no-extern programs): the row data is inert for a
-/// libc-only import, exactly the ruling's "identical_pairs stays all equal" force.
+/// libc-only import, exactly the "identical_pairs stays all equal" rule.
 #[test]
 fn removing_the_driver_rows_keeps_libc_only_bytes() {
     let rows_removed = Case::with_compiler(mint_library(&library_without_driver_rows()));
@@ -719,7 +719,10 @@ fn the_byte_argument_fence_and_off_table_names_refuse() {
         let stderr = String::from_utf8_lossy(&build.stderr);
         let refused = build.status.code() == Some(3) && !binary.exists();
         assert!(refused, "{name}: {stderr}");
-        let named = stderr.contains("lane.extern.unknown_symbol") && stderr.contains(name.as_str());
+        // The compiler names the key and the site of the declaration name
+        // (line 1, column 17: `extern "C" { fn NAME`), not the name's text.
+        let at = "(lane.extern.unknown_symbol) at line 1, column 17 of the composed user image";
+        let named = stderr.contains(at);
         assert!(named, "{stderr}");
     }
 }

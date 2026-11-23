@@ -2,23 +2,13 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! The historical native path refuses compiler intrinsics, and it says why.
+//! A native compiler runs only when it carries `nblane02`.
 //!
-//! An unmarked native compiler selects the historical frozen profile, which
-//! binds no compiler intrinsic. The closure refuses an intrinsic edge as
-//! unresolved, and the frozen fence would refuse the same call next as
-//! `call.undefined_or_builtin`. That refusal is deliberate and stays exactly as
-//! strict: the unmarked seeds' intrinsic lowering is not proven in every value
-//! position. Intrinsic binding belongs to native-lane-v1, which only the
-//! compiler's `nblane01` mark selects.
-//!
-//! The defect pinned here is the diagnostic. It used to read only "has no
-//! definition in the closure", as if the user had forgotten a function. A
-//! qualification round read that as a missing binding in the historical
-//! closure and filed it there, when the cause was that the selected compiler
-//! did not carry the mark. The refusal must name the selection, keep its kind
-//! label and first line, and never attach that note to a callee that is not a
-//! compiler intrinsic.
+//! An unmarked compiler is refused before admission, with one message that
+//! names that mark. The host does not judge the program: an intrinsic call, a
+//! call through a helper and a missing user function all get that same
+//! refusal, and the compiler does not run. Intrinsic binding belongs to the
+//! compiler that carries the mark.
 //!
 //! Every build goes through a private recording shim, so the result does not
 //! depend on whether the embedded seeds carry the mark. On a refusal the shim
@@ -37,9 +27,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const MINDC: &str = env!("CARGO_BIN_EXE_mindc");
-const MARK: &[u8] = b"\x48\xb8nblane01";
-const NOTE: &str = "is a compiler intrinsic. The selected native compiler does not carry \
-                    the native-lane-v1 compatibility mark";
+const MARK: &[u8] = b"\x48\xb8nblane02";
+const MARK_REFUSAL: &str = "does not carry the native-lane-v1 mark `nblane02`";
 
 struct Case {
     dir: tempfile::TempDir,
@@ -96,8 +85,8 @@ impl Case {
             .unwrap()
     }
 
-    /// Refused on the historical path before the compiler ran; returns stderr.
-    fn historical_refusal(&self, source: &str, extra: &[&str]) -> String {
+    /// Refused before the compiler ran, because the shim carries no mark.
+    fn mark_refusal(&self, source: &str, extra: &[&str]) -> String {
         let build = self.build(source, extra);
         let stderr = String::from_utf8_lossy(&build.stderr).into_owned();
         assert_eq!(build.status.code(), Some(3), "{stderr}");
@@ -109,7 +98,8 @@ impl Case {
             !self.capture().exists(),
             "the refusal must precede the compiler: {stderr}"
         );
-        assert!(stderr.contains("(closure.unresolved_edge)"), "{stderr}");
+        assert!(stderr.contains(MARK_REFUSAL), "{stderr}");
+        assert!(stderr.contains("(native.compiler_mark)"), "{stderr}");
         stderr
     }
 }
@@ -121,30 +111,17 @@ const MEMORY: &str = "fn main() -> i64 { let p: i64 = __mind_alloc(8); \
 const PROFILES: [&[&str]; 2] = [&[], &["--native-profile", "bounded"]];
 
 #[test]
-fn historical_intrinsic_refusal_names_the_profile_selection() {
+fn an_unmarked_compiler_is_refused_with_the_mark_on_both_profiles() {
     for extra in PROFILES {
-        let stderr = Case::new(false).historical_refusal(MEMORY, extra);
-        // The first line and the kind label are unchanged.
-        assert!(
-            stderr.contains(
-                "error[backend-native]: `main` calls `__mind_alloc`, which has no \
-                 definition in the closure (closure.unresolved_edge)\n"
-            ),
-            "{extra:?}: {stderr}"
-        );
-        assert!(
-            stderr.contains(&format!("`__mind_alloc` {NOTE}")),
-            "{extra:?}: {stderr}"
-        );
-        assert!(stderr.contains("binds no compiler intrinsic"), "{stderr}");
-        assert!(stderr.contains("--backend mlir"), "{stderr}");
+        let stderr = Case::new(false).mark_refusal(MEMORY, extra);
+        assert!(stderr.contains("nblane02"), "{extra:?}: {stderr}");
     }
 }
 
-/// Positive control for the note's claim: the mark alone changes the outcome.
+/// Positive control: the mark alone changes the outcome.
 /// Same compiler binary, same source, same delegated seed.
 #[test]
-fn the_mark_is_the_selection_the_note_names() {
+fn the_mark_is_what_selects_the_compiler() {
     let marked = Case::new(true);
     let build = marked.build(MEMORY, &[]);
     assert_eq!(
@@ -158,44 +135,26 @@ fn the_mark_is_the_selection_the_note_names() {
     assert!(run.stdout.is_empty() && run.stderr.is_empty(), "{run:?}");
 }
 
+/// The refusal does not depend on the callee. A helper, a missing user
+/// function, an unknown `__mind_` name and a std name all stop at the mark.
 #[test]
-fn the_note_names_the_intrinsic_reached_through_a_helper() {
-    let stderr = Case::new(false).historical_refusal(
+fn the_mark_refusal_does_not_depend_on_the_callee() {
+    for source in [
         "fn helper() -> i64 { return __mind_load_i64(0); }\n\
          fn main() -> i64 { return helper(); }",
-        &[],
-    );
-    assert!(
-        stderr.contains("`helper` calls `__mind_load_i64`, which has no definition"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains(&format!("`__mind_load_i64` {NOTE}")),
-        "{stderr}"
-    );
-}
-
-/// The note is keyed on the callee: a missing user function, an unknown
-/// `__mind_` name and a std function the closure cannot see keep the bare
-/// refusal.
-#[test]
-fn a_callee_that_is_not_a_compiler_intrinsic_gets_no_note() {
-    for (source, callee) in [
-        ("fn main() -> i64 { return absent(); }", "absent"),
-        (
-            "fn main() -> i64 { return __mind_forged(8); }",
-            "__mind_forged",
-        ),
-        ("fn main() -> i64 { return sha256(0, 0, 0); }", "sha256"),
+        "fn main() -> i64 { return absent(); }",
+        "fn main() -> i64 { return __mind_forged(8); }",
+        "fn main() -> i64 { return sha256(0, 0, 0); }",
+        "fn g(s: String) -> i64 { return 1; }\nfn main() -> i64 { return g(5); }",
     ] {
-        let stderr = Case::new(false).historical_refusal(source, &[]);
+        let stderr = Case::new(false).mark_refusal(source, &[]);
         assert!(
-            stderr.contains(&format!(
-                "`main` calls `{callee}`, which has no definition in the closure"
-            )),
-            "{stderr}"
+            !stderr.contains("closure.unresolved_edge"),
+            "{source}: {stderr}"
         );
-        assert!(!stderr.contains(NOTE), "{source}: {stderr}");
-        assert!(!stderr.contains("native-lane-v1"), "{source}: {stderr}");
+        assert!(
+            !stderr.contains("frozen native profile"),
+            "{source}: {stderr}"
+        );
     }
 }

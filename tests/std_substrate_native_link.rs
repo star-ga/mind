@@ -682,7 +682,7 @@ fn import_std_posix_getuid_is_callable() {
     assert_eq!(code, 0, "imported getuid returns a stable non-negative uid");
 }
 
-/// std.iouring declares its own 2-arg open and must keep compiling.
+/// std.iouring declares open with the three parameters std.fs uses and must keep compiling.
 #[test]
 fn import_std_iouring_compiles() {
     let main = "import std.iouring;\nfn main() -> i64 { return 0; }\n";

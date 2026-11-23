@@ -316,6 +316,36 @@ _TEST_RESULT_RE = re.compile(
 # the caller's shell does not. A leaked MIND_BENCH_REQUIRE=1 reds the rows that
 # build without mlir-build on purpose.
 TIER_OWNED_ENV = ("MIND_BENCH_REQUIRE", "MIND_INTDOT_VNNI_VERIFY")
+# Neither CI build_test nor the workflow env sets a MIND* variable (`_self_test`
+# reads YAML env keys, shell assignments, `export` and $GITHUB_ENV lines), so no
+# caller value of one reaches a row either. A caller's MINDC_BIN (a std-surface
+# release mindc) pointed the trace-hash test of the bare row at that binary,
+# which emits the keystone the row must refuse.
+ROW_UNSET_PREFIX = "MIND"
+# A MIND* name that a job body or an env block gives its steps: a YAML key, or a
+# shell assignment (`X=`, `export X=`, an `X=...` line echoed into $GITHUB_ENV).
+_MIND_ENV_KEY_RE = re.compile(r"^\s*(MIND\w*)\s*:", re.M)
+_MIND_ASSIGN_RE = re.compile(r"(?<![\w$])(MIND\w*)=")
+
+
+def _row_probe_env() -> tuple[str, ...]:
+    """What the row probe exports: the tier-owned pair, every toolchain handle
+    the vacuity sweep sets, and one name that no list holds, so only the prefix
+    rule drops all of them.
+
+    The handle names are READ from the runner, never typed here: this file runs
+    no compiler, and a typed handle name makes the sweep read it as a gate that
+    consults one.
+    """
+    import run_gate  # lazy: only the self-test needs the runner
+    return (*TIER_OWNED_ENV, *run_gate.ENV_POINTED_HANDLES,
+            "MIND_HYGIENE_BASE", "MIND_ROW_PROBE_UNLISTED")
+
+
+def mind_env_names(text: str) -> list[str]:
+    """Every MIND* name that `text` sets for the steps it governs (comments skipped)."""
+    body = "\n".join(line for line in text.splitlines() if _significant(line))
+    return sorted(set(_MIND_ENV_KEY_RE.findall(body)) | set(_MIND_ASSIGN_RE.findall(body)))
 
 
 def run_cargo_test_matrix(root: Path) -> int:
@@ -325,7 +355,8 @@ def run_cargo_test_matrix(root: Path) -> int:
     if len(rows) < 10:
         raise ValueError(f"build_test cargo matrix has {len(rows)} semantic rows; need >=10")
     locked = (root / "Cargo.lock").is_file()
-    row_env = {k: v for k, v in os.environ.items() if k not in TIER_OWNED_ENV}
+    row_env = {k: v for k, v in os.environ.items()
+               if k not in TIER_OWNED_ENV and not k.startswith(ROW_UNSET_PREFIX)}
     failures = 0
     for index, row in enumerate(rows, 1):
         argv = cargo_test_execution_argv(row, locked)
@@ -372,6 +403,11 @@ def run_cargo_test_matrix(root: Path) -> int:
     return 1 if failures else 0
 
 
+def _ok(check: str) -> None:
+    """One verdict line per check that held; run_gate counts these lines."""
+    print(f"PASS  workflow_scan self-test: {check}")
+
+
 def _self_test() -> int:
     """Exercise the build-test cargo matrix contract without third-party YAML."""
     root = Path(__file__).resolve().parents[1]
@@ -388,13 +424,21 @@ def _self_test() -> int:
     missing = sorted(required - features)
     if missing:
         raise AssertionError(f"build_test cargo matrix missing feature rows: {missing}")
+    _ok(f"build_test has {len(rows)} rows and every required feature set")
+    # The rows run with no caller MIND* variable because CI sets none for them.
+    ci_mind_env = mind_env_names(jobs["build_test"]) + mind_env_names(top.get("env", ""))
+    if ci_mind_env:
+        raise AssertionError(f"build_test or the workflow env sets {ci_mind_env}; the matrix rows drop every MIND* variable")
+    _ok("neither build_test nor the workflow env sets a MIND* variable")
     # Cargo.lock is committed, so every CI row must resolve against it.
     unlocked = [row["command"] for row in rows if row["lock_modes"] != ["locked"]]
     if unlocked:
         raise AssertionError(f"build_test runs cargo test without --locked: {unlocked}")
+    _ok("every build_test row is --locked")
     pair = cargo_test_matrix("cargo test --features x\ncargo test --locked --features x")
     if len(pair) != 1 or set(pair[0]["lock_modes"]) != {"locked", "unlocked"}:
         raise AssertionError(f"lock/no-lock forms of one argv were not normalized together: {pair}")
+    _ok("lock and no-lock forms of one argv are one row")
     # Adversarial parser contract: continuations and quoted arguments must
     # remain one invocation, while the lock/no-lock duplicate collapses only
     # after preserving its selector and strongest timeout.
@@ -412,6 +456,7 @@ def _self_test() -> int:
         raise AssertionError(f"selector was not preserved: {probe_rows}")
     if probe_rows[0]["argv"] != expected_argv or probe_rows[0]["timeout"] != "90":
         raise AssertionError(f"argv/timeout was not preserved: {probe_rows}")
+    _ok("continued and quoted commands keep argv, selector and timeout")
 
     # Extraction is executable-shell scoped.  Prose and echo labels are not
     # commands, shell wrapper punctuation is not an argument, quoted whitespace
@@ -430,33 +475,40 @@ def _self_test() -> int:
         raise AssertionError(f"quoted argv or wrapper suffix was corrupted: {adversarial_rows}")
     if adversarial_rows[0]["timeout"] != "7" or "--release" not in adversarial_rows[0]["argv"]:
         raise AssertionError(f"timeout/release argv was not preserved: {adversarial_rows}")
+    _ok("echo labels are not commands; distinct argv stay distinct")
     try:
         cargo_test_matrix('echo "$(cargo test --features hidden)"')
     except ValueError:
         pass
     else:
         raise AssertionError("executable cargo command substitution was mistaken for an echo label")
+    _ok("a cargo command substitution is refused")
     boundary = {"argv": ["--features", "real", "--", "--locked", "--no-fail-fast"]}
     expected = ["--features", "real", "--no-fail-fast", "--locked", "--", "--locked", "--no-fail-fast"]
     if cargo_test_execution_argv(boundary, True) != expected:
         raise AssertionError("Cargo options were not inserted before the libtest separator")
+    _ok("cargo options go before the libtest separator")
     _matrix_row_environment_probe(root)
+    _ok("matrix rows inherit no caller MIND* variable")
     return 0
 
 
 def _matrix_row_environment_probe(root: Path) -> None:
     """Run the real matrix runner against a fake cargo that records what it inherits.
 
-    Both tier-owned variables are exported to the parent first. A control call
-    proves the fake cargo can see them; every matrix row must then see neither.
+    Every name of _row_probe_env() is exported to the parent first. A control call
+    proves the fake cargo can see them; every matrix row must then see no MIND*
+    variable at all.
     """
+    probe_env = _row_probe_env()
     with tempfile.TemporaryDirectory() as td:
         record = Path(td) / "env.log"
         fake = Path(td) / "cargo"
         fake.write_text(
             "#!/bin/sh\n"
-            'printf "%s %s\\n" "${MIND_BENCH_REQUIRE-unset}" "${MIND_INTDOT_VNNI_VERIFY-unset}"'
-            ' >> "$MIND_PROBE_RECORD"\n'
+            "env | sed -n 's/^\\(MIND[A-Za-z0-9_]*\\)=.*/\\1/p' | sort | tr '\\n' ' '"
+            ' >> "$WORKFLOW_SCAN_PROBE_RECORD"\n'
+            'echo >> "$WORKFLOW_SCAN_PROBE_RECORD"\n'
             'echo "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"\n',
             encoding="utf-8",
         )
@@ -464,9 +516,8 @@ def _matrix_row_environment_probe(root: Path) -> None:
         saved = dict(os.environ)
         os.environ.update({
             "PATH": f"{td}{os.pathsep}{saved.get('PATH', '')}",
-            "MIND_PROBE_RECORD": str(record),
-            "MIND_BENCH_REQUIRE": "1",
-            "MIND_INTDOT_VNNI_VERIFY": "1",
+            "WORKFLOW_SCAN_PROBE_RECORD": str(record),
+            **{name: "1" for name in probe_env},
         })
         try:
             subprocess.run([str(fake)], check=True, capture_output=True)
@@ -476,13 +527,16 @@ def _matrix_row_environment_probe(root: Path) -> None:
             os.environ.clear()
             os.environ.update(saved)
         seen = record.read_text(encoding="utf-8").splitlines()
-    if seen[:1] != ["1 1"]:
-        raise AssertionError(f"probe control: the fake cargo did not see the exported variables: {seen[:1]}")
+    control = set(seen[0].split()) if seen else set()
+    unseen = sorted(set(probe_env) - control)
+    if unseen:
+        raise AssertionError(f"probe control: the fake cargo did not see the exported variables: {unseen}")
     rows = seen[1:]
-    if rc != 0 or len(rows) < 10 or set(rows) != {"unset unset"}:
+    leaked = sorted({name for row in rows for name in row.split()})
+    if rc != 0 or len(rows) < 10 or leaked:
         raise AssertionError(
-            f"matrix rows inherited the caller's MIND_BENCH_REQUIRE/MIND_INTDOT_VNNI_VERIFY: "
-            f"rc={rc} rows={len(rows)} seen={sorted(set(rows))}"
+            f"matrix rows inherited the caller's MIND* variables: "
+            f"rc={rc} rows={len(rows)} leaked={leaked}"
         )
 
 

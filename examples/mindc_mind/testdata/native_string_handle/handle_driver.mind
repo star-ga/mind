@@ -1,0 +1,96 @@
+// Copyright 2026 STARGA Inc.
+// String literal handle driver: composed after main.mind and COMPILER_COMPONENTS (the
+// minted unit), so it feeds literals to nb_expr directly. The rodata accumulator
+// header is preset to off0, so a case can sit at the edge of the 8 MiB window, and
+// the (at most) 256 bytes from off0 are filled with 170 first, so a gap byte that nb_expr does
+// not write shows. stdin: [off0][count], then per literal [n][n source bytes, the
+// quotes included]. stdout, per literal: six words [poisoned, last_id, next_id,
+// header, code_len, count], then the code bytes; count = nb_count_expr of the same
+// node from the same next_id (the frame-size pass must use the ids nb_expr uses);
+// at the end [off0][header] and the accumulator bytes from off0 to the header. The
+// caller computes every expectation itself. No while and no bitwise operator, so the bare-surface formatter parses it.
+
+pub fn lh_fill(p: i64, k: i64) -> i64 {
+    if k == 0 {
+        return 0;
+    }
+    __mind_store_i8(p, 170);
+    lh_fill(p + 1, k - 1)
+}
+
+pub fn lh_min(a: i64, b: i64) -> i64 {
+    if a < b {
+        return a;
+    }
+    b
+}
+
+pub fn lh_site(st: NbState, lcell: i64, left: i64) -> i64 {
+    if left == 0 {
+        return 0;
+    }
+    let h: i64 = __mind_alloc(8);
+    if __mind_read(0, h, 8, 0 - 1) != 8 {
+        return 81;
+    }
+    let n: i64 = __mind_load_i64(h);
+    let buf: i64 = __mind_alloc(n + 8);
+    if __mind_read(0, buf, n, 0 - 1) != n {
+        return 82;
+    }
+    __mind_store_i64(lcell + 80, 0);
+    let node: i64 = ast_new_leaf(ast_str_lit(), 0, n);
+    let st2: NbState = nb_expr(st, buf, node, 0, 0, 0, 0, lcell);
+    let rod: i64 = __mind_load_i64(lcell + 104);
+    let code_len: i64 = string_len(st2.code);
+    let out: i64 = __mind_alloc(48);
+    __mind_store_i64(out, __mind_load_i64(lcell + 80));
+    __mind_store_i64(out + 8, st2.last_id);
+    __mind_store_i64(out + 16, st2.next_id);
+    __mind_store_i64(out + 24, __mind_load_i64(rod));
+    __mind_store_i64(out + 32, code_len);
+    __mind_store_i64(out + 40, nb_count_expr(st.next_id, buf, node, 0, 0, 0, lcell));
+    if __mind_write(1, out, 48, 0 - 1) != 48 {
+        return 83;
+    }
+    if code_len > 0 {
+        if __mind_write(1, string_addr(st2.code), code_len, 0 - 1) != code_len {
+            return 84;
+        }
+    }
+    lh_site(st2, lcell, left - 1)
+}
+
+pub fn main() -> i64 {
+    let h: i64 = __mind_alloc(16);
+    if __mind_read(0, h, 16, 0 - 1) != 16 {
+        return 80;
+    }
+    let off0: i64 = __mind_load_i64(h);
+    let count: i64 = __mind_load_i64(h + 8);
+    let rod: i64 = __mind_alloc(16 + nb_ctx_literal_capacity(0));
+    __mind_store_i64(rod, off0);
+    let _f: i64 = lh_fill(rod + 8 + off0, lh_min(256, nb_ctx_literal_capacity(0) - off0));
+    let lcell: i64 = nbwm_cell();
+    __mind_store_i64(lcell + 96, 0);
+    __mind_store_i64(lcell + 104, rod);
+    __mind_store_i64(lcell + 120, 0);
+    let st: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
+    let r: i64 = lh_site(st, lcell, count);
+    if r != 0 {
+        return r;
+    }
+    let end: i64 = __mind_load_i64(rod);
+    let fin: i64 = __mind_alloc(16);
+    __mind_store_i64(fin, off0);
+    __mind_store_i64(fin + 8, end);
+    if __mind_write(1, fin, 16, 0 - 1) != 16 {
+        return 85;
+    }
+    if end > off0 {
+        if __mind_write(1, rod + 8 + off0, end - off0, 0 - 1) != end - off0 {
+            return 86;
+        }
+    }
+    0
+}

@@ -116,7 +116,9 @@ existing compiler-owned semantics. The input length is bounded to 64 MiB in the
 new dynamic entry. No filename, supplied success flag or theorem identifier can
 select a less restrictive lowering path.
 
-The returned 192-byte record owns these values:
+The returned 208-byte record owns these values. The route also stores an i64 at
+`finished + 192` on every successful return, and the class word at `parts + 200`
+when the context is absent:
 
 | Offset | Field |
 |---|---|

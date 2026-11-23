@@ -4,7 +4,7 @@
 #
 # Proves, in ~1-2 min, that the front-end emit is byte-identical and the cdylib build
 # is deterministic — WITHOUT the ~25-minute `cargo test --release phase_g_keystone_bootstrap`
-# release-test recompile. This is the per-increment gate U1 runs before committing a
+# release-test recompile. This is the per-increment gate the workstation runs before committing a
 # self-host change; CI still runs the full cargo keystone + cross_substrate.
 #
 # Checks:

@@ -37,7 +37,7 @@ _HERE = pathlib.Path(__file__).parent
 _REPO = _HERE.parent.parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
-from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import compiler_library, start_child  # noqa: E402
 
 SO = resolve_so()
 
@@ -73,9 +73,9 @@ def build_check_elf(lib) -> bytes:
 
 def run_check(elf_path: pathlib.Path, source: str, extra_args: list[str]) -> tuple[int, str]:
     """stdin-fallback mode: no positional path, source piped on stdin."""
-    proc = subprocess.run(
+    proc = start_child(
         [str(elf_path), *extra_args],
-        input=source.encode(),
+        source.encode(),
         capture_output=True,
     )
     return proc.returncode, proc.stdout.decode(errors="replace")
@@ -83,9 +83,9 @@ def run_check(elf_path: pathlib.Path, source: str, extra_args: list[str]) -> tup
 
 def run_check_path(elf_path: pathlib.Path, src_file, extra_args: list[str]) -> tuple[int, str]:
     """BY-PATH mode (RI-C #228): pass a real file path as a positional arg, no stdin."""
-    proc = subprocess.run(
+    proc = start_child(
         [str(elf_path), *extra_args, str(src_file)],
-        input=b"",
+        b"",
         capture_output=True,
     )
     return proc.returncode, proc.stdout.decode(errors="replace")

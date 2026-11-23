@@ -32,6 +32,7 @@ import nb_cpu_features;
 import nb_measure;
 import nb_shm;
 import nbx_cuda_rows2;
+import nbx_libc_rows;
 import nb_exit;
 import nb_emit_core;
 import nb_group_sum_bank;
@@ -193,7 +194,8 @@ pub fn nbp_entry_guard_tsc(code: String, flags: i64) -> String {
 }
 
 // Bindable extern rows past the frozen table (main.mind nbx_row tail). 0 = no row.
-// Rows 87.. are libc (versioned) rows after the CUDA block (admit_extern TABLE_TAIL).
+// Rows 87.. are libc (versioned) rows after the CUDA block (admit_extern TABLE_TAIL);
+// rows 89..98 are in nbx_libc_rows.
 pub fn nbx_row_part(i: i64, out: i64) -> i64 {
     // freeaddrinfo(*mut u8) with no result type @ GLIBC_2.2.5
     if i == 87 {
@@ -202,6 +204,10 @@ pub fn nbx_row_part(i: i64, out: i64) -> i64 {
     // uname(*mut u8) -> i32 @ GLIBC_2.2.5
     if i == 88 {
         return nbx_put(out, 5, 435626798709, 0, 0, 11, 3328827817059765319, 3485234, 1281, 0, 1);
+    }
+    // Rows 89.. are the libc block of nbx_libc_rows (none past 98).
+    if i >= 89 {
+        return nbxl_row(i, out);
     }
     nbcu_row(i, out)
 }

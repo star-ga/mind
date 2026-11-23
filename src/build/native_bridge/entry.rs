@@ -6,10 +6,10 @@
 //! no-`main` library stub is refused, and `fn main(argc, argv)` is admitted only
 //! when the entry binds both parameters to the process arguments (W4b).
 //!
-//! Both checks inspect the PROGRAM entry. In an explicit-layout image a
-//! compiler may place its allocator runtime at the ELF entry; that prefix only
-//! records the allocator entry points and jumps to the program entry, so the
-//! checks follow exactly that recognised jump (see `program_entry_va`).
+//! Both checks inspect the PROGRAM entry. A compiler may place its allocator
+//! runtime at the ELF entry (an explicit layout or the default layout); that
+//! prefix only records the allocator entry points and jumps to the program
+//! entry, so the checks follow exactly that recognised jump (`program_entry_va`).
 
 use crate::build::native_image::{ARENA_ADDR, NativeLayout};
 
@@ -79,8 +79,8 @@ pub(super) fn check_entry_binds_main_params(
     )
 }
 
-/// The bounded-profile allocator runtime prefix that a compiler emits at code
-/// offset 0 of an explicit-layout image (`main.mind::nb_rt_blob_p1`, assembly
+/// The allocator runtime prefix that a compiler emits at code offset 0 of an
+/// image that carries the runtime (`main.mind::nb_rt_blob_p1`, assembly
 /// `testdata/native_alloc_bounded/rt/alloc_rt.s`, label `prefix`):
 ///
 /// ```text
@@ -171,20 +171,18 @@ impl<'a> Image<'a> {
         Err(malformed())
     }
 
-    /// The address the program's own entry code starts at. Without an explicit
-    /// layout this is the ELF entry, exactly as before. With one, an ELF entry
-    /// that is the allocator runtime prefix for THIS layout's state page is
-    /// followed through its final `jmp`; any other entry is checked as is, so
-    /// a seed that predates the runtime, or a prefix built for a different
-    /// state page, is never skipped over.
+    /// The address the program's own entry code starts at. An ELF entry that is
+    /// the allocator runtime prefix for THIS layout's state page (`None` is the
+    /// default layout) is followed through its final `jmp`; any other entry is
+    /// checked as is, so a seed that predates the runtime, or a prefix built
+    /// for a different state page, is never skipped over.
     fn program_entry_va(&self, layout: Option<&NativeLayout>) -> Result<u64, String> {
-        let Some(layout) = layout else {
-            return Ok(self.entry);
-        };
         let Ok(code) = self.code_at(self.entry, RT_PREFIX.len()) else {
             return Ok(self.entry);
         };
-        let state_page = ARENA_ADDR + layout.arena_bytes - 4096;
+        // The default layout's arena is 1 GiB (`main.mind::nb_arena_bytes_default`).
+        let arena = layout.map_or(1 << 30, |l| l.arena_bytes);
+        let state_page = ARENA_ADDR + arena - 4096;
         let shape = RT_PREFIX
             .iter()
             .zip(code)
@@ -197,11 +195,9 @@ impl<'a> Image<'a> {
         // The runtime jumps FORWARD over itself; anything else is not the
         // recognised prefix and is refused rather than followed.
         if rel < 0 {
-            return Err(
-                "the explicit-layout runtime prefix does not jump forward to the \
+            return Err("the runtime prefix does not jump forward to the \
                         program entry"
-                    .to_string(),
-            );
+                .to_string());
         }
         Ok(next + rel as u64)
     }
@@ -366,8 +362,8 @@ mod entry_stub_tests {
         let elf = bounded_image(state_page(), &bound);
         assert_eq!(check_entry_binds_main_params(&elf, Some(&layout)), Ok(()));
         assert_eq!(check_entry_is_not_no_main_stub(&elf, Some(&layout)), Ok(()));
-        // Pre-change behaviour, kept for the default profile: the ELF entry
-        // itself is the runtime prefix, which binds nothing.
+        // The prefix names the bounded state page, not the default layout's:
+        // on the default layout the ELF entry itself is checked, and binds nothing.
         assert!(check_entry_binds_main_params(&elf, None).is_err());
     }
 
@@ -410,5 +406,67 @@ mod entry_stub_tests {
         let elf = elf_with_entry_code(62, &code);
         assert!(check_entry_binds_main_params(&elf, Some(&layout)).is_err());
         assert!(check_entry_is_not_no_main_stub(&elf, Some(&layout)).is_err());
+    }
+
+    /// The default layout's state page: arena base 16 MiB + 1 GiB - 4 KiB.
+    const DEFAULT_STATE_PAGE: u64 = 0x40FF_F000;
+
+    #[test]
+    fn a_default_layout_runtime_prefix_is_followed_to_the_program_entry() {
+        let mut bound = MAIN_PARAMS_BINDING.to_vec();
+        bound.extend_from_slice(&STACK_SWITCH);
+        let elf = bounded_image(DEFAULT_STATE_PAGE, &bound);
+        assert_eq!(check_entry_binds_main_params(&elf, None), Ok(()));
+        assert_eq!(check_entry_is_not_no_main_stub(&elf, None), Ok(()));
+        // Behind the prefix the program entry is still checked: no binding.
+        let elf = bounded_image(DEFAULT_STATE_PAGE, &STACK_SWITCH);
+        assert!(check_entry_binds_main_params(&elf, None).is_err());
+    }
+
+    #[test]
+    fn a_no_main_stub_behind_the_default_layout_prefix_is_refused() {
+        let elf = bounded_image(DEFAULT_STATE_PAGE, &NO_MAIN_ENTRY_STUB);
+        assert!(check_entry_is_not_no_main_stub(&elf, None).is_err());
+        // The explicit layout's own state page is not the default one.
+        let elf = bounded_image(state_page(), &NO_MAIN_ENTRY_STUB);
+        assert!(check_entry_is_not_no_main_stub(&elf, Some(&bounded())).is_err());
+        assert_eq!(check_entry_is_not_no_main_stub(&elf, None), Ok(()));
+    }
+
+    #[test]
+    fn a_forged_default_layout_prefix_is_not_followed() {
+        let mut bound = MAIN_PARAMS_BINDING.to_vec();
+        bound.extend_from_slice(&STACK_SWITCH);
+        // A wrong state page: the bounded layout's, and one page past the default's.
+        for page in [state_page(), DEFAULT_STATE_PAGE + 4096] {
+            let elf = bounded_image(page, &bound);
+            assert!(check_entry_binds_main_params(&elf, None).is_err());
+        }
+        // An altered instruction in the prefix is not the recognised prefix.
+        let mut code = rt_prefix(DEFAULT_STATE_PAGE, 0);
+        code[18] = 0x8B; // mov [r9+536],rax -> a different instruction
+        code.extend_from_slice(&MAIN_PARAMS_BINDING);
+        assert!(check_entry_binds_main_params(&elf_with_entry_code(62, &code), None).is_err());
+        // The recognised prefix jumping backwards is refused, not followed.
+        let mut code = rt_prefix(DEFAULT_STATE_PAGE, -62);
+        code.extend_from_slice(&MAIN_PARAMS_BINDING);
+        let elf = elf_with_entry_code(62, &code);
+        assert!(check_entry_binds_main_params(&elf, None).is_err());
+        assert!(check_entry_is_not_no_main_stub(&elf, None).is_err());
+    }
+
+    #[test]
+    fn a_default_layout_image_without_the_prefix_is_checked_as_before() {
+        // The binding at the ELF entry is admitted, a stack switch alone and
+        // the no-main stub are refused: nothing is followed.
+        let mut bound = MAIN_PARAMS_BINDING.to_vec();
+        bound.extend_from_slice(&STACK_SWITCH);
+        let elf = elf_with_entry_code(62, &bound);
+        assert_eq!(check_entry_binds_main_params(&elf, None), Ok(()));
+        assert_eq!(check_entry_is_not_no_main_stub(&elf, None), Ok(()));
+        let elf = elf_with_entry_code(62, &STACK_SWITCH);
+        assert!(check_entry_binds_main_params(&elf, None).is_err());
+        let elf = elf_with_entry_code(62, &NO_MAIN_ENTRY_STUB);
+        assert!(check_entry_is_not_no_main_stub(&elf, None).is_err());
     }
 }

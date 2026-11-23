@@ -1,7 +1,8 @@
 import std.sha256;
 
-// std.sha256's `sha256` reached from a loop. Its scratch is freed, and the
-// default native profile reclaims nothing, so the lane refuses the free.
+// std.sha256's `sha256` reached from a loop. Its scratch is freed on every
+// pass; a free in a loop builds and reclaims. The message is empty, so `out`
+// holds the digest of the empty string after each pass; it is written once.
 
 fn main() -> i64 {
     let msg: i64 = __mind_alloc(8);
@@ -13,5 +14,6 @@ fn main() -> i64 {
         acc = acc + rc + __mind_load_i8(out);
         i = i + 1;
     }
+    __mind_write(1, out, 32, 0 - 1);
     return acc;
 }

@@ -8,10 +8,11 @@
 //! seed's single private definition (comments and trailing spaces aside)
 //! denotes the same function whichever copy the compiler keeps.
 //!
-//! These controls pin both directions on the historical (unmarked compiler)
-//! path: an exact private copy builds and runs, while a divergent, public or
-//! open copy keeps the historical refusal. On Linux x86-64 the positive case
-//! executes the real native image.
+//! These controls pin both directions on the lane: an exact private copy builds
+//! and runs, while a divergent copy in an open image, a public copy or an open
+//! copy is refused. The unmarked compiler of the historical path is refused by
+//! its mark before any profile judges the program. On Linux x86-64 the positive
+//! case executes the real native image.
 #![cfg(all(feature = "cross-module-imports", feature = "std-surface"))]
 
 mod native_bridge_support;
@@ -64,8 +65,36 @@ fn exact_private_copies_of_seed_helpers_build_and_run() {
     assert_native_result(&p, &bytes, 18, "sha_maj(5,3,6) + sha_ch(12,10,3) == 18");
 }
 
-/// One divergent body keeps the historical refusal and names that helper:
-/// the frozen compiler would bind std's own `sha_maj` callers to this body.
+/// The same exact copies through the native compiler of the macOS and
+/// Windows rows, built on every host. The host runs no compiler without the
+/// lane mark, so an unmarked fixture there refuses every lane build of these
+/// controls by the mark.
+#[test]
+fn exact_private_copies_are_admitted_by_the_portable_compiler() {
+    let p = Project::new("seedcopy");
+    p.write(
+        "src/main.mind",
+        &format!("{MASK32_COPY}\n{CH_COPY}\n{MAJ_COPY}\n{MAIN}"),
+    );
+    let (code, err, artifact) = p.build_native_portable("src/main.mind");
+    assert_eq!(code, 0, "the portable compiler must be admitted: {err}");
+    assert!(
+        !err.contains("native.compiler_mark"),
+        "no mark refusal expected: {err}"
+    );
+    let bytes = artifact.expect("artifact written");
+    assert_eq!(bytes.len(), 397, "the drain fixture emits its fixed anchor");
+    let image = std::fs::read(p.root().join("native-image.bin")).expect("captured image");
+    assert!(
+        !image.is_empty(),
+        "the drain fixture received the source image"
+    );
+}
+
+/// One divergent body through the unmarked compiler of the historical path.
+/// The host runs no compiler without `nblane02`, so the refusal is the mark,
+/// before any profile judges the program, and no artifact is written. On the
+/// lane the divergent copy is refused in an open image (the next control).
 #[test]
 fn divergent_copy_of_a_seed_helper_is_still_refused() {
     let divergent = MAJ_COPY.replace("^ (y & z)", "");
@@ -74,9 +103,9 @@ fn divergent_copy_of_a_seed_helper_is_still_refused() {
     assert_ne!(code, 0, "a divergent copy must refuse: {err}");
     assert!(artifact.is_none(), "a refusal must write no artifact");
     assert!(
-        err.contains("`sha_maj` collides with a std seed-blob symbol")
-            && err.contains("closure.std_symbol_collision"),
-        "refusal must be owned by the std-collision rule and name `sha_maj`: {err}"
+        err.contains("does not carry the native-lane-v1 mark `nblane02`")
+            && err.contains("(native.compiler_mark)"),
+        "refusal must be owned by the compiler mark: {err}"
     );
 }
 

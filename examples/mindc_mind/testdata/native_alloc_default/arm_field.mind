@@ -1,0 +1,20 @@
+// A free under a field read of a call inside a while loop, 1,100 x 1 MB: a bump arena (1 GiB) overflows, so the image must reclaim. Exit status 33.
+struct P {
+    a: i64,
+    b: i64,
+}
+fn mkp(x: i64) -> P {
+    return P { a: x, b: 1 };
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, i);
+        acc = acc + __mind_load_i64(p) - i;
+        let z: i64 = mkp(__mind_free(p)).a;
+        i = i + 1;
+    }
+    return acc + 33;
+}

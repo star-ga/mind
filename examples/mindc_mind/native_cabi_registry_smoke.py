@@ -5,6 +5,7 @@ runs in a fresh bounded process. Expectations are declared before execution.
 """
 from pathlib import Path
 import argparse, ctypes, hashlib, json, os, resource, struct, subprocess, sys
+from _selfhost_sources import start_child
 HERE=Path(__file__).resolve().parent
 SCALARS=['i8','u8','i16','u16','i32','u32','i64','u64','isize','usize','f32','f64','bool']
 def ty(t):
@@ -90,7 +91,7 @@ def main():
  for n,s,expected,out in c:
   result=[]
   for leg,cmd,data in [('native',[str(a.native)],struct.pack('<q',len(s))+s),('oracle',[sys.executable,str(Path(__file__).resolve()),'--oracle-child',str(a.oracle)],s)]:
-   q=subprocess.run(cmd,input=data,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=100,preexec_fn=lambda:limits())
+   q=start_child(cmd,data,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=100,preexec_fn=lambda:limits())
    base=a.evidence/(n+'.'+leg);base.with_suffix(base.suffix+'.stdout').write_bytes(q.stdout);base.with_suffix(base.suffix+'.stderr').write_bytes(q.stderr)
    row={'name':n,'leg':leg,'argv':cmd,'exit':q.returncode,'stdout_sha256':hashlib.sha256(q.stdout).hexdigest(),'stderr_sha256':hashlib.sha256(q.stderr).hexdigest(),'expected_exit':expected}
    (a.evidence/(n+'.'+leg+'.json')).write_text(json.dumps(row,indent=2)+'\n');rows.append(row);result.append((q.returncode,q.stdout,q.stderr))

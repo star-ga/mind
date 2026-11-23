@@ -24,7 +24,7 @@ _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 # stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import ResolvedSo, resolve_so  # noqa: E402
-from _selfhost_sources import COMPILER_COMPONENTS, NATIVE_STD_MODULES, SourceBundle, capture_bundle  # noqa: E402
+from _selfhost_sources import COMPILER_COMPONENTS, NATIVE_STD_MODULES, SourceBundle, capture_bundle, self_mode_image, start_child  # noqa: E402
 from _selfhost_loop_reseed import (SEED_CHAIN_ROOT, git_receipt_history,  # noqa: E402,F401
                                    manifest_text, old_seed_chain, verify_chain)
 
@@ -168,8 +168,8 @@ def stage0_emit(combined: bytes, user_lo: int) -> bytes:
 def run_elf(elf_path: pathlib.Path, stdin_image: bytes) -> bytes:
     """Run the native ELF with the seeded stdin; return its stdout (the emitted ELF).
     Raises on non-zero exit or empty output (fail-closed)."""
-    r = subprocess.run(
-        [str(elf_path)], input=stdin_image, stdout=subprocess.PIPE,
+    r = start_child(
+        [str(elf_path)], self_mode_image(stdin_image, elf_path), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, timeout=int(os.environ.get("MIND_SELFHOST_TIMEOUT_SECS", "120")),
     )
     if r.returncode != 0:

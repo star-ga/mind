@@ -4,6 +4,7 @@
 import argparse, csv, hashlib, json, os, resource, struct, subprocess
 from pathlib import Path
 from native_dynamic_writer_check import encoder
+from _selfhost_sources import self_mode_image, start_child
 
 HERE = Path(__file__).resolve().parent
 TD = HERE / "testdata/native_libc_startup"
@@ -346,9 +347,9 @@ def main():
         )
         if preload:
             child_env["LD_PRELOAD"] = str(e / "preload.so")
-        q = subprocess.run(
+        q = start_child(
             list(map(str, args)),
-            input=data,
+            data,
             capture_output=True,
             cwd=cwd,
             env=child_env,
@@ -411,7 +412,7 @@ def main():
         + combined
     )
     (e / "build.packet").write_bytes(inp)
-    q = run("native-build", [a.seed], inp)
+    q = run("native-build", [a.seed], self_mode_image(inp, a.seed))
     assert q.returncode == 0 and not q.stderr and q.stdout.startswith(b"\x7fELF"), (
         q.returncode,
         q.stderr,
@@ -692,7 +693,7 @@ def main():
             + mutant
         )
         (e / (ident + ".build.packet")).write_bytes(packet)
-        q = run(ident + "-mutant-build", [a.seed], packet)
+        q = run(ident + "-mutant-build", [a.seed], self_mode_image(packet, a.seed))
         assert q.returncode == 0 and not q.stderr and q.stdout.startswith(b"\x7fELF")
         exe = e / (ident + ".mutant.compiler")
         exe.write_bytes(q.stdout)

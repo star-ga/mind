@@ -5,7 +5,8 @@
 #   0x1111111111111101 A    arena base
 #   0x1111111111111102 A8   A + 8 (header address of cursor offset 0)
 #   0x1111111111111103 ST   state page (last 4096 bytes of the arena)
-#   0x1111111111111104 OB   overflow base (stack top + guard)
+#   0x1111111111111104 OB   overflow base (stack top + guard); a default-layout image patches OB = A,
+#                            so the overflow mapping is refused and a full arena exits 70
 #   0x1111111111111105 A16  A + 16
 #   0x1111111111111106 OB8  OB + 8
 # State page words: [ST+8k] bin k head (k<64); [ST+512] overflow mapped end;

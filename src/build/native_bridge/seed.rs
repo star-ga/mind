@@ -163,12 +163,12 @@ pub(super) const SCOPED_BINDINGS_MARK: &[u8] = b"\x48\xb8nbscope1";
 /// It is NOT a signature, a trusted compiler hash, or a qualified release pin.
 /// Explicit compiler overrides remain caller-supplied compiler executables;
 /// this marker only chooses which source/IR admission contract to apply.
-pub(super) const NATIVE_LANE_V1_MARK: &[u8] = b"\x48\xb8nblane01";
+pub(super) const NATIVE_LANE_V1_MARK: &[u8] = b"\x48\xb8nblane02";
 
 /// Compatibility marker for fixed-arity `extern "C"` lowering: `main.mind`'s
 /// `nb_cap_extern_fixed_v1` compiles to `movabs rax, imm64` spelling
 /// `nbextc01`. A compiler carrying it binds the `nbx_row` libc table through a
-/// static-layout dynamic image. Like `nblane01` it selects an admission
+/// static-layout dynamic image. Like `nblane02` it selects an admission
 /// contract; it is not a signature, a trusted hash, or a release pin.
 pub(super) const EXTERN_FIXED_MARK: &[u8] = b"\x48\xb8nbextc01";
 
@@ -182,7 +182,7 @@ pub(super) const SEED_EXTERN_MARK: &[u8] = b"\x48\xb8nbsext01";
 /// Compatibility marker for the builtin `print` statement: `nb_print.mind`'s
 /// `nb_cap_native_print_v1` compiles to `movabs rax, imm64` spelling
 /// `nbprint1`. Only a compiler carrying it gets `print` admitted (the lane
-/// otherwise refuses it as `lane.source.print`). Like `nblane01` it selects an
+/// otherwise refuses it as `lane.source.print`). Like `nblane02` it selects an
 /// admission contract; it is not a signature, a trusted hash, or a release pin.
 pub(super) const NATIVE_PRINT_MARK: &[u8] = b"\x48\xb8nbprint1";
 
@@ -353,16 +353,45 @@ mod tests {
     #[test]
     fn lane_marker_is_distinct_complete_and_not_memory_profile_authority() {
         assert!(!has_mark(SCOPED_BINDINGS_MARK, NATIVE_LANE_V1_MARK));
-        assert!(!has_mark(b"nblane01", NATIVE_LANE_V1_MARK));
-        assert!(!has_mark(b"\x48\xb8nblane02", NATIVE_LANE_V1_MARK));
+        assert!(!has_mark(b"nblane02", NATIVE_LANE_V1_MARK));
+        // The 0.10.3 seeds carry `nblane01`. That mark does not select the
+        // lane: the host refuses the compiler before admission.
+        assert!(!has_mark(b"\x48\xb8nblane01", NATIVE_LANE_V1_MARK));
+        assert_eq!(NATIVE_LANE_V1_MARK, b"\x48\xb8nblane02");
         assert!(has_mark(
-            b"prefix\x48\xb8nblane01suffix",
+            b"prefix\x48\xb8nblane02suffix",
             NATIVE_LANE_V1_MARK
         ));
         // Neither a bounded-layout label nor the scoped-let marker alone
         // activates new rules. Real pins may be refreshed later, so do not
         // hardcode that every future committed seed must remain unmarked.
         assert!(!has_mark(b"bounded\x48\xb8nbscope1", NATIVE_LANE_V1_MARK));
+    }
+
+    #[test]
+    fn the_python_lane_gates_guard_the_mark_the_host_selects() {
+        // Each lane gate answers BLOCKED for a compiler without its MARK. A guard
+        // on another mark lets through a compiler that the host sends to the
+        // frozen profile, and blocks one that the host selects.
+        let m = NATIVE_LANE_V1_MARK;
+        let label = std::str::from_utf8(&m[2..]).expect("the label is ASCII");
+        let guard = format!("MARK = b\"\\x{:02x}\\x{:02x}{label}\"", m[0], m[1]);
+        let any_lane_mark = "MARK = b\"\\x48\\xb8nblane";
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/mindc_mind");
+        let mut guarded = 0;
+        for entry in std::fs::read_dir(dir).expect("the gate directory is part of the checkout") {
+            let path = entry.expect("a directory entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("py") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a gate script is UTF-8");
+            for line in text.lines().filter(|l| l.starts_with(any_lane_mark)) {
+                assert_eq!(line, guard, "{}", path.display());
+                guarded += 1;
+            }
+        }
+        // Positive control: the two CI-wired lane gates were found and checked.
+        assert!(guarded >= 2, "lane gate guards found: {guarded}");
     }
 
     #[test]
@@ -388,10 +417,9 @@ mod tests {
     #[test]
     fn the_embedded_seeds_carry_the_native_lane_v1_and_scoped_binding_marks() {
         // `compiler_supports_native_lane_v1` reads these bytes when no
-        // MINDC_NATIVE_ELF override is set. A seed without the `nblane01` mark
-        // sends every native build down the historical admission branch, which
-        // has no intrinsic bindings and refuses the downstream consumer programs at the
-        // closure fence. The reseed that embeds main.mind's
+        // MINDC_NATIVE_ELF override is set. A seed without the `nblane02` mark
+        // is refused before admission, so no program is judged without the
+        // compiler's own rules. The reseed that embeds main.mind's
         // `nb_cap_native_lane_v1` must reach BOTH profiles.
         for (what, elf) in [("default", DEFAULT_SEED_ELF), ("bounded", BOUNDED_SEED_ELF)] {
             assert!(

@@ -463,7 +463,7 @@ fn bounded_inventory_has_adjacent_valid_and_invalid_controls() {
 }
 
 #[test]
-fn descriptors_do_not_enable_native_build_admission() {
+fn descriptors_leave_the_symbol_decision_to_the_compiler() {
     let ast = parse("extern \"C\" {fn probe(x:i32)->i64;} fn main()->i64{return 0;}");
     let empty = BTreeSet::new();
     NativeCAbi::from_ast(
@@ -476,12 +476,10 @@ fn descriptors_do_not_enable_native_build_admission() {
     .unwrap()
     .require_fixed_sysv_amd64()
     .unwrap();
-    // A descriptor is not admission: the name must sit in the lane's closed
-    // libc table. `probe` does not, so the lane still refuses it — by name.
+    // A descriptor is not admission: the host only types the declaration, and
+    // the native compiler decides whether `probe` has a row (it has none).
     assert_eq!(
-        crate::ir::native_lane_profile::profile_lane_admits_source(&ast, true)
-            .unwrap_err()
-            .construct,
-        "lane.extern.unknown_symbol"
+        crate::ir::native_lane_profile::profile_lane_admits_source(&ast, true),
+        Ok(())
     );
 }

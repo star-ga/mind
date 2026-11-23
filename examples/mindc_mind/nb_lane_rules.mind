@@ -1,0 +1,48 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The one rule hook of the native lane. nb_lower_parts_hb_route (main.mind) calls
+// nb_lane_rules_run once per compile, with no condition on its ctx argument, once
+// the item table and the fn lists exist. The route's ctx length and capacity guards
+// run before that call. A non-zero result is a lane reason word (nb_lane_keys.mind):
+// the route stores it as the stage's refusal reason and refuses the compile.
+//
+// Parameters, in order:
+//   cell       address of the mode word (word 12 of the layout cell), or 0 when the
+//              compiler runs without the stage driver's cell (the shared-library
+//              form): mode off. Word at cell: 0 off, 1 lane (the default of a native
+//              run), 2 self (the input started with nb_lane_self_magic()). Word at
+//              cell + 8: the test word of the MINDHOOK input, 0 in every other run.
+//   src_addr   the composed source image: the std blob, then the user region.
+//   user_lo    the offset of the first user byte; a site below it lies in the std region.
+//   src_len    the length of the composed image.
+//   items_addr the top-level item node table, items_len its length (AST node records
+//              as in nb_ast.mind; every fn, const, extern and struct item).
+//   all_fns    the fn_def nodes of every module in source order, nb_all their count.
+//   fns        the fn_def nodes the compiler emits (kept after the reachability prune
+//              and the last-definition dedup), n_fns their count.
+//   ctx        the native context of the caller, 0 for the stage driver.
+// A rule family is one function in its own part that takes what it needs from these
+// and returns 0 or a reason word built with nb_lane_pack; this function calls the
+// families in a fixed order and returns the first non-zero word. Wired: the string
+// walk (nb_lane_str2.mind). The extern keys are not a walk: nb_lane_extern_check takes
+// the facts of one declaration and is called from nbx_check_row in main.mind. The
+// MINDHOOK test input (the test word) is returned first.
+// PART RULE: intrinsics and parts only.
+
+import nb_lane_str2;
+
+pub fn nb_lane_rules_run(cell: i64, src_addr: i64, user_lo: i64, src_len: i64, items_addr: i64, items_len: i64, all_fns: i64, nb_all: i64, fns: i64, n_fns: i64, ctx: i64) -> i64 {
+    if cell == 0 {
+        return 0;
+    }
+    if __mind_load_i64(cell) != 1 {
+        return 0;
+    }
+    let test_word: i64 = __mind_load_i64(cell + 8);
+    if test_word != 0 {
+        return test_word;
+    }
+    nb_lane_str_walk(src_addr, src_len, items_addr, items_len, user_lo, fns, n_fns)
+}

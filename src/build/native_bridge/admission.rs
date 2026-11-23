@@ -565,7 +565,7 @@ mod tests {
         let tuple = "fn f(b: i64) -> i64 { while 1 { let (a, b) = (1, 2); } return b; }";
         assert_eq!(shadowed(tuple), ["b:let<parameter@loop"]);
         let konst = "const N: i64 = 4;\nfn f() -> i64 { while 1 { let N = 3; } return N; }";
-        assert_eq!(shadowed(konst), ["N:let<const@loop"]);
+        assert_eq!(shadowed(konst), Vec::<String>::new());
     }
 
     #[test]
@@ -582,9 +582,11 @@ mod tests {
         let arm = "fn f(v: i64) -> i64 { let y = 5; match v { y => { return y; } } }";
         assert_eq!(shadowed(arm), ["y:match binding<let@block"]);
         let konst = "const N: i64 = 4;\nfn f() -> i64 { let N = 3; return N; }";
-        assert_eq!(shadowed(konst), ["N:let<const@block"]);
+        assert_eq!(shadowed(konst), Vec::<String>::new());
         let param_konst = "const N: i64 = 4;\nfn f(N: i64) -> i64 { return N; }";
-        assert_eq!(shadowed(param_konst), ["N:parameter<const@block"]);
+        assert_eq!(shadowed(param_konst), Vec::<String>::new());
+        let extern_konst = "extern const N: i64;\nfn f() -> i64 { let N: i64 = 3; return N; }";
+        assert_eq!(shadowed(extern_konst), ["N:let<const@block"]);
         let block_then_loop = "fn f() -> i64 { let x = 5; if 1 { let x = 9; while 1 { } } \
                                return x; }";
         assert_eq!(shadowed(block_then_loop), ["x:let<let@block"]);
@@ -644,9 +646,9 @@ mod tests {
             "fn f(x: i64) -> i64 { for i in 0..2 { let x = 1; } return x; }",
             "fn f() -> i64 { for i in 0..3 { let i = 10; } return 0; }",
             "fn f(i: i64) -> i64 { for i in 0..3 { } return i; }",
-            // tuple let, module constant, match binding / arm
+            // tuple let, for-body let, match binding / arm
             "fn f(b: i64) -> i64 { while 1 { let (a, b) = (1, 2); } return b; }",
-            "const N: i64 = 4;\nfn f() -> i64 { while 1 { let N = 3; } return N; }",
+            "fn f(x: i64) -> i64 { for i in 0..2 { let x = 1; } return x; }",
             "fn f(v: i64) -> i64 { let y = 5; match v { y => { return y; } } }",
             "fn f(v: i64) -> i64 { let y = 5; match v { 1 => { let y = 2; return y; } _ => 0 } }",
             // a `let` inside a value-`if` branch is an expression position

@@ -14,7 +14,8 @@ mark keeps refusing extern declarations.
   `unsafe fn` or bare `fn`, no variadics, at most eleven parameters. Parameter
   types: `i32`, `u32`, `i64`, `*const u8`, `*mut u8`, `*mut i32`,
   `*const *const u8`, `*mut *mut u8`, `*mut i64`. Results: `i32`, `i64`,
-  `*mut u8`, `*mut i32`, or no result type. Any other pointer-to-pointer
+  `*mut u8`, `*mut i32`, or no result type; `*const u8` only on the `getenv`
+  row of the libc block below. Any other pointer-to-pointer
   shape stays refused (exactly one `*const *const u8` and one
   `*mut *mut u8` parameter code), and `*mut *mut u8` / `*mut i64` are
   parameter-only widths.
@@ -54,7 +55,7 @@ mark keeps refusing extern declarations.
   getrandom flags are spelled `i32`, as std's `net`, `dns` and `entropy`
   blocks declare them; the callee reads the low 32 bits either way.
   Variadic names stay outside this table.
-- The GPU loader rows (ruling 16b) bind through `libcuda.so.1` with no symbol
+- The GPU loader rows bind through `libcuda.so.1` with no symbol
   version: `cuInit (u32) -> i32`,
   `cuDeviceGet (*mut i32, i32) -> i32`,
   `cuCtxCreate_v2 (*mut *mut u8, u32, i32) -> i32`,
@@ -121,8 +122,90 @@ mark keeps refusing extern declarations.
   a separate block whose address the record's first name word holds;
   `nbcu_name` reads either form for the lookup and the string table.
   `cuMemAllocManaged` and `cuGetProcAddress` have no row and refuse by name.
-- Any other declaration in the user region refuses the whole module. Declared
-  but uncalled symbols create no import.
+- The libc block (indices 89..98, `nbxl_row` in
+  `examples/mindc_mind/nbx_libc_rows.mind`, capability mark `nblibc03`) binds
+  ten more `libc.so.6` symbols at `GLIBC_2.2.5`:
+  `readlink (*const u8, *mut u8, i64) -> i64`,
+  `bind (i32, *const u8, i32) -> i32`,
+  `getsockname (i32, *mut u8, *mut u8) -> i32`,
+  `sendto (i32, *const u8, i64, i32, *const u8, i32) -> i64`,
+  `recvfrom (i32, *mut u8, i64, i32, *mut u8, *mut u8) -> i64`,
+  `getenv (*const u8) -> *const u8`, `creat (*const u8, i32) -> i32`,
+  `poll (*mut u8, i64, i32) -> i32`, `listen (i32, i32) -> i32` and
+  `getsockopt (i32, i32, i32, *mut u8, *mut u8) -> i32`. `sendto` and
+  `recvfrom` take six arguments, so the fifth and sixth travel in `r8` and
+  `r9` and no stack argument is pushed. `getenv` is the one row with a
+  `*const u8` result: `nbx_row_sig` admits that result code, a declaration is
+  still bound only when its whole signature equals a row, and `close(fd: i32)
+  -> *const u8` stays refused. The `nbx_row` lookup scans indices 0..127 and
+  stops at the first name match, so indices 99..127 are free for later rows.
+  Where this block is available: a compiler minted from this tree. The host
+  holds no table of names (`src/ir/native_lane_profile/admit_extern.rs` types
+  a declaration and admits it). `mindc build` with that compiler builds a call
+  of `getenv` and a call of `creat`. The committed seeds carry `nblane02`
+  (seed advance of this release); a compiler without the mark is refused
+  before any profile (`native.compiler_mark`). No change of a host table
+  is required. The tests feed a compiler built from this tree by the frozen
+  seed directly (`native_lane_value_shapes_smoke.py --only libc_rows`, with
+  `--mint-stage1`) and cross-check the same programs through
+  `--backend mlir` (`--only libc_rows_mlir`). Each refusal control calls its
+  extern and has an accepted twin: the same call under the declaration that
+  equals the row. One CI step runs these rows on the committed bounded seed;
+  a second step mints the stage1 from the tree and runs them on it.
+- Any other declaration in the user region refuses the whole module, whether
+  a call uses it or not (a wrong signature or an unknown name is refused when
+  uncalled: exit 3, no artifact, key 66 or 64; measured on the candidate
+  minted from this tree). A declaration that equals a row and that no call
+  uses makes no import, so such a program builds (row `xk_uncalled_close`),
+  also when it calls no extern at all.
+- A refused declaration is named. The rule family `nb_lane_extern_check`
+  (`examples/mindc_mind/nbt_extern_keys.mind`, capability mark `nblxk001`)
+  decides in this order: a calling convention that is not C or SysV (key 67,
+  `lane.extern.callconv`; an ABI string other than `"C"` counts), a name with
+  no row (64, `lane.extern.unknown_symbol`), a parameter count that differs
+  from the row (65, `lane.extern.arity`), then a width or class that differs
+  from the row, or a variadic tail (66, `lane.extern.signature_mismatch`). The
+  refusal word is `key * 4294967296 + site`, the site being the byte offset of
+  the declaration name from the start of the composed image. The stage keeps
+  the first word in its reason cell and the frame prints it as the refusal
+  line `error[native-lane]: ... (<key name>) at line L, column C of the composed
+  user image.` (a std site: `in the std region.`; exit 3).
+  Every declaration is judged against the row of its name, so a repeated
+  declaration with equal types is accepted (the table binds the first row of
+  the name) and a repeat with other types is refused at the first declaration
+  that differs from the row (a different parameter count is 65). The registry
+  of the native lane is tolerant of a repeated name, of a `__mind_` name and of
+  a parameter or result type that is no scalar of the registry (a struct, a
+  `#[repr(C)]` struct, a type alias, a pointer to a struct): the strict registry
+  of `selftest_nb_cabi` still refuses each of them. A tolerant registry keeps such
+  a declaration, so an earlier defect keeps its word: a `__mind_` name has no row
+  (64), a type outside the set never equals a row (66, or 65 when the count
+  differs). A `#[repr(C)]` struct by value is that key 66 line and no second
+  diagnostic (no `E2040` on the direct feed). An array parameter (`[i32; 4]`)
+  and a pointer star that is not followed by `const` or `mut` are also that key
+  66 line with the symbol on the direct feed (`mindc build` stops the bare star
+  earlier with the parse error `E1001`). A registry parse error of another kind
+  still refuses without a word on the direct feed (`unsupported construct`): a
+  generic declaration (`mindc build` stops it earlier with `E1001`), a repeated
+  parameter name, a type name that shadows a scalar a declaration uses, a nested
+  block, a collision with a local function, and a bound (more than 256
+  parameters, more than 4096 rows, a pointer depth over 32; 256 parameters,
+  4096 rows and a depth of 32 are still judged by key). A seed std declaration of
+  a name is read only when a kept seed function calls the name, as before; the
+  rows `xk_seed_form_other_accepted` and `xk_seed_form_bind` pin both sides. A
+  declaration that a kept seed function reaches goes through the same rule: the
+  rows `xk_seed_once` and `xk_seed_dup` reach `tcp_close` of `std/net.mind` (the
+  seed `close` equals its row and joins the image beside the accepted user
+  declarations), `xk_seed_region_unknown` reaches `proc_pid`, whose seed
+  `getpid` has no row (key 64), and `xk_seed_other_types_reached` reaches
+  the first std function that calls a std declaration of `getenv` with a `*mut u8`
+  result (the shape the control `refused_getenv_mut_result` pins as key 66; the
+  row finds it by that rule, not by a fixed std text); the site of each lies
+  inside the std prefix and the frame names the region. The row
+  `xk_user_conflict_seed_call` shows the other direction: a refused user table
+  is refused before any seed declaration is read.
+  Like the rows above, the committed seeds carry it; the tests are the `xk_*`
+  rows of `--only libc_rows`.
 
 ## Call sequence (System V x86-64)
 
@@ -171,7 +254,9 @@ the raw exit system call, so no atexit handler or stdio buffer is flushed. The
 table therefore holds only functions that do not depend on that: system call
 wrappers, `__errno_location`, the pure `memset` (an indirect function the
 loader resolves while it binds the GOT) and `inet_pton`, the directory stream
-functions and `getaddrinfo`, which allocate from libc's own heap. The
+functions and `getaddrinfo`, which allocate from libc's own heap, and
+`getenv`, which reads the environment array that libc sets while the loader
+initialises it (the row test reads a variable the harness exports). The
 committed tests call `getaddrinfo` with numeric hosts and services only; a
 name lookup through the name service is not measured. Explicit-layout
 (`--native-profile bounded`) extern programs are outside this revision.

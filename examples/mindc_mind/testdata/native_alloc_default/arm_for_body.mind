@@ -1,0 +1,11 @@
+// A free in the body of a for loop, 1,100 x 1 MB. The image must reclaim. Exit status 33.
+fn main() -> i64 {
+    let mut acc: i64 = 0;
+    for i in 0..1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, i);
+        acc = acc + __mind_load_i64(p) - i;
+        let z: i64 = __mind_free(p);
+    }
+    return acc + 33;
+}

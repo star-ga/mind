@@ -73,7 +73,7 @@ fn net_handle_fd(h: i64) -> i64 {
 
 fn net_build_sockaddr_in(ip_str_addr: i64, port: i64) -> i64 {
     let sa: i64 = __mind_alloc(16);
-    let _ = memset(sa as *mut u8, 0, 16);
+    let _ = memset(sa as *mut u8, 0 as i32, 16);
     __mind_store_i8(sa + 0, 2);
     __mind_store_i8(sa + 1, 0);
     // sin_port is ALWAYS network byte order (big-endian): high byte first.
@@ -84,7 +84,7 @@ fn net_build_sockaddr_in(ip_str_addr: i64, port: i64) -> i64 {
     __mind_store_i8(sa + 2, (port >> 8) & 255);
     __mind_store_i8(sa + 3, port & 255);
     let inet_buf: i64 = __mind_alloc(4);
-    let _ = inet_pton(2, ip_str_addr as *const u8, inet_buf as *mut u8);
+    let _ = inet_pton(2 as i32, ip_str_addr as *const u8, inet_buf as *mut u8);
     __mind_store_i8(sa + 4, __mind_load_i8(inet_buf + 0));
     __mind_store_i8(sa + 5, __mind_load_i8(inet_buf + 1));
     __mind_store_i8(sa + 6, __mind_load_i8(inet_buf + 2));
@@ -98,12 +98,12 @@ fn net_set_reuseaddr(fd: i64) -> i64 {
     __mind_store_i8(optval + 1, 0);
     __mind_store_i8(optval + 2, 0);
     __mind_store_i8(optval + 3, 0);
-    setsockopt(fd as i32, sol_socket() as i32, so_reuseaddr() as i32, optval as *const u8, 4) as i64
+    setsockopt(fd as i32, sol_socket() as i32, so_reuseaddr() as i32, optval as *const u8, 4 as i32) as i64
 }
 
 fn net_getsockname_port(fd: i64) -> i64 {
     let sa: i64 = __mind_alloc(16);
-    let _ = memset(sa as *mut u8, 0, 16);
+    let _ = memset(sa as *mut u8, 0 as i32, 16);
     let lenptr: i64 = __mind_alloc(4);
     __mind_store_i8(lenptr + 0, 16);
     __mind_store_i8(lenptr + 1, 0);
@@ -127,18 +127,18 @@ pub fn tcp_listener_fd(l: i64) -> i64 {
 // host_addr must be a NUL-terminated address string (e.g. "0.0.0.0\0").
 // Returns a TcpListener handle or 0 on error.
 pub fn tcp_listen(host_addr: i64, port: i64) -> i64 {
-    let fd: i64 = socket(af_inet() as i32, sock_stream() as i32, 0) as i64;
+    let fd: i64 = socket(af_inet() as i32, sock_stream() as i32, 0 as i32) as i64;
     if fd < 0 {
         return 0;
     }
     let _ = net_set_reuseaddr(fd);
     let sa: i64 = net_build_sockaddr_in(host_addr, port);
-    let r: i64 = bind(fd as i32, sa as *const u8, 16) as i64;
+    let r: i64 = bind(fd as i32, sa as *const u8, 16 as i32) as i64;
     if r < 0 {
         let _ = close(fd as i32);
         return 0;
     }
-    let r2: i64 = listen(fd as i32, 128) as i64;
+    let r2: i64 = listen(fd as i32, 128 as i32) as i64;
     if r2 < 0 {
         let _ = close(fd as i32);
         return 0;
@@ -156,7 +156,7 @@ pub fn tcp_listen_port(l: i64) -> i64 {
 pub fn tcp_accept(l: i64) -> i64 {
     let lfd: i64 = net_handle_fd(l);
     let sa: i64 = __mind_alloc(16);
-    let _ = memset(sa as *mut u8, 0, 16);
+    let _ = memset(sa as *mut u8, 0 as i32, 16);
     let lenptr: i64 = __mind_alloc(4);
     __mind_store_i8(lenptr + 0, 16);
     __mind_store_i8(lenptr + 1, 0);
@@ -180,12 +180,12 @@ pub fn tcp_stream_fd(s: i64) -> i64 {
 // tcp_connect — connect a TCP client socket to host:port.
 // Returns a TcpStream handle or 0 on error.
 pub fn tcp_connect(host_addr: i64, port: i64) -> i64 {
-    let fd: i64 = socket(af_inet() as i32, sock_stream() as i32, 0) as i64;
+    let fd: i64 = socket(af_inet() as i32, sock_stream() as i32, 0 as i32) as i64;
     if fd < 0 {
         return 0;
     }
     let sa: i64 = net_build_sockaddr_in(host_addr, port);
-    let r: i64 = connect(fd as i32, sa as *const u8, 16) as i64;
+    let r: i64 = connect(fd as i32, sa as *const u8, 16 as i32) as i64;
     if r < 0 {
         let _ = close(fd as i32);
         return 0;
@@ -197,14 +197,14 @@ pub fn tcp_connect(host_addr: i64, port: i64) -> i64 {
 // Returns bytes read, 0 on EOF, or -1 on error.
 pub fn tcp_read(s: i64, buf_addr: i64, max: i64) -> i64 {
     let fd: i64 = net_handle_fd(s);
-    recv(fd as i32, buf_addr as *mut u8, max, 0)
+    recv(fd as i32, buf_addr as *mut u8, max, 0 as i32)
 }
 
 // tcp_write — write `len` bytes from buf_addr to stream.
 // Returns bytes written or -1 on error.
 pub fn tcp_write(s: i64, buf_addr: i64, len: i64) -> i64 {
     let fd: i64 = net_handle_fd(s);
-    send(fd as i32, buf_addr as *const u8, len, 0)
+    send(fd as i32, buf_addr as *const u8, len, 0 as i32)
 }
 
 // tcp_close — close a TcpStream fd.
@@ -230,13 +230,13 @@ pub fn udp_socket_fd(s: i64) -> i64 {
 // udp_bind — create a UDP socket bound to host:port.
 // Returns a UdpSocket handle or 0 on error.
 pub fn udp_bind(host_addr: i64, port: i64) -> i64 {
-    let fd: i64 = socket(af_inet() as i32, sock_dgram() as i32, 0) as i64;
+    let fd: i64 = socket(af_inet() as i32, sock_dgram() as i32, 0 as i32) as i64;
     if fd < 0 {
         return 0;
     }
     let _ = net_set_reuseaddr(fd);
     let sa: i64 = net_build_sockaddr_in(host_addr, port);
-    let r: i64 = bind(fd as i32, sa as *const u8, 16) as i64;
+    let r: i64 = bind(fd as i32, sa as *const u8, 16 as i32) as i64;
     if r < 0 {
         let _ = close(fd as i32);
         return 0;
@@ -254,7 +254,7 @@ pub fn udp_socket_port(s: i64) -> i64 {
 pub fn udp_send_to(s: i64, dest_addr: i64, port: i64, buf_addr: i64, len: i64) -> i64 {
     let fd: i64 = net_handle_fd(s);
     let sa: i64 = net_build_sockaddr_in(dest_addr, port);
-    sendto(fd as i32, buf_addr as *const u8, len, 0, sa as *const u8, 16)
+    sendto(fd as i32, buf_addr as *const u8, len, 0 as i32, sa as *const u8, 16 as i32)
 }
 
 // udp_recv_from — receive up to `max` bytes into buf_addr.
@@ -262,13 +262,13 @@ pub fn udp_send_to(s: i64, dest_addr: i64, port: i64, buf_addr: i64, len: i64) -
 pub fn udp_recv_from(s: i64, buf_addr: i64, max: i64) -> i64 {
     let fd: i64 = net_handle_fd(s);
     let sa: i64 = __mind_alloc(16);
-    let _ = memset(sa as *mut u8, 0, 16);
+    let _ = memset(sa as *mut u8, 0 as i32, 16);
     let lenptr: i64 = __mind_alloc(4);
     __mind_store_i8(lenptr + 0, 16);
     __mind_store_i8(lenptr + 1, 0);
     __mind_store_i8(lenptr + 2, 0);
     __mind_store_i8(lenptr + 3, 0);
-    recvfrom(fd as i32, buf_addr as *mut u8, max, 0, sa as *mut u8, lenptr as *mut u8)
+    recvfrom(fd as i32, buf_addr as *mut u8, max, 0 as i32, sa as *mut u8, lenptr as *mut u8)
 }
 
 // udp_close — close a UdpSocket fd.

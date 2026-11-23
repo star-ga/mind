@@ -72,10 +72,9 @@ pub(super) fn source(node: &Node) -> &'static str {
         Node::SetLit { .. } => "lane.source.set",
         Node::ForEach { .. } => "lane.source.for_each",
         Node::MethodCall { .. } => "lane.source.method_call",
-        Node::StructDef { .. }
-        | Node::StructLit { .. }
-        | Node::FieldAccess { .. }
-        | Node::FieldAssign { .. } => "lane.source.struct",
+        Node::StructDef { .. } | Node::StructLit { .. } | Node::FieldAssign { .. } => {
+            "lane.source.struct"
+        }
         Node::EnumDef { .. } => "lane.source.enum",
         Node::Match { .. } => "lane.source.match",
         Node::TraitDef { .. } | Node::ImplBlock { .. } => "lane.source.trait",

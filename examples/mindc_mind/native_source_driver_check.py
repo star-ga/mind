@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 
-from _selfhost_sources import capture_bundle
+from _selfhost_sources import capture_bundle, compiler_feed, start_child
 import self_host_source_note_smoke as historical
 
 HERE = Path(__file__).resolve().parent
@@ -221,16 +221,15 @@ def main():
             kwargs['stdout' if kind != 'closed-stderr' else 'stderr'] = closefd
         start = time.monotonic()
         try:
-            process = subprocess.Popen(receipt['argv'], stdin=subprocess.PIPE,
-                stdout=kwargs.get('stdout', subprocess.PIPE), stderr=kwargs.get('stderr', subprocess.PIPE),
-                cwd=cwd or run_dir, env=env, preexec_fn=lambda: limits(kind == 'closed-stdout-ignored'),
-                restore_signals=False)
             try:
-                stdout, stderr = process.communicate(data, timeout=timeout)
+                process = start_child(receipt['argv'], data,
+                    stdout=kwargs.get('stdout', subprocess.PIPE), stderr=kwargs.get('stderr', subprocess.PIPE),
+                    cwd=cwd or run_dir, env=env, preexec_fn=lambda: limits(kind == 'closed-stdout-ignored'),
+                    restore_signals=False, timeout=timeout)
+                stdout, stderr = process.stdout, process.stderr
                 receipt['exit'] = process.returncode
-            except subprocess.TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
+            except subprocess.TimeoutExpired as expired:  # run() killed the child; the output read so far
+                stdout, stderr = expired.stdout, expired.stderr
                 receipt['exit'] = 'TIMEOUT'
         finally:
             if closefd is not None:
@@ -276,7 +275,8 @@ def main():
                 target.chmod(0o500)
             mode = 'REUSED_PRODUCER_BUILD_NOT_FRESH_REPRODUCTION'
         else:
-            rc, stdout, stderr = run(variant + '-native-build', [args.seed], packet)
+            # Self mode only for compiler source (main.mind, a part, a driver of compiler fns); a user program as it is.
+            rc, stdout, stderr = run(variant + '-native-build', [args.seed], compiler_feed(packet, args.seed))
             require(rc == 0 and not stderr and stdout.startswith(b'\x7fELF'), 'native build failed: ' + variant)
             executables[0].write_bytes(stdout)
             executables[0].chmod(0o500)

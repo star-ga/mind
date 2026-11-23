@@ -153,8 +153,8 @@ one CPU and nice 19; it also imposes a 2 GiB address-space limit. Builds receive
 180 CPU seconds / 240 wall seconds; diagnostic children receive 10 CPU seconds /
 12 wall seconds. Preserve the entire captured closure and raw failed results.
 
-The trusted wrapper verifies the owner-reviewed seal and every captured file,
-then invokes the captured runner. Both the wrapper and the capture directory
+The trusted wrapper verifies the owner-reviewed seal and every captured file, builds
+each captured packet with the native compiler through `start_child`, then invokes the captured runner. Both the wrapper and the capture directory
 must be owner-controlled with no concurrent mutation. Enumeration copies the
 unchanged fixed-call diagnostic sources to preserve their original 58-case
 contract; this new suite does not replace or waive those original outcomes.
@@ -222,8 +222,16 @@ obligations, not inferred successes from these component tests.
 
 The standalone harness inventory rises from 307 to exactly 309 for
 `native_c_variadic_emit_check.py` and its captured `run.sh`. The wrapper owns
-capture/identity and the shell owns bounded build/run transport; executable
-construction and semantic assertions remain MIND. No spare allowance is added.
+capture/identity and the bounded native builds; the shell owns the bounded MLIR
+build and run transport; executable construction and semantic assertions remain
+MIND. No spare allowance is added.
+
+The native compiler gets its stdin only through `start_child`, the one stdin start
+helper of the harness (`bounded_native_builds` in `_selfhost_sources.py`): a shell
+can not run its check for compiler source. Enumeration captures that module as
+`start_child.py`; execution refuses a live module that differs from it. It is the
+one repository import on the execution path. The builds keep the bounds above
+(2 GiB address space, no core file, 180 CPU seconds, 240 wall seconds).
 
 
 ## Independent review outcome

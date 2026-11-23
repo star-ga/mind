@@ -71,11 +71,16 @@ COPIED = (
     "scripts/check_gate_wiring_preflight.py",
     "scripts/preflight.sh",
     "scripts/workflow_scan.py",
+    "examples/mindc_mind/_selfhost_identity.py",
+    "examples/mindc_mind/_selfhost_string_rows.py",
+    "examples/mindc_mind/_selfhost_sources.py",
+    "examples/mindc_mind/native_lane_value_shapes_smoke.py",
 )
 
 
 def scratch(dst: Path) -> None:
-    """A minimal git repo holding just the wiring the lint inspects."""
+    """A git index of just the wiring the lint inspects, over this repo's objects (the history baselines)."""
+    subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", str(ROOT), str(dst)], check=True)
     for rel in COPIED:
         src = ROOT / rel
         if not src.is_file():
@@ -83,7 +88,6 @@ def scratch(dst: Path) -> None:
         out = dst / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, out)
-    subprocess.run(["git", "init", "-q"], cwd=dst, check=True)
     # `git ls-files` reads the INDEX, so staging is enough; no commit, no hooks.
     subprocess.run(["git", "add", "-A"], cwd=dst, check=True,
                    capture_output=True, text=True)
@@ -244,13 +248,7 @@ def main() -> int:
 
     def case(label: str, mutate, expect_nonzero: bool,
              expect_in: str | None = None) -> None:
-        """One mutation, one verdict.
-
-        `expect_in` pins the REASON as well as the exit code. A mutation that
-        breaks the scratch tree in some other way also exits non-zero, so a case
-        asserting the code alone can pass while the property it names is not
-        gated at all -- the shape this repo already paid for elsewhere.
-        """
+        """One mutation, one verdict. expect_in pins the reason, not only the exit."""
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
             scratch(d)
@@ -271,6 +269,20 @@ def main() -> int:
     # Positive control. Without it, every mutation below could be passing
     # because the scratch tree is broken for an unrelated reason.
     case("unmutated scratch copy -> PASS", None, expect_nonzero=False)
+
+    def lie_history(d: Path) -> None:
+        p = d / "scripts/check_gate_wiring.py"
+        text, n = re.subn(r"_selfhost_identity\.py=\d+", "_selfhost_identity.py=1", p.read_text(encoding="utf-8"), 1)
+        assert n == 1, "the history row of _selfhost_identity.py is gone: the lie plants nothing"
+        p.write_text(text, encoding="utf-8")
+
+    case("history row that lies about a line count -> RED", lie_history, True, "history row says 1")
+
+    def drop_history(d: Path) -> None:
+        (d / "examples/mindc_mind/_selfhost_identity.py").unlink()
+
+    case("absent harness history file -> RED", drop_history, True, "harness history: missing")
+    case("history baseline commit absent -> RED", lambda d: (d / ".git/objects/info/alternates").unlink(), True, "not in this checkout")
 
     # Exercise the split keystone build/run control with bounded fakes.
     for mode in ("keystone_ok", "build_incomplete"):

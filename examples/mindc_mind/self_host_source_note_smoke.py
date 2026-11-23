@@ -21,6 +21,7 @@ import tempfile
 import time
 
 import self_host_loop_smoke as loop
+from _selfhost_sources import self_mode_image, start_child
 
 HERE = Path(__file__).resolve().parent
 
@@ -169,7 +170,7 @@ def main() -> int:
         start = time.monotonic()
         cpu_seconds = args.build_cpu_seconds if compiler_build else 120
         wall_seconds = cpu_seconds + 30
-        result = subprocess.run([str(exe)], input=data, capture_output=True,
+        result = start_child([str(exe)], data, capture_output=True,
                                 timeout=wall_seconds,
                                 preexec_fn=functools.partial(limits, cpu_seconds))
         (out / f'{name}.stdin').write_bytes(data)
@@ -194,7 +195,7 @@ def main() -> int:
         # The established bounded self-host layout; never rewrite frozen seeds.
         bootstrap = struct.pack('<4q', int.from_bytes(b'MINDLAY\x01', 'little'),
                                 805306368, 402653184, 1048576) + image
-        built = run('compiler-build', compiler, bootstrap, compiler_build=True)
+        built = run('compiler-build', compiler, self_mode_image(bootstrap, compiler), compiler_build=True)
         assert built.returncode == 0 and not built.stderr and built.stdout.startswith(b'\x7fELF'), 'COMPILER_BUILD_FAILED'
         compiler = out / 'current-compiler.elf'
         compiler.write_bytes(built.stdout)
@@ -212,7 +213,7 @@ def main() -> int:
         'cases_sha256': digest((out / 'CASES.json').read_bytes()),
         'supplemental_cases_sha256': digest((out / 'SUPPLEMENTAL_CASES.json').read_bytes()),
     }, indent=2) + '\n')
-    build = run('build', compiler, packet, compiler_build=True)
+    build = run('build', compiler, self_mode_image(packet, compiler), compiler_build=True)
     assert build.returncode == 0 and not build.stderr and build.stdout.startswith(b'\x7fELF'), 'BUILD_FAILED'
     driver = out / 'source-note.elf'
     driver.write_bytes(build.stdout)
@@ -226,9 +227,10 @@ def main() -> int:
     prefix = combined[:lo]
     for size in (43, 62, 4097):
         literal = (b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' * 67)[:size]
-        source = (b'pub fn main() -> i64 { let s: String = "' + literal + b'"; '
-                  b'let n: i64 = __mind_write(1, string_addr(s), string_len(s), 0 - 1); '
-                  b'if n != string_len(s) { return 70; } 0 }\n')
+        # the literal goes to a String parameter: the string rule refuses a `let` of type String
+        source = (b'fn emit(s: String) -> i64 { let n: i64 = __mind_write(1, string_addr(s), string_len(s), 0 - 1); '
+                  b'if n != string_len(s) { return 70; } 0 }\n'
+                  b'pub fn main() -> i64 { emit("' + literal + b'") }\n')
         assembled = prefix + source
         image = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'),
                             268435456, 134217728, 4096, lo, len(assembled)) + assembled

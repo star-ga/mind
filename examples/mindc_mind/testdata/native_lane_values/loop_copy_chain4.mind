@@ -1,0 +1,33 @@
+// A 4-value copy chain: t = id(a + d + i); d = c; c = b; b = id(a + t); a = t.
+// a, b, c, d = 1, 2, 3, 4; three trips give a = 13, b = 22, c = 14, d = 6,
+// so a * 1000000 + b * 10000 + c * 100 + d = 13221406. main returns 42 only
+// for that value.
+fn xms_id(x: i64) -> i64 {
+    return x;
+}
+
+fn f() -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = 2;
+    let mut c: i64 = 3;
+    let mut d: i64 = 4;
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 3 {
+        t = xms_id(a + d + i);
+        d = c;
+        c = b;
+        b = xms_id(a + t);
+        a = t;
+        i = i + 1;
+    }
+    return a * 1000000 + b * 10000 + c * 100 + d;
+}
+
+fn main() -> i64 {
+    let v: i64 = f();
+    if v == 13221406 {
+        return 42;
+    }
+    return 43;
+}

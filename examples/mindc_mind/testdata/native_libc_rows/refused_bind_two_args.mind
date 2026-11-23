@@ -1,0 +1,14 @@
+extern "C" {
+    unsafe fn bind(sockfd: i32, addr: *const u8) -> i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let p: i64 = __mind_alloc(64);
+    __mind_store_i64(p, 0);
+    let r: i64 = bind(minus_one as i32, p as *const u8) as i64;
+    if r != minus_one {
+        return 1;
+    }
+    return 42;
+}

@@ -278,7 +278,7 @@ fn main() -> i64 {
     return vec_len(0);
 }
 
-=== w3_shadowed_callee | refused=native-lane-v1 (lane.type.named) in std/io.mind fn `string_push_ansi_sgr` | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_std_function_calling_a_shadowed_name_is_refused
+=== w3_shadowed_callee | refused=native-lane-v1 (lane.call.ambiguous) in std/io.mind fn `string_push_ansi_sgr` | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::a_std_function_calling_a_shadowed_name_is_refused
 import std.io;
 
 fn string_push_byte(s: i64, b: i64) -> i64 {
@@ -336,7 +336,7 @@ fn main() -> i64 { let a: i64 = 300; return w8(a) + 50; }
 import std.io;
 fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i8(p, 10); let n: i64 = 1; return print_bytes(p, n) + 40; }
 
-=== r3_free_loop | refused=native-lane-v1 (lane.alloc.free_in_loop) | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
+=== r3_free_loop | exit=33 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
 fn main() -> i64 { let mut i: i64 = 0; let mut a: i64 = 0; while i < 2000 { let p: i64 = __mind_alloc(1000000); __mind_store_i64(p, i); a = a + __mind_load_i64(p) - i; let f: i64 = __mind_free(p); a = a + f; i = i + 1; } return a + 33; }
 
 === r3_big_alloc | exit=9 | red=3 | default | native-wave2 checkpoint (38cc419b) tests/native_intrinsic_std_linkage.rs::an_unbounded_or_oversized_allocation_total_is_refused
@@ -749,19 +749,19 @@ fn main() -> i64 { let p = __mind_alloc(600000000); return 0; }
 === w3_alloc_f64_bounded | refused=native-lane-v1 (lane.type.mismatch) | red=3 | bounded | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::bounded_allocations_pass_default_stays_fenced
 fn main() -> i64 { return __mind_alloc(8.0); }
 
-=== w3_extern_close | refused=native-lane-v1 (lane.extern.signature_mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (the committed seed carries nbextc01 from the 0.10.3 seed advance, so the closed extern table refuses it by name, tests/native_lane_extern_fixed.rs)
+=== w3_extern_close | refused=native-lane-v1 (lane.extern.signature_mismatch) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (the host types the declaration and admits it; the compiler refuses a signature that is not its row's, and the key text waits for a seed that names the lane.extern.* keys, tests/native_lane_extern_parity.rs)
 extern "C" { fn close(fd: i64) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
 
-=== w3_extern_close_f64 | refused=native-lane-v1 (lane.extern.type) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
+=== w3_extern_close_f64 | refused=native-lane-v1 (lane.extern.signature_mismatch) at line 1, column 17 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (the host judges no extern signature; close has a row, an f64 width differs from it)
 extern "C" { fn close(fd: f64) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
 
-=== w3_extern_close_variadic | refused=native-lane-v1 (lane.extern.varargs) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module
+=== w3_extern_close_variadic | refused=native-lane-v1 (lane.extern.signature_mismatch) at line 1, column 17 | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::extern_posix_requires_matching_signature_and_module (the host judges no extern signature; close has a row, a variadic tail differs from it)
 extern "C" { fn close(fd: i64, ...) -> i64; } fn main() -> i64 { return __mind_conv_i64(close(0)); }
 
-=== w3_extern_open | refused=native-lane-v1 (lane.extern.unknown_symbol) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body (the committed seed carries nbextc01 from the 0.10.3 seed advance, so the closed extern table refuses it by name, tests/native_lane_extern_fixed.rs)
-extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; } fn main() -> i64 { return open(0, 0, 0); }
+=== w3_extern_open | refused=native-lane-v1 (lane.extern.unknown_symbol) | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body (the host types the declaration and admits the call, so the compiler decides the name, and the key text waits for a seed that names the lane.extern.* keys, tests/native_lane_extern_parity.rs; the checkpoint program called open(0, 0, 0), which the host refuses as lane.type.mismatch before the compiler sees the name)
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; } fn main() -> i64 { return open(0 as *const u8, 0, 0); }
 
-=== w3_extern_open_f64_ret | refused=native-lane-v1 (lane.extern.unknown_symbol) | red=- | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body
+=== w3_extern_open_f64_ret | refused=native-lane-v1 (lane.extern.unknown_symbol) at line 1, column 17 | red=- | default | native-wave3 checkpoint (aa6edbd5) tests/native_wave3_admission.rs::every_census_posix_name_resolves_to_its_fixture_body (the host judges no extern signature; open has no row of the compiler's table)
 extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> f64; } fn main() -> i64 { return 0; }
 
 === w3_entry_extra_param | refused=native.entry_main_has_params | red=3 | default | native-wave3 checkpoint (aa6edbd5) tests/native_bridge_refusals.rs::an_entry_main_with_an_extra_parameter_is_refused

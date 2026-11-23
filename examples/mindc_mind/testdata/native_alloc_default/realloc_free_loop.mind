@@ -1,0 +1,14 @@
+// realloc from 4 KB to 1 MB, then free, 1,100 times: a bump arena (1 GiB) overflows. Exit status 33.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1100 {
+        let p: i64 = __mind_alloc(4096);
+        __mind_store_i64(p, i);
+        let q: i64 = __mind_realloc(p, 1000000);
+        acc = acc + __mind_load_i64(q) - i;
+        let z: i64 = __mind_free(q);
+        i = i + 1;
+    }
+    return acc + 33;
+}

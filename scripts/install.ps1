@@ -7,7 +7,7 @@
 #
 # Usage:
 #   irm https://mindlang.dev/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://mindlang.dev/install.ps1))) -Version v0.10.3
+#   & ([scriptblock]::Create((irm https://mindlang.dev/install.ps1))) -Version v0.10.4
 #   .\install.ps1
 #   .\install.ps1 -DryRun          # print the URLs and the install path, write nothing
 #
@@ -15,7 +15,7 @@
 # irm, use the script block form.
 #
 # Parameters:
-#   -Version <tag>       pin a release tag, e.g. -Version v0.10.3 (default: the latest release)
+#   -Version <tag>       pin a release tag, e.g. -Version v0.10.4 (default: the latest release)
 #   -InstallDir <path>   install destination (default: $env:USERPROFILE\.local\bin)
 #   -DryRun              print the asset URL, the checksum URL and the install path;
 #                        write nothing (without -Version it still reads the latest tag

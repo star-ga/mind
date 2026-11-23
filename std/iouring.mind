@@ -77,18 +77,18 @@ extern "C" {
     unsafe fn munmap(addr: i64, length: i64) -> i32;
     unsafe fn socketpair(domain: i32, type_: i32, protocol: i32, sv: i64) -> i32;
     unsafe fn socket(domain: i32, type_: i32, protocol: i32) -> i32;
-    unsafe fn bind(sockfd: i32, addr: i64, addrlen: i32) -> i32;
+    unsafe fn bind(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
     unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
-    unsafe fn getsockname(sockfd: i32, addr: i64, addrlen: i64) -> i32;
-    unsafe fn clock_gettime(clockid: i32, tp: i64) -> i32;
-    unsafe fn setsockopt(fd: i32, level: i32, optname: i32, optval: i64, optlen: i32) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+    unsafe fn clock_gettime(clockid: i32, tp: *mut u8) -> i32;
+    unsafe fn setsockopt(fd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
     unsafe fn memfd_create(name: i64, flags: i32) -> i32;
     unsafe fn ftruncate(fd: i32, length: i64) -> i32;
     unsafe fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32;
-    unsafe fn ioctl(fd: i32, request: i64, arg: i64) -> i32;
-    unsafe fn open(path: i64, flags: i32) -> i32;
-    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
-    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn ioctl(fd: i32, request: i64, arg: *mut u8) -> i32;
+    unsafe fn open(pathname: *const u8, flags: i32, mode: i32) -> i32;
+    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: *const u8) -> i32;
+    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: *mut u8) -> i32;
     unsafe fn close(fd: i32) -> i32;
     unsafe fn __errno_location() -> *mut i32;
 }
@@ -1564,7 +1564,7 @@ pub fn io_uring_dmabuf_io_demo(path: i64, data: i64, len: i64) -> i64 {
     __mind_store_i8(up + 10, 117);
     __mind_store_i8(up + 11, 102);
     __mind_store_i8(up + 12, 0);
-    let ud: i64 = open(up, 2);
+    let ud: i64 = open(up as *const u8, 2, 0);
     let _ = __mind_free(up);
     if ud < 0 {
         let _ = close(memfd as i32);
@@ -1577,7 +1577,7 @@ pub fn io_uring_dmabuf_io_demo(path: i64, data: i64, len: i64) -> i64 {
     __mind_store_i64(cr + 8, 0);
     __mind_store_i64(cr + 16, 4096);
     // ioctl(ud, UDMABUF_CREATE=0x40187542, &cr) -> dma-buf fd.
-    let dmabuf: i64 = ioctl(ud as i32, 1075344706, cr);
+    let dmabuf: i64 = ioctl(ud as i32, 1075344706, cr as *mut u8);
     let _ = __mind_free(cr);
     if dmabuf < 0 {
         let _ = close(ud as i32);
@@ -1660,13 +1660,13 @@ pub fn io_uring_ktls_echo(msg: i64, len: i64) -> i64 {
     __mind_store_i8(ulp + 1, 108);
     __mind_store_i8(ulp + 2, 115);
     __mind_store_i8(ulp + 3, 0);
-    let u1: i64 = setsockopt(cfd as i32, 6, 31, ulp, 4);
+    let u1: i64 = setsockopt(cfd as i32, 6, 31, ulp as *const u8, 4);
     if u1 < 0 {
         let _ = __mind_free(ulp);
         let _ = io_uring_tcp_close(rh);
         return 0 - 21;
     }
-    let u2: i64 = setsockopt(connfd as i32, 6, 31, ulp, 4);
+    let u2: i64 = setsockopt(connfd as i32, 6, 31, ulp as *const u8, 4);
     let _ = __mind_free(ulp);
     if u2 < 0 {
         let _ = io_uring_tcp_close(rh);
@@ -1685,8 +1685,8 @@ pub fn io_uring_ktls_echo(msg: i64, len: i64) -> i64 {
     __mind_store_i8(c + 1, 3);
     __mind_store_i8(c + 2, 51);
     // setsockopt(SOL_TLS=282, TLS_TX=1, ...) on sender; TLS_RX=2 on receiver.
-    let t1: i64 = setsockopt(cfd as i32, 282, 1, c, 40);
-    let t2: i64 = setsockopt(connfd as i32, 282, 2, c, 40);
+    let t1: i64 = setsockopt(cfd as i32, 282, 1, c as *const u8, 40);
+    let t2: i64 = setsockopt(connfd as i32, 282, 2, c as *const u8, 40);
     let _ = __mind_free(c);
     if t1 < 0 {
         let _ = io_uring_tcp_close(rh);
@@ -2003,7 +2003,7 @@ pub fn io_uring_tcp_accept_one() -> i64 {
     __mind_store_i8(addr + 0, 2);
     __mind_store_i8(addr + 4, 127);
     __mind_store_i8(addr + 7, 1);
-    if bind(lfd as i32, addr, 16) < 0 {
+    if bind(lfd as i32, addr as *const u8, 16) < 0 {
         let _ = close(lfd as i32);
         let _ = __mind_free(addr);
         return 0;
@@ -2015,7 +2015,7 @@ pub fn io_uring_tcp_accept_one() -> i64 {
     }
     let alen: i64 = __mind_alloc(8);
     __mind_store_i32(alen + 0, 16);
-    if getsockname(lfd as i32, addr, alen) < 0 {
+    if getsockname(lfd as i32, addr as *mut u8, alen as *mut u8) < 0 {
         let _ = close(lfd as i32);
         let _ = __mind_free(addr);
         let _ = __mind_free(alen);
@@ -2201,7 +2201,7 @@ pub fn io_uring_multishot_accept_demo() -> i64 {
     __mind_store_i8(addr + 0, 2);
     __mind_store_i8(addr + 4, 127);
     __mind_store_i8(addr + 7, 1);
-    if bind(lfd as i32, addr, 16) < 0 {
+    if bind(lfd as i32, addr as *const u8, 16) < 0 {
         let be: i64 = 0 - io_errno();
         let _ = close(lfd as i32);
         let _ = __mind_free(addr);
@@ -2215,7 +2215,7 @@ pub fn io_uring_multishot_accept_demo() -> i64 {
     }
     let alen: i64 = __mind_alloc(8);
     __mind_store_i32(alen + 0, 16);
-    let _ = getsockname(lfd as i32, addr, alen);
+    let _ = getsockname(lfd as i32, addr as *mut u8, alen as *mut u8);
     let err: i64 = __mind_alloc(8);
     let h: i64 = io_ring_try_new_flags(8, 0, err);
     let setup: i64 = __mind_load_i64(err + 0);
@@ -2294,7 +2294,7 @@ pub fn io_uring_echo_bench(msg: i64, len: i64, rounds: i64) -> i64 {
     // struct timespec { i64 tv_sec; i64 tv_nsec; } — CLOCK_MONOTONIC = 1.
     let t0: i64 = __mind_alloc(16);
     let t1: i64 = __mind_alloc(16);
-    let _ = clock_gettime(1, t0);
+    let _ = clock_gettime(1, t0 as *mut u8);
     let mut done: i64 = 0;
     let mut ok: i64 = 1;
     while ok == 1 {
@@ -2308,7 +2308,7 @@ pub fn io_uring_echo_bench(msg: i64, len: i64, rounds: i64) -> i64 {
             }
         }
     }
-    let _ = clock_gettime(1, t1);
+    let _ = clock_gettime(1, t1 as *mut u8);
     let _ = io_uring_tcp_close(rh);
     let s0: i64 = __mind_load_i64(t0 + 0);
     let n0: i64 = __mind_load_i64(t0 + 8);

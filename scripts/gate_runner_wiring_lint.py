@@ -29,7 +29,16 @@ Every invocation of a repository script (`scripts/`, `tests/`, `tools/`,
   * be EXEMPT — a comment in the same workflow declares
         `# run_gate-exempt: <path> - <reason>`
     naming that exact path (`cargo-test` / `cargo-bench` for a cargo step) with
-    a written reason.
+    a written reason; or
+  * be EXEMPT ON ONE LINE — the comment directly above the command declares
+        `# run_gate-exempt-line: <path> - <reason>`
+    and covers the invocations of that path in the NEXT command only.
+
+The file-wide form covers every call of its path in that workflow. On a gate
+script that the same workflow also routes (a mint step of a script whose rows
+run through the runner), one file-wide exemption also passed any direct call of
+that script added later, anywhere in the file. The one-line form is for that
+shape: a second direct call is not covered and fails.
 
 A CARGO GATE IS AN INVOCATION, AND ITS EXEMPTION IS A DEFERRAL
 --------------------------------------------------------------
@@ -89,6 +98,7 @@ a broken scan, not a clean tree, and is reported as a failure.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -108,6 +118,7 @@ PATH_RE = re.compile(
     r"((?:scripts|tests|tools|examples)/[A-Za-z0-9_./${}-]*\.(?:py|sh))"
 )
 EXEMPT_RE = re.compile(r"#\s*run_gate-exempt:\s*(\S+)\s*[-—:]\s*(.+?)\s*$")
+EXEMPT_LINE_RE = re.compile(r"#\s*run_gate-exempt-line:\s*(\S+)\s*[-—:]\s*(.+?)\s*$")
 MIN_REASON = 20
 
 # A cargo gate. `cargo test`/`cargo bench` decide required CI jobs exactly like a
@@ -282,6 +293,30 @@ def scan(path: Path) -> tuple[list[Invocation], dict[str, str]]:
     return invocations, exempt
 
 
+def line_exemptions(path: Path, invocations: list[Invocation]
+                    ) -> tuple[dict[tuple[int, str], str], list[str]]:
+    """{(command line, path): reason} of each `run_gate-exempt-line` comment, and
+    the problems: a comment whose next command does not invoke its path."""
+    text = path.read_text(encoding="utf-8")
+    commands = [n for n, cmd in join_continuations(run_block_lines(text))
+                if strip_shell_comment(cmd).strip()]
+    covered: dict[tuple[int, str], str] = {}
+    problems: list[str] = []
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        m = EXEMPT_LINE_RE.search(raw)
+        if not m:
+            continue
+        nxt = next((n for n in commands if n > lineno), None)
+        if not any(i.line == nxt and i.path == m.group(1) for i in invocations):
+            problems.append(
+                f"{path.name}:{lineno}: run_gate-exempt-line names {m.group(1)}, "
+                "which the next command does not invoke. A one-line exemption "
+                "covers exactly the command below it.")
+            continue
+        covered[(nxt, m.group(1))] = m.group(2)
+    return covered, problems
+
+
 def lint_main(argv: list[str]) -> int:
     # The scope is the workflow DIRECTORY, read off disk. The override exists so
     # the contract test can drive synthetic workflows through the same code path
@@ -307,18 +342,22 @@ def lint_main(argv: list[str]) -> int:
     cargo_seen = 0
     for wf in workflows:
         invocations, exempt = scan(wf)
+        line_exempt, problems = line_exemptions(wf, invocations)
+        failures.extend(problems)
         used: set[str] = set()
         for inv in invocations:
             checked += 1
             if inv.path in CARGO_NAMES:
                 cargo_seen += 1
+            reason = line_exempt.get((inv.line, inv.path))
+            if reason is None and inv.path in exempt:
+                used.add(inv.path)
+                reason = exempt[inv.path]
             if inv.routed:
                 routed += 1
                 print(f"[PASS] routed  {inv}")
-            elif inv.path in exempt:
-                used.add(inv.path)
+            elif reason is not None:
                 declared += 1
-                reason = exempt[inv.path]
                 if len(reason) < MIN_REASON:
                     failures.append(
                         f"{inv}: run_gate-exempt reason is {len(reason)} chars "
@@ -405,7 +444,11 @@ def lint_main(argv: list[str]) -> int:
 #      for a false failure;
 #   7. the real workflow tree passes AND is non-vacuous: the scan reports a
 #      non-zero cargo-invocation count, because finding none is a broken
-#      pattern, not a clean tree.
+#      pattern, not a clean tree;
+#   8. a one-line exemption covers the next command only: a second direct call
+#      of the same script is reported, a comment above a command that does not
+#      invoke its path fails, and a direct gate call planted in a copy of the
+#      real workflows beside the exempt mint step is reported.
 
 _FAILURES: list[str] = []
 
@@ -572,6 +615,49 @@ def case_piped_routed_call_stays_routed() -> None:
             "          fi")
     rc, _ = _run_lint(_workflow(body))
     _check("piped routed call stays routed", rc, 0)
+
+
+_LINE_REASON = "a mint step that writes an ELF; the routed steps assert the rows"
+
+
+def case_line_exemption_covers_only_the_next_command() -> None:
+    """The second direct call of a line-exempt script is not covered."""
+    body = (f"          # run_gate-exempt-line: scripts/check_release_gating.py - {_LINE_REASON}\n"
+            "          python3 scripts/check_release_gating.py --mint\n"
+            "          python3 scripts/check_release_gating.py --rows")
+    rc, out = _run_lint(_workflow(body))
+    _check("a second direct call of a line-exempt script fails", rc, 1)
+    _check("the line-exempt call passes", "[PASS] exempt  synthetic.yml:10 " in out, True)
+    _check("the second call is named",
+           "synthetic.yml:11 scripts/check_release_gating.py: invoked DIRECTLY" in out, True)
+
+
+def case_line_exemption_above_another_command_fails() -> None:
+    """A one-line exemption whose next command does not invoke its path fails."""
+    body = (f"          # run_gate-exempt-line: scripts/check_release_gating.py - {_LINE_REASON}\n"
+            "          python3 scripts/run_gate.py scripts/check_claims.py\n"
+            "          python3 scripts/check_release_gating.py --rows")
+    rc, out = _run_lint(_workflow(body))
+    _check("a misplaced line exemption fails", rc, 1)
+    _check("the misplaced line exemption is named",
+           "run_gate-exempt-line names scripts/check_release_gating.py" in out, True)
+
+
+def case_direct_call_beside_the_real_mint_step_fails() -> None:
+    """The real tree with one direct value-shape gate call after the mint line."""
+    d = Path(tempfile.mkdtemp(prefix="run_gate_wiring_")) / "workflows"
+    shutil.copytree(WORKFLOW_DIR, d)
+    ci = d / "ci.yml"
+    mint = "--mint-stage2 /tmp/string_rows_stage2.elf --assert-fixed-point\n"
+    text = ci.read_text(encoding="utf-8")
+    at = text.index(mint) + len(mint)
+    indent = text[text.rindex("\n", 0, at - len(mint)) + 1:].split("python3")[0]
+    planted = (f"{indent}python3 examples/mindc_mind/native_lane_value_shapes_smoke.py "
+               "--string-rows /tmp/string_rows_stage2.elf\n")
+    ci.write_text(text[:at] + planted + text[at:], encoding="utf-8")
+    rc, out = _run_lint(d)
+    _check("a direct gate call beside the real mint step fails", rc, 1)
+    _check("the planted call is the one problem", "1 problem(s)" in out, True)
 
 
 def case_real_workflows_declare_their_cargo_gates() -> None:

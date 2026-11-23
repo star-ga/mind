@@ -1,0 +1,24 @@
+// Loop-carried copy: `b = a; a = n0;` in a while loop, n0 a plain let. The
+// native images before the 0.10.3 delivery returned a wrong value for it.
+// a, b = 1, 2; four trips of n0 = a + b + i; b = a; a = n0 give a = 18.
+// main returns 42 only for that exact value.
+fn f() -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = 2;
+    let mut i: i64 = 0;
+    while i < 4 {
+        let n0: i64 = a + b + i;
+        b = a;
+        a = n0;
+        i = i + 1;
+    }
+    return a;
+}
+
+fn main() -> i64 {
+    let v: i64 = f();
+    if v == 18 {
+        return 42;
+    }
+    return 43;
+}

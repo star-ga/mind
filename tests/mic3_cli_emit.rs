@@ -286,7 +286,10 @@ const EXPECTED_RAN: u32 = 3; // tiny, note_kinds, simple
 
 #[test]
 fn emit_trace_hash_matches_independent_sha256() {
-    let bin = mindc_for_independent_hash();
+    // MINDC_BIN may name a compiler of another feature set. The keystone leg
+    // and its refusal control are cfg claims about this row's own mindc.
+    let shared_bin = mindc_for_independent_hash();
+    let row_bin = PathBuf::from(require_mindc());
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dir = unique_dir("indep_hash");
     let tiny = dir.join("tiny.mind");
@@ -294,12 +297,17 @@ fn emit_trace_hash_matches_independent_sha256() {
     // bank_acc8.mind calls ymm intrinsics that the v0.10.2 compiler rejects.
     // The shared corpus is the programs both compilers emit.
     let mut programs = vec![
-        ("tiny", tiny),
+        ("tiny", tiny, &shared_bin),
         (
             "note_kinds",
             root.join("examples/mindc_mind/testdata/native_cf/note_kinds.mind"),
+            &shared_bin,
         ),
-        ("simple", root.join("tests/fixtures/simple.mind")),
+        (
+            "simple",
+            root.join("tests/fixtures/simple.mind"),
+            &shared_bin,
+        ),
     ];
     // The keystone fixture imports `std.vec`: a row built without the std
     // surface refuses it with E2007, so it joins the corpus only where it emits.
@@ -307,10 +315,11 @@ fn emit_trace_hash_matches_independent_sha256() {
         programs.push((
             "keystone_fixture",
             root.join("examples/mindc_mind/fixture.mind"),
+            &row_bin,
         ));
     }
     let mut ran = 0u32;
-    for (label, src) in &programs {
+    for (label, src, bin) in &programs {
         assert!(
             src.is_file(),
             "corpus file missing ({label}): {}",
@@ -318,8 +327,8 @@ fn emit_trace_hash_matches_independent_sha256() {
         );
         let mic = dir.join(format!("{label}.mic3"));
         let ev = dir.join(format!("{label}.ev"));
-        emit_artifact(&bin, src, "--emit-mic3", &mic);
-        emit_artifact(&bin, src, "--emit-evidence", &ev);
+        emit_artifact(bin, src, "--emit-mic3", &mic);
+        emit_artifact(bin, src, "--emit-evidence", &ev);
         let (hashlib_hex, sha256sum_hex) = independent_sha256(&mic);
         assert_eq!(
             hashlib_hex, sha256sum_hex,
@@ -349,7 +358,7 @@ fn emit_trace_hash_matches_independent_sha256() {
             keystone.display()
         );
         let run = run_emit(
-            &bin,
+            &row_bin,
             &keystone,
             "--emit-mic3",
             &dir.join("keystone_refused.mic3"),

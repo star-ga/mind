@@ -287,7 +287,7 @@ fn dense_tensor_literal_stores_folded_values_or_refuses() {
     }
 }
 
-/// Spec 3.3 on the CLI: every REFUSE row of the ruling's table exits non-zero
+/// Spec 3.3 on the CLI: every REFUSE row of the spec's table exits non-zero
 /// with `Q16ConstantOutOfRange` and writes no artifact; `as q16` and an inexact
 /// integer fill refuse by name; a Q16.16 fill `1.5` emits Q(1.5) = 98304 and
 /// never a `: q16` constant. Positive control: an exact integer fill runs.

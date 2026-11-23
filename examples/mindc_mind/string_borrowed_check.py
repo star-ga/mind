@@ -10,6 +10,7 @@ import resource
 import struct
 import subprocess
 import time
+from _selfhost_sources import start_child
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -141,7 +142,7 @@ def limits():
 
 def run(ev,name,args,data=None):
     t=time.monotonic()
-    p=subprocess.run(list(map(str,args)),input=data,capture_output=True,cwd=ev,timeout=300,preexec_fn=limits)
+    p=start_child(list(map(str,args)),data,capture_output=True,cwd=ev,timeout=300,preexec_fn=limits)
     (ev/(name+'.stdout')).write_bytes(p.stdout);(ev/(name+'.stderr')).write_bytes(p.stderr)
     (ev/(name+'.json')).write_text(json.dumps(dict(argv=list(map(str,args)),exit=p.returncode,seconds=time.monotonic()-t,stdin_sha256=sha(data) if data is not None else None,stdout_sha256=sha(p.stdout),stderr_sha256=sha(p.stderr)),indent=2)+'\n')
     return p

@@ -39,6 +39,8 @@ TESTDATA = HERE / "testdata"
 MANIFEST = ROOT / "examples/mindc_mind/testdata/stdlib_manifest.txt"
 SEMANTIC_MANIFEST = TESTDATA / "SEMANTIC_MANIFEST.tsv"
 COMPILER = ROOT / "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
+sys.path.insert(0, str(ROOT / "examples/mindc_mind"))
+from _selfhost_sources import start_child  # noqa: E402  (the one start of a child that reads stdin)
 FROZEN_SEED_COUNT = 21
 
 
@@ -62,10 +64,10 @@ def seed_modules():
 # compiler or the seed blob silently changed underneath it. Re-blessing is a
 # deliberate edit of these two constants in the commit that changes them.
 EXPECTED_COMPILER_SHA256 = (
-    "00e9c2d9d5cab969b27afa3b936763949b2d211b50e965a406fd54cff05ec9cb"
+    "757fe8ce46ed3a5d282c60db892a8a387f4cceb62084debb159967825375ce8d"
 )
 EXPECTED_STD_SEED_SHA256 = (
-    "5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee"
+    "2101ce8fb1c462cddf9212ff9b488ef6b20c81925fad78973751a653bd52d2c4"
 )
 
 # Every subprocess this gate starts is bounded, so a hang is a reported failure
@@ -108,8 +110,8 @@ def compile_native(src_bytes: bytes, out_path: pathlib.Path):
         + combined
     )
     try:
-        proc = subprocess.run(
-            [str(COMPILER)], input=image, capture_output=True, timeout=COMPILE_TIMEOUT_S
+        proc = start_child(
+            [str(COMPILER)], image, capture_output=True, timeout=COMPILE_TIMEOUT_S
         )
     except subprocess.TimeoutExpired:
         sys.stderr.write(f"compiler exceeded {COMPILE_TIMEOUT_S}s\n")

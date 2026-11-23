@@ -26,6 +26,7 @@ sys.path.insert(0, str(HERE))
 import _selfhost_sources as sources
 from _selfhost_so import build_captured_so
 from self_host_loop_smoke import build_seed
+from _selfhost_sources import start_child  # noqa: E402
 
 MANIFEST = b'[package]\nname="bundle-fixture"\nversion="1.0.0"\n[build]\ntarget="cpu"\nemit="cdylib"\nentry="examples/mindc_mind/main.mind"\n'
 COMPONENT = "examples/mindc_mind/a.mind"
@@ -215,6 +216,11 @@ def limits():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+def _compiles(text):
+    """Raise SyntaxError unless `text` compiles as the module _selfhost_sources.py (the code is not run)."""
+    compile(text, "_selfhost_sources.py", "exec")
+
+
 def run_mutations(evidence):
     """Execute real modified helpers; only the intended assertion failure counts."""
     text = (HERE / "_selfhost_sources.py").read_text()
@@ -234,11 +240,11 @@ def run_mutations(evidence):
             raise AssertionError(f"mutation anchor drift: {name}")
         directory = evidence / name
         directory.mkdir()
-        for module in ("_selfhost_sources.py", "_selfhost_so.py",
+        for module in ("_selfhost_sources.py", "_selfhost_so.py", "_selfhost_loop_reseed.py",
                        "self_host_loop_smoke.py", "selfhost_source_bundle_check.py"):
             shutil.copyfile(HERE / module, directory / module)
         mutant = text.replace(needle, replacement)
-        compile(mutant, "_selfhost_sources.py", "exec")
+        _compiles(mutant)
         (directory / "_selfhost_sources.py").write_text(mutant)
         (directory / "source.sha256").write_text(sha(mutant.encode()) + "\n")
         command = [sys.executable, "-m", "unittest", "-v",
@@ -276,8 +282,8 @@ def real_build(args):
     (ev / "source.identity").write_text(bundle.identity + "\n")
     (ev / "views.sha256").write_text(sha(bundle.library_bytes) + "  library.mind\n" + sha(bundle.native_bytes) + "  native.mind\n")
     from self_host_native_cf_smoke import v2_header
-    packet = v2_header() + bundle.stdin_image
-    result = subprocess.run([str(args.seed)], input=packet, capture_output=True, timeout=300, preexec_fn=limits)
+    packet = sources.self_mode_image(v2_header() + bundle.stdin_image, args.seed)
+    result = start_child([str(args.seed)], packet, capture_output=True, timeout=300, preexec_fn=limits)
     for suffix, data in (("stdout", result.stdout), ("stderr", result.stderr), ("exit", (str(result.returncode) + "\n").encode())):
         (ev / ("native-build." + suffix)).write_bytes(data)
     assert result.returncode == 0 and result.stderr == b"" and result.stdout.startswith(b"\x7fELF"), "native component build failed"

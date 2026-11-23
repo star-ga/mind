@@ -174,6 +174,10 @@ OUT_PROFILE = [
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
      "fn main()->i64{let s=S{}; return s.f();}"),
+    # Lowering refuses this program (the receiver has no struct type), so the IR-level
+    # lane check never runs on it. Only the source fence before lowering names it.
+    ("method_call_before_lowering",
+     "fn main()->i64{let x:i64=1; return x.g(2);}", "lane", "lane.source.method_call"),
 ]
 
 EXECVE_PATH = re.compile(r'execve\("([^"]+)"')
@@ -249,7 +253,7 @@ def main() -> int:
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
     PINNED_IN_PROFILE = 20
-    PINNED_OUT_PROFILE = 5
+    PINNED_OUT_PROFILE = 6
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "

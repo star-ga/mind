@@ -11,6 +11,8 @@ import struct
 import subprocess
 import sys
 
+from _selfhost_sources import self_mode_image, start_child
+
 HERE = Path(__file__).resolve().parent
 LIMIT = 2 << 30
 CASES_SHA = '7a5db32aad478fcd944b182b3e857f251e766d119b1d2baaa84c07ddf39f560f'
@@ -214,7 +216,7 @@ def main():
     rows = []
 
     def run(label, argv, data=None, cwd=None, timeout=180):
-        r = subprocess.run(list(map(str, argv)), input=data, capture_output=True,
+        r = start_child(list(map(str, argv)), data, capture_output=True,
                            cwd=cwd, env=env, timeout=timeout, preexec_fn=limited)
         stem = f'{len(rows):03d}-{label}'
         (e / (stem + '.stdout')).write_bytes(r.stdout)
@@ -268,7 +270,7 @@ def main():
         print('MIC module functions PASS', module, len(mic_names), flush=True)
     image = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(combined)) + combined
     (e / 'input.packet').write_bytes(image)
-    nb = run('native-build', [seed], image, timeout=240)
+    nb = run('native-build', [seed], self_mode_image(image, seed), timeout=240)
     assert nb.returncode == 0 and nb.stderr == b'' and nb.stdout.startswith(b'\x7fELF'), ('native build', nb.returncode, nb.stderr[-800:])
     native = e / 'writer.native.elf'
     native.write_bytes(nb.stdout)
@@ -343,7 +345,7 @@ def main():
     supplement = prefix + b'\n'.join([encoders, original, (HERE / 'native_dynamic_mic_fixture.mind').read_bytes()])
     (e / 'supplement.mind').write_bytes(supplement)
     supplement_input = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(supplement)) + supplement
-    sb = run('supplement-native-build', [seed], supplement_input, timeout=240)
+    sb = run('supplement-native-build', [seed], self_mode_image(supplement_input, seed), timeout=240)
     assert sb.returncode == 0 and sb.stderr == b'' and sb.stdout.startswith(b'\x7fELF')
     snative = e / 'supplement.native.elf'
     snative.write_bytes(sb.stdout)
@@ -390,7 +392,7 @@ def main():
         mutant = supplement.replace(fn_body, fn_body.replace(before, after))
         (e / f'base-mutant-{i}.mind').write_bytes(mutant)
         data = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(mutant)) + mutant
-        built = run(f'base-mutant-{i}-build', [seed], data, timeout=240)
+        built = run(f'base-mutant-{i}-build', [seed], self_mode_image(data, seed), timeout=240)
         assert built.returncode == 0 and built.stderr == b'' and built.stdout.startswith(b'\x7fELF')
         exe = e / f'base-mutant-{i}.elf'
         exe.write_bytes(built.stdout)
@@ -412,7 +414,7 @@ def main():
         mutant = combined.replace(before, after)
         (e / f'mutant-{i}.mind').write_bytes(mutant)
         data = struct.pack('<6q', int.from_bytes(b'MINDLAY\x01', 'little'), 268435456, 134217728, 4096, len(prefix), len(mutant)) + mutant
-        built = run(f'mutant-{i}-build', [seed], data, timeout=240)
+        built = run(f'mutant-{i}-build', [seed], self_mode_image(data, seed), timeout=240)
         assert built.returncode == 0 and built.stderr == b'' and built.stdout.startswith(b'\x7fELF'), ('mutation build failure is not detection', m)
         exe = e / f'mutant-{i}.elf'
         exe.write_bytes(built.stdout)

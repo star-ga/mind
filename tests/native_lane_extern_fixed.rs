@@ -5,10 +5,12 @@
 //!
 //! End state this file pins: `mindc build --backend native` builds a
 //! fixed-arity extern program against the closed `nbx_row` libc table, and
-//! refuses BY NAME every declaration outside that table. The fresh compiler
-//! (`MINDC_NATIVE_ELF`, else a stage1 minted from this checkout) must carry
-//! the `nbextc01` mark; a bounded-profile request combined with a user extern
-//! block is refused.
+//! refuses BY NAME every declaration outside that table: the refusal states
+//! the compiler key, the site of the declaration name and the symbol. A call
+//! with the wrong argument count or an argument of another class is refused
+//! the same way at the call. The fresh compiler (`MINDC_NATIVE_ELF`, else a
+//! stage1 minted from this checkout) must carry the `nbextc01` mark; a
+//! bounded-profile request combined with a user extern block is refused.
 
 #![cfg(all(feature = "std-surface", target_os = "linux", target_arch = "x86_64"))]
 
@@ -16,7 +18,7 @@ mod native_lane_extern_support;
 
 use native_lane_extern_support::{
     CLOSE_EXTERN, Case, FIXED_SIGNATURE_CORPUS, FSTAT_EXTERN, compiler_components, compiler_source,
-    extern_corpus, mint_stage1, repo,
+    decl_key, decl_key_at, extern_corpus, mint_stage1, name_of, repo,
 };
 use std::os::unix::ffi::OsStrExt;
 use std::process::Command;
@@ -53,8 +55,9 @@ fn unmarked_compiler_refuses_externs() {
 }
 
 /// Everything outside the closed table refuses BY NAME. The refusal names the
-/// symbol that cannot be bound. Variadic libc names stay outside the table,
-/// so a fixed-looking declaration of one still refuses by that name.
+/// symbol that cannot be bound, with the compiler key and the site. Variadic
+/// libc names stay outside the table, so a fixed-looking declaration of one
+/// still refuses by that name.
 #[test]
 fn off_table_symbols_refuse_by_name() {
     let case = Case::new(true);
@@ -70,7 +73,7 @@ fn off_table_symbols_refuse_by_name() {
         ("fn prctl(option: i32) -> i32;", "prctl"),
     ] {
         let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
-        case.refuses_named(&source, name, name);
+        case.refuses_named(&source, name, &decl_key("unknown_symbol", name));
     }
 }
 
@@ -80,7 +83,7 @@ fn off_table_symbols_refuse_by_name() {
 #[test]
 fn out_of_range_widths_refuse() {
     let case = Case::new(true);
-    for (decl, label, named) in [
+    for (decl, label, _name) in [
         (
             "fn _exit(status: i32) -> i32;",
             "exit with a result",
@@ -124,7 +127,11 @@ fn out_of_range_widths_refuse() {
         ),
     ] {
         let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
-        case.refuses_named(&source, label, named);
+        case.refuses_named(
+            &source,
+            label,
+            &decl_key("signature_mismatch", name_of(decl)),
+        );
     }
 }
 
@@ -132,29 +139,41 @@ fn out_of_range_widths_refuse() {
 #[test]
 fn signature_mismatch_on_a_table_name_refuses() {
     let case = Case::new(true);
-    for (decl, label, named) in [
-        ("fn close(fd: i64) -> i32;", "close i64 arg", "close"),
-        ("fn close() -> i32;", "close missing arg", "close"),
+    for (decl, label, kind) in [
+        (
+            "fn close(fd: i64) -> i32;",
+            "close i64 arg",
+            "signature_mismatch",
+        ),
+        ("fn close() -> i32;", "close missing arg", "arity"),
         (
             "fn close(fd: i32, extra: i32) -> i32;",
             "close extra arg",
-            "close",
+            "arity",
         ),
-        ("fn close(fd: i32) -> i64;", "close i64 result", "close"),
-        ("fn getuid() -> i64;", "getuid wrong result", "getuid"),
+        (
+            "fn close(fd: i32) -> i64;",
+            "close i64 result",
+            "signature_mismatch",
+        ),
+        (
+            "fn getuid() -> i64;",
+            "getuid wrong result",
+            "signature_mismatch",
+        ),
         (
             "fn fstat(fd: i32, buf: *const u8) -> i32;",
             "fstat const buf",
-            "fstat",
+            "signature_mismatch",
         ),
         (
             "fn __errno_location() -> *const u8;",
             "errno const result",
-            "__errno_location",
+            "signature_mismatch",
         ),
     ] {
         let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
-        case.refuses_named(&source, label, named);
+        case.refuses_named(&source, label, &decl_key(kind, name_of(decl)));
     }
 }
 
@@ -166,17 +185,17 @@ fn varargs_callconv_and_unknown_refuse() {
     case.refuses_named(
         "extern \"C\" { fn close(fd: i32, ...) -> i32; }\nfn main() -> i64 { return 0; }\n",
         "varargs",
-        "varargs",
+        &decl_key("signature_mismatch", "close"),
     );
     case.refuses_named(
         "extern \"C\" callconv(.win64) { fn close(fd: i32) -> i32; }\nfn main() -> i64 { return 0; }\n",
         "win64",
-        "callconv",
+        &decl_key_at("callconv", 34, "close"),
     );
     case.refuses_named(
         "extern \"C\" { fn nosuchsymbol(x: i32) -> i32; }\nfn main() -> i64 { return 0; }\n",
         "unknown",
-        "nosuchsymbol",
+        &decl_key("unknown_symbol", "nosuchsymbol"),
     );
 }
 
@@ -400,9 +419,9 @@ fn missing_extern_arm_mutant_refuses_the_table_calls() {
     }
 }
 
-/// Width classes the ABI loads. A u32 result is refused (`nbx_row_sig`), a
-/// 6-parameter off-table name refuses by name, and the same shape under a
-/// table name is a signature mismatch.
+/// Width classes the ABI loads. A u32 result is a signature mismatch, a
+/// 6-parameter off-table name is an unknown symbol, and the same shape under
+/// a table name is an arity mismatch.
 #[test]
 fn wide_widths_are_admitted_by_class_and_u32_results_refuse() {
     let case = Case::new(true);
@@ -410,21 +429,20 @@ fn wide_widths_are_admitted_by_class_and_u32_results_refuse() {
     case.refuses_named(
         "extern \"C\" { fn close(fd: i32) -> u32; }\nfn main() -> i64 { return 0; }\n",
         "u32 result",
-        "close",
+        &decl_key("signature_mismatch", "close"),
     );
-    // A 6-parameter off-table row refuses by name; the widths never get a say
-    // until L2b adds the row. This is the rdx/rcx/r8/r9 shape (args 2..=5).
+    // A 6-parameter off-table name has no row. The compiler names the key
+    // and the site. This is the rdx/rcx/r8/r9 shape (args 2..=5).
     case.refuses_named(
         "extern \"C\" { fn six(a: i32, b: u32, c: i64, d: *const u8, e: *mut u8, f: *mut i32) -> i32; }\nfn main() -> i64 { return 0; }\n",
         "six",
-        "six",
+        &decl_key("unknown_symbol", "six"),
     );
-    // The same shape under a table name is a signature mismatch, which is
-    // what an L2b row with the wrong packing will hit first.
+    // The same shape under a table name is the wrong arity.
     case.refuses_named(
         "extern \"C\" { fn close(a: i32, b: u32, c: i64, d: *const u8, e: *mut u8, f: *mut i32) -> i32; }\nfn main() -> i64 { return 0; }\n",
         "close six-arg",
-        "close",
+        &decl_key("arity", "close"),
     );
 }
 
@@ -646,84 +664,80 @@ fn argreg_field_map_is_the_sysv_six() {
 #[test]
 fn socket_rows_refuse_other_spellings_by_name() {
     let case = Case::new(true);
-    for (decl, label, named) in [
+    for (decl, label, kind) in [
         (
             "fn connect(fd: i32, addr: *const u8, len: u32) -> i32;",
             "connect u32 length",
-            "connect",
+            "signature_mismatch",
         ),
         (
             "fn setsockopt(fd: i32, level: i32, name: i32, value: *const u8) -> i32;",
             "setsockopt without its length",
-            "setsockopt",
+            "arity",
         ),
         (
             "fn send(fd: i32, buf: *const u8, len: i32, flags: i32) -> i64;",
             "send i32 length",
-            "send",
+            "signature_mismatch",
         ),
         (
             "fn recv(fd: i32, buf: *const u8, len: i64, flags: i32) -> i64;",
             "recv const buffer",
-            "recv",
+            "signature_mismatch",
         ),
         (
             "fn memset(dst: *mut u8, value: i32, n: i64) -> *const u8;",
             "memset const result",
-            "memset",
+            "signature_mismatch",
         ),
         (
             "fn getrandom(buf: *mut u8, len: i64, flags: u32) -> i64;",
             "getrandom u32 flags",
-            "getrandom",
+            "signature_mismatch",
         ),
         (
             "fn getaddrinfo(node: *const u8, service: *const u8, hints: *const u8, res: *const *const u8) -> i32;",
             "getaddrinfo pointer-to-pointer slot",
-            "getaddrinfo",
+            "signature_mismatch",
         ),
         (
             "fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i64;",
             "inet_pton i64 result",
-            "inet_pton",
+            "signature_mismatch",
         ),
         (
             "fn socket(domain: i32, kind: i32) -> i32;",
             "socket two arguments",
-            "socket",
+            "arity",
         ),
     ] {
         let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
-        case.refuses_named(&source, label, named);
+        case.refuses_named(&source, label, &decl_key(kind, name_of(decl)));
     }
 }
 
-/// Socket and name-service functions the table does not carry refuse by name.
+/// bind, listen and getsockname match a row and are never called, so the
+/// image is written. accept and getnameinfo have no row: the compiler names
+/// the key, the site and the symbol.
 #[test]
-fn socket_neighbours_outside_the_table_refuse_by_name() {
+fn socket_neighbours_follow_the_row() {
     let case = Case::new(true);
-    for (decl, name) in [
-        (
-            "fn bind(fd: i32, addr: *const u8, len: i32) -> i32;",
-            "bind",
-        ),
-        ("fn listen(fd: i32, backlog: i32) -> i32;", "listen"),
-        (
-            "fn accept(fd: i32, addr: *mut u8, len: *mut u8) -> i32;",
-            "accept",
-        ),
-        (
-            "fn getsockname(fd: i32, addr: *mut u8, len: *mut u8) -> i32;",
-            "getsockname",
-        ),
-        // freeaddrinfo has a table row now (row 87); getnameinfo has none.
-        (
-            "fn getnameinfo(addr: *const u8, len: i32, host: *mut u8, hostlen: i32, flags: i32) -> i32;",
-            "getnameinfo",
-        ),
+    for decl in [
+        "fn bind(fd: i32, addr: *const u8, len: i32) -> i32;",
+        "fn listen(fd: i32, backlog: i32) -> i32;",
+        "fn getsockname(fd: i32, addr: *mut u8, len: *mut u8) -> i32;",
     ] {
         let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
-        case.refuses_named(&source, name, name);
+        let binary = case.builds(&source);
+        let run = Command::new(&binary).output().unwrap();
+        assert_eq!(run.status.code(), Some(0), "{source}\n{run:?}");
+    }
+    for decl in [
+        "fn accept(fd: i32, addr: *mut u8, len: *mut u8) -> i32;",
+        "fn getnameinfo(addr: *const u8, len: i32, host: *mut u8, hostlen: i32, flags: i32) -> i32;",
+    ] {
+        let source = format!("extern \"C\" {{ {decl} }}\nfn main() -> i64 {{ return 0; }}\n");
+        case.refuses_named(&source, decl, &decl_key("unknown_symbol", name_of(decl)));
     }
 }
 

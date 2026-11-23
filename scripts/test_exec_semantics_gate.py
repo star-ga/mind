@@ -40,26 +40,16 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True
+from check_gate_wiring_preflight import (PREFLIGHT, _code, check_red_shown,  # noqa: E402
+                                         red_branch_cuts, silent_red_outputs)
+
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "exec_semantics_gate.sh"
 GATE_TEXT = GATE.read_text(encoding="utf-8") if GATE.is_file() else ""
 
 TIERS = ("exec", "lowering", "pkg")
-
-
-def _code(line: str) -> str:
-    """`line` with its bash comment removed, honouring double quotes.
-
-    A `#` only opens a comment at the start of a word and never inside `"..."`, so
-    this is bash's own rule rather than `split("#", 1)`.
-    """
-    quoted = False
-    for i, ch in enumerate(line):
-        if ch == '"':
-            quoted = not quoted
-        elif ch == "#" and not quoted and (i == 0 or line[i - 1].isspace()):
-            return line[:i]
-    return line
 
 
 def _array_body(name: str, text: str) -> str:
@@ -658,6 +648,51 @@ PARSER_CHECKS: list[tuple[str, Callable[[], object], object]] = [
 ]
 
 
+# --- preflight shows the cause of a red ---------------------------------------
+# The helpers and their history: the end of scripts/check_gate_wiring_preflight.py.
+def check_preflight_red_shows_cause() -> None:
+    text = PREFLIGHT.read_text(encoding="utf-8")
+    listed = "".join(marker_block(f"listed_gate_{i:02d}", "optional") for i in range(13))
+    panics = "".join(f"thread 'case_{k}' panicked at tests/broken_{{0:02d}}.rs:{k}:5: assertion "
+                     "`left == right` failed: the emitted bytes differ from the golden output\n"
+                     for k in range(38))
+    broken = "".join(block(f"Running tests/broken_{i:02d}.rs (target/debug/deps/broken_{i:02d}-09)",
+                           PER_HARNESS - 1, 1, body=panics.format(i)) for i in range(60))
+    errs = tuple(f"error: test failed, to rerun pass `--test broken_{i:02d}`" for i in range(60))
+    log = tier_log("pkg", extra_blocks=listed + broken, cargo_exit=101, error_lines=errs)
+    proc = run_gate(log, "pkg")
+    if proc.returncode == 0:
+        raise AssertionError("the recorded red pkg tier log exits 0")
+    vs_out = "".join(f"VACUOUS  scripts/gate_{i:04d}.py: passed with NO compiler present "
+                     "(exit 0, asserted=1) — it asserts nothing about the compiler\n"
+                     for i in range(3000))
+    vs_out += ("env-pointed leg: gates=3027 vacuous=3000 rejected=27\n"
+               "FAIL  3000 gate(s) pass without a compiler.\n")
+    tg_out = "".join(f"[{'FAIL' if i % 500 == 7 else 'PASS'}] case {i:04d}: want exit non-zero, got 0\n"
+                     for i in range(7000))
+    tg_out += ("\nSDLC-GATE exec_semantics_gate_selftest ran=7000 fail=14\n"
+               "FAIL: exec_semantics_gate.sh did not grade\n")
+    cw_out = "".join(f"FAIL  tests/cfg_{i:04d}.rs: a feature-gated test file runs in no CI job\n"
+                     if i % 400 == 5 else
+                     f"  tests/cfg_{i:04d}.rs: cfg(feature = \"mlir-build\") under job build_test\n"
+                     for i in range(6000))
+    es_out = proc.stdout + proc.stderr
+    for var, out, old in (("es_out", es_out, r"^(FAIL|  - |harnesses|tests executed)"),
+                          ("vs_out", vs_out, r"^(VACUOUS|ran=|FAIL)"),
+                          ("tg_out", tg_out, r"^\[FAIL\]|^ran="),
+                          ("cw_out", cw_out, r".")):
+        check_red_shown(text, var, out, old)
+    seen, cuts = red_branch_cuts(text)
+    if seen < 50 or cuts:
+        raise AssertionError(f"red branches={seen} (need >=50); cut outside red_lines: {cuts}")
+    planted = text + '\nif false; then\n  bad "planted"\n  printf x | head -12\nfi\n'
+    if not red_branch_cuts(planted)[1]:
+        raise AssertionError("the cut detector misses a planted `| head -12` in a red branch")
+    silent = silent_red_outputs(text)
+    if silent or silent_red_outputs(text + "k_out=$(true)\n") != ["k_out"]:
+        raise AssertionError(f"a red branch prints none of its gate output: {silent}")
+
+
 def main() -> int:
     if not GATE.is_file():
         print(f"FAIL: {GATE} not found", file=sys.stderr)
@@ -674,6 +709,12 @@ def main() -> int:
         print("[PASS] tiers own MIND_BENCH_REQUIRE and MIND_INTDOT_VNNI_VERIFY, not the caller's shell")
     except (AssertionError, OSError) as exc:
         print(f"[FAIL] tier environment ownership: {exc}")
+        bad += 1
+    try:
+        check_preflight_red_shows_cause()
+        print("[PASS] a red preflight section prints its FAIL lines first and uncut")
+    except (AssertionError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"[FAIL] preflight red output: {exc}")
         bad += 1
     for name, produce, want in PARSER_CHECKS:
         got = produce()
@@ -705,7 +746,7 @@ def main() -> int:
             sys.stderr.write(proc.stderr[-2000:])
     # The sanctioned marker shape (see scripts/gate_assert.py MARKER_RES); a
     # bare `ran=/fail=` is refused by examples/mindc_mind/smoke_wiring_lint.py.
-    ran = 2 + len(CASES) + len(PARSER_CHECKS)
+    ran = 3 + len(CASES) + len(PARSER_CHECKS)
     print(f"\nSDLC-GATE exec_semantics_gate_selftest ran={ran} fail={bad}")
     if bad:
         print("FAIL: exec_semantics_gate.sh did not grade as required above")

@@ -160,7 +160,7 @@ fn require_signed_rejects_attested_but_unsigned_artifact() {
 
     // Confirm the artifact really IS attested — otherwise this test would
     // silently re-test the unattested path above and prove nothing. The
-    // unattested JSON report is `{artifact, ssa_valid, ssa_reason, attested}`;
+    // unattested JSON report is `{artifact, ssa_valid, ssa_reason, attested, scope}`;
     // only the attested report carries `trace_hash_valid` / `signature`.
     let plain = mindc()
         .arg("verify")

@@ -1,0 +1,16 @@
+// fn main(argc, argv) with a free loop, run with two arguments: argc is 3, argv reads back. Exit status 33.
+fn main(argc: i64, argv: i64) -> i64 {
+    if argv == 0 {
+        return 99;
+    }
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, i);
+        acc = acc + __mind_load_i64(p) - i;
+        let z: i64 = __mind_free(p);
+        i = i + 1;
+    }
+    return acc + argc + 30;
+}

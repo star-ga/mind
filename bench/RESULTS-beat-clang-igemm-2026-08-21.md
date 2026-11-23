@@ -9,7 +9,7 @@ on a 512³ int8 GEMM, with BYTE-IDENTICAL output.**
 | `clang -O3 -march=x86-64-v3` (naive triple loop) | 170.890 ms | 1.57 GMAC/s |
 | **ratio** | — | **33.88× faster, byte-identical** |
 
-U1 (i7-5930K, AVX2), M=K=N=512, median of 50 reps, `nice -n 15`.
+An i7-5930K workstation (AVX2), M=K=N=512, median of 50 reps, `nice -n 15`.
 
 ## Why this is the honest "beats clang" number
 - **Correctness is a hard gate, not an afterthought:** the driver `memcmp`s MIND's

@@ -1,0 +1,379 @@
+file	function	reason
+.github/scripts/pr_review.py	ask_model	the claude CLI
+benchmarks/autograd_comparison/benchmark_real_autograd.py	measure_mind_autodiff_time	mindc (the Rust host compiler, not a seed or candidate)
+benchmarks/determinism/benchmark_determinism.py	compile_mind_program	mindc (the Rust host compiler, not a seed or candidate)
+benchmarks/determinism/benchmark_determinism.py	main	mindc (the Rust host compiler, not a seed or candidate)
+benchmarks/jax_comparison/benchmark_jax_compile.py	measure_mind_compile_time	mindc (the Rust host compiler, not a seed or candidate)
+benchmarks/mojo/benchmark_mojo_compilation.py	measure_compilation_time	the mojo toolchain
+benchmarks/mojo/benchmark_mojo_compilation.py	main	the mojo toolchain
+benchmarks/pytorch_comparison/benchmark_pytorch_compile.py	measure_subprocess_baseline	mindc (the Rust host compiler, not a seed or candidate)
+benchmarks/pytorch_comparison/benchmark_pytorch_compile.py	measure_mind_compile_time	mindc (the Rust host compiler, not a seed or candidate)
+benchmarks/scientific_benchmark.py	run_criterion	cargo
+benchmarks/scientific_benchmark_raw.py	parse_criterion_output	cargo
+examples/columnar/structural_scan_test.py	main	mindc (the Rust host compiler, not a seed or candidate)
+examples/columnar/tiled_fold_test.py	main	mindc (the Rust host compiler, not a seed or candidate)
+examples/mind_mirror_v04/mirror_gate.py	run_bounded	a mirror program the gate built, on its data file
+examples/mind_mirror_v04/mirror_gate.py	main	sed
+examples/mindc_mind/_cf_oracle.py	emit	getattr of the built oracle .so by the entry name that each caller gives as a literal (selftest_native_elf_stage, selftest_native_elf_u); it starts no process
+examples/mindc_mind/_cf_oracle.py	run_checked_child	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/_diagnostic_project.py	assert_unscoped_import_refused	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/_exec_retry.py	_hold	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/_mindfuzz_twin_emit.py	seeded_note	cargo (the reference notes of the Rust leg)
+examples/mindc_mind/_mindfuzz_twin_emit.py	unseeded_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/_mindfuzz_twin_emit.py	check	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/_mindfuzz_twin_emit.py	_run	a program the test built
+examples/mindc_mind/_process_starts.py	process_start_errors	git
+examples/mindc_mind/_selfhost_identity.py	_alloc_row_exits	exec of the _R, CASES and DEFAULT_ROWS assignments of the tracked self_host_native_alloc_bounded_smoke.py (this rule scans that file) into an empty namespace; it starts no process
+examples/mindc_mind/_selfhost_identity.py	run_image	a program the test built
+examples/mindc_mind/_selfhost_loop_reseed.py	git	git
+examples/mindc_mind/_selfhost_so.py	_build_fresh	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/_selfhost_so.py	build_captured_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/_selfhost_string_rows.py	_selftest_mutants	exec of a one-line mutant of this tracked file's own source into a new module, for the self-test; it starts no process
+examples/mindc_mind/_selfhost_string_rows.py	observe_host	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/_w8_native.py	run_elf_bytes	a program the test built
+examples/mindc_mind/_w8_native.py	mlir_build_run	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/backend_native_bridge_smoke.py	bridge_build	mindc (the Rust host compiler, not a seed or candidate), behind an optional wrapper
+examples/mindc_mind/backend_native_bridge_smoke.py	toolchain_absence_proof	bash or sh on a script
+examples/mindc_mind/backend_native_bridge_smoke.py	main	a program the test built
+examples/mindc_mind/closure_netverify.py	run	a program the test built
+examples/mindc_mind/cutover_coverage_measure.py	nfn_emit	os.fork of this harness (the child runs Python code, no program)
+examples/mindc_mind/cutover_coverage_measure.py	oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/div_shift_cmp_edge_smoke.py	run_case	a program the test built
+examples/mindc_mind/enum_netverify.py	run	a program the test built
+examples/mindc_mind/field_store_netverify.py	run	a program the test built
+examples/mindc_mind/full_strtab_smoke.py	_oracle_strtab	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/gap_corpus_smoke.py	nfn_mic3	os.fork of this harness (the child runs Python code, no program)
+examples/mindc_mind/gap_corpus_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/general_float_netverify.py	run	a program the test built
+examples/mindc_mind/h2b_exclusion_controls_check.py	anatomy_index	bash or sh on a script
+examples/mindc_mind/h2b_exclusion_controls_check.py	main	git
+examples/mindc_mind/h2b_fmt_identity_check.py	walk_mind_files	git
+examples/mindc_mind/h2b_fmt_identity_check.py	emit_pair	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/h2b_fmt_identity_check.py	main	git
+examples/mindc_mind/mic3_flip_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/mic3_oracle_smoke.py	emit_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/mic3_primitives_smoke.py	_live_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/mod_operator_smoke.py	mlir_emit_mod	mindc (the Rust host compiler, not a seed or candidate); a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace); a program the test built
+examples/mindc_mind/mod_operator_smoke.py	native_run_mod	a program the test built
+examples/mindc_mind/multi_let_smoke.py	live_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/native_c_call_emit_check.py	child	getattr of the fixture .so that this check built, by the fixture_<n> symbol that the check wrote into the row file; it starts no process
+examples/mindc_mind/native_c_call_emit_check.py	mutations	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/native_c_variadic_emit_check.py	main	patch; bash on the captured run.sh, which starts clang, mindc (the Rust host compiler) and the programs they built (the seed builds go through start_child)
+examples/mindc_mind/native_c_variadic_plan_check.py	main	patch; bash on the captured run.sh, which starts mindc (the Rust host compiler) and the programs it built (the seed builds go through start_child)
+examples/mindc_mind/native_dynamic_layout_check.py	main	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/native_lane_op_differential_smoke.py	_build	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/native_lane_op_differential_smoke.py	_observe_build	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/native_lane_op_differential_smoke.py	_observe_eval	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/native_lane_op_differential_smoke.py	main	git
+examples/mindc_mind/native_lane_value_shapes_smoke.py	_build	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/native_lane_value_shapes_smoke.py	_run	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/native_lane_value_shapes_smoke.py	_tool	objdump or readelf on a built image
+examples/mindc_mind/native_lane_value_shapes_smoke.py	_fake_driver	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/native_lane_value_shapes_smoke.py	_check_elf	a program the smoke built, behind the runner prefix of its row
+examples/mindc_mind/native_lane_value_shapes_smoke.py	_encoder_table	a program the test built; a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/native_libc_binding_check.py	_row_fns	getattr of a built fixture library and of the C reference library by the t_<name> and ref_<name> names of an ABI row of native_libc_abi_rows.tsv; it starts no process
+examples/mindc_mind/native_libc_binding_check.py	abi_rows	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace); mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/native_libc_binding_check.py	build	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/native_source_driver_check.py	load_helper	loads a tracked catalog module of testdata/native_source_driver (catalog, note_catalog, hash_refusal_catalog: the literal names of its callers; this rule scans each)
+examples/mindc_mind/now_ns_smoke.py	main	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/option_netverify.py	run	a program the test built
+examples/mindc_mind/oracle_parity_lint.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/ref_netverify.py	run	a program the test built
+examples/mindc_mind/rh_f64_aggregate_canary_smoke.py	_mlir_leg	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/rh_f64_aggregate_canary_smoke.py	_native_leg	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/rh_f64_aggregate_canary_smoke.py	_run	a program the test built
+examples/mindc_mind/ri_d1_frozen_profile_gate.py	mlir_exit	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/ri_d1_frozen_profile_gate.py	strace_native_build	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/ri_d1_frozen_profile_gate.py	main	bash or sh on a script; a program the test built
+examples/mindc_mind/self_host_alias_controls_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_andor_precedence_smoke.py	live_rc	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_andor_precedence_smoke.py	run_bytes	a program the test built
+examples/mindc_mind/self_host_andor_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_args_from_os_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_argv_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_array_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_arridx_mic3_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_arridx_mic3_smoke.py	run_native	a program the test built
+examples/mindc_mind/self_host_bounded_profile_smoke.py	main	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_carry_cap_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_cast_mic3_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_cast_mic3_smoke.py	run_native	a program the test built
+examples/mindc_mind/self_host_continue_smoke.py	compile_and_run	a program the test built
+examples/mindc_mind/self_host_else_if_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_failclosed_smoke.py	run	a program the test built
+examples/mindc_mind/self_host_float_lit_exact_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_for_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_if_region_carry_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_if_region_carry_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_ifret_chain_mic3_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_ifret_chain_mic3_smoke.py	run_binary	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_letpath_failclose_smoke.py	run_isolated	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/self_host_letpath_failclose_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_lockstep_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_lockstep_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_loop_smoke.py	_harness	this script's own globals as a namespace object for its support module, which reads it by attribute (this rule judges each such read); it starts no process
+examples/mindc_mind/self_host_loop_smoke.py	do_reseed	sys under a local name, for the lookup of this module by __name__ in sys.modules; it starts no process
+examples/mindc_mind/self_host_match_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_matchscalar_mic3_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_matchscalar_mic3_smoke.py	run_native	a program the test built
+examples/mindc_mind/self_host_mic3_float_valueif_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_mic3_float_valueif_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_mlir_smoke.py	oracle_mlir	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_narrow_let_mic3_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_narrow_let_mic3_smoke.py	run_native	a program the test built
+examples/mindc_mind/self_host_narrow_param_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_narrow_param_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_alloc_bounded_smoke.py	mlir_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_alloc_bounded_smoke.py	rt_assemble	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/self_host_native_alloc_bounded_smoke.py	run_rt_harness	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/self_host_native_autowrap_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_avx2_dot_f32_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_blas_dot_i16_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_blas_dot_q16_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_cast_conv_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_cf_smoke.py	harness_checks	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/self_host_native_diag_smoke.py	build_native	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_diag_smoke.py	run_elf_bytes	a program the test built
+examples/mindc_mind/self_host_native_diag_smoke.py	main	a program the test built
+examples/mindc_mind/self_host_native_div_trap_smoke.py	host_fold	a Python harness of this repository (its starts follow this rule)
+examples/mindc_mind/self_host_native_div_trap_smoke.py	narrow_wrap_program	eval of an integer expression made of two ints and an operator of the literal table of _narrow_operands; it starts no process
+examples/mindc_mind/self_host_native_div_trap_smoke.py	rust_emit_ir	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_dot_f32_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_dot_l1_q16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_elf_alignment_smoke.py	disasm	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/self_host_native_elf_alignment_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_elf_smoke.py	derive_rust_ref_notes	cargo (the reference notes of the Rust leg)
+examples/mindc_mind/self_host_native_elf_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_binop_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_binop_smoke.py	<module>	os.execve of this harness (Python) under another environment
+examples/mindc_mind/self_host_native_fp_call_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_expr_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_expr_smoke.py	<module>	os.execve of this harness (Python) under another environment
+examples/mindc_mind/self_host_native_fp_field_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_field_smoke.py	<module>	os.execve of this harness (Python) under another environment
+examples/mindc_mind/self_host_native_fp_let_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_let_smoke.py	<module>	os.execve of this harness (Python) under another environment
+examples/mindc_mind/self_host_native_fp_param_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_fp_param_smoke.py	<module>	os.execve of this harness (Python) under another environment
+examples/mindc_mind/self_host_native_fp_smoke.py	mind_fp_elf	getattr of the built .so by the entry name: the default or the literal of its caller (selftest_native_elf_fp, selftest_native_elf_fp_mem); it starts no process
+examples/mindc_mind/self_host_native_fp_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_gemm_i8_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_gemm_q16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_gemv_i16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_gemv_q16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_genf32_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_intdot_i16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_intdot_q16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_intdot_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_main_args_smoke.py	__init__	getattr of the built .so by the entry name (the default selftest_native_elf_u; the one caller gives no other); it starts no process
+examples/mindc_mind/self_host_native_main_args_smoke.py	mlir_binary	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_main_args_smoke.py	run	a program the test built
+examples/mindc_mind/self_host_native_matmul_f32_v_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_misc_census_smoke.py	mlir_outcome	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_misc_census_smoke.py	run_exe	a program the test built
+examples/mindc_mind/self_host_native_narrow_add_i8_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_narrow_arith_batch_smoke.py	elf_of	getattr of the built .so by an export name of this file's tables (DRIVERS and the refusal list, selftest_native_elf_narrow_*); it starts no process
+examples/mindc_mind/self_host_native_narrow_arith_batch_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_narrow_paramret_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_narrow_paramret_smoke.py	run	a program the test built
+examples/mindc_mind/self_host_native_narrowint_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_narrowwrap_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_process_smoke.py	check	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_native_record_array_smoke.py	_check_positive	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_record_array_smoke.py	_run	a program the test built
+examples/mindc_mind/self_host_native_record_array_smoke.py	_reference_tests	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_record_trace_smoke.py	_rust_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_record_trace_smoke.py	_reference_consumes	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_record_trace_smoke.py	_evaluator	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_record_trace_smoke.py	_run	a program the test built
+examples/mindc_mind/self_host_native_scalar_f32_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_scalar_f64_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_scalar_narrow_smoke.py	_run_elf	a program the test built
+examples/mindc_mind/self_host_native_scalar_narrow_smoke.py	_live_exit	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_native_scast_smoke.py	_run_live	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_native_scast_smoke.py	_run_elf	a program the test built
+examples/mindc_mind/self_host_native_simd_dot_f32_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_simd_dot_i16_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_simd_dot_q16_smoke.py	_run	a program the test built
+examples/mindc_mind/self_host_native_string_smoke.py	run_measured	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace)
+examples/mindc_mind/self_host_native_string_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_sys_smoke.py	seed_neutral	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_native_sys_smoke.py	main	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_native_tensor_batchsum_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_bcastadd_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_colsum_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_dot_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_ewadd_f64_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_ewadd_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_ewmul_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_matmul_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_maxrowmax_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_relu_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_rowmin_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_rowsum_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_tensor_transpose_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_toplevel_assign_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_native_toplevel_assign_smoke.py	run_elf	a program the test built
+examples/mindc_mind/self_host_native_ucast_smoke.py	_run_live	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+examples/mindc_mind/self_host_native_ucast_smoke.py	_run_elf	a program the test built
+examples/mindc_mind/self_host_native_write8_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_native_write_f32_smoke.py	run_elf_capture	a program the test built
+examples/mindc_mind/self_host_not_smoke.py	oracle_mic3	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_open_smoke.py	main	a program the test built
+examples/mindc_mind/self_host_param_mutation_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_param_mutation_smoke.py	main	a program the test built
+examples/mindc_mind/self_host_standalone_driver_smoke.py	main	the standalone driver with no image file, and a program it built
+examples/mindc_mind/self_host_struct_return_smoke.py	run	a program the test built
+examples/mindc_mind/self_host_tc_class_mismatch_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_class_rules_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_class_rules_smoke.py	export	getattr of the built .so by the literal export name of each caller (selftest_tc_*); it starts no process
+examples/mindc_mind/self_host_tc_classify_error_code_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_decl_names_smoke.py	live_member	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_decl_names_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_fixed_bytes_into_vec_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_fn_value_call_smoke.py	live_verdict	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_fn_value_call_smoke.py	live_code_at	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_fn_value_call_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_let_class_mismatch_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_let_infer_ident_smoke.py	leg3_live	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_let_infer_smoke.py	leg3_live	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_scope_frame_smoke.py	live_verdict	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_scope_frame_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_self_host_only_call_smoke.py	live_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_self_host_only_call_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_self_host_only_call_smoke.py	cli_probes	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_shape_annot_compat_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_shape_rules_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_shape_rules_smoke.py	export	getattr of the built .so by the literal export name of each caller (selftest_tc_*); it starts no process
+examples/mindc_mind/self_host_tc_std_export_smoke.py	live_member	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_std_export_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_undeclared_assign_smoke.py	live_diags	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_undeclared_assign_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_undeclared_assign_smoke.py	live_parses	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_call_smoke.py	live_diags	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_call_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_ident_smoke.py	live_verdict	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_ident_smoke.py	live_code_at	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_ident_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_ident_smoke.py	live_matrix_cell	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_variant_smoke.py	live_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_tc_unknown_variant_smoke.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/self_host_value_if_expr_smoke.py	run_elf	a program the test built
+examples/mindc_mind/selfhost_source_bundle_check.py	_compiles	compile of a mutant text of _selfhost_sources.py, only to check that it is Python; the code object is not run
+examples/mindc_mind/selfhost_source_bundle_check.py	real_build	a program the test built
+examples/mindc_mind/selfhost_source_bundle_check.py	run_mutations	a Python unittest of this check
+examples/mindc_mind/sha256_hash_smoke.py	main	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/stdlib_manifest_lint.py	process_start_selftest	git
+examples/mindc_mind/stdlib_manifest_lint.py	magic_file_errors	git
+examples/mindc_mind/stdlib_manifest_lint.py	_run_on_manifest	a Python harness of this repository (its starts follow this rule); git
+examples/mindc_mind/stdlib_manifest_lint.py	selftest	git
+examples/mindc_mind/struct_lit_smoke.py	_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/tc_differential_fuzz.py	__init__	getattr of the built .so by the export names of the RULES table (selftest_tc_*); it starts no process
+examples/mindc_mind/tc_differential_fuzz.py	build_so	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/tc_differential_fuzz.py	check	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/testdata/dtk_plan_parity_smoke.py	rust_oracle	cargo
+examples/mindc_mind/unified_dispatch_smoke.py	live_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/mindc_mind/validate_real_fns_smoke.py	live_oracle	mindc (the Rust host compiler, not a seed or candidate)
+examples/native/ci_kernel_smoke.py	main	mindc (the Rust host compiler, not a seed or candidate)
+scripts/check_gate_wiring.py	repo_root	git
+scripts/check_gate_wiring.py	representatives	git
+scripts/check_gate_wiring.py	tracked_harness_files	git
+scripts/check_gate_wiring.py	check_harness_history_lines	git
+scripts/check_gate_wiring.py	index_mode	git
+scripts/check_gate_wiring_preflight.py	check_ci_pipe_readers	git
+scripts/check_gate_wiring_preflight.py	_red_lines_shown	bash on the red_lines helper of scripts/preflight.sh
+scripts/check_release_gating.py	check_lockfile	git
+scripts/check_release_gating.py	tree_packages	cargo
+scripts/gate_assert.py	<module>	builtins under a local name, for the builtins of each gate that run_script runs; it starts no process
+scripts/gate_assert.py	run_script	compile and exec of a gate script (a tracked file; this rule judges its starts in that file) with assertion counting
+scripts/gate_runner_wiring_lint.py	_run_lint	a Python harness of this repository (its starts follow this rule)
+scripts/gate_runner_wiring_lint.py	self_test	the case_ fns of this file, read from globals() and run as self-test rows; it starts no process
+scripts/run_gate.py	run_one	a gate of this repository: Python through the shim, bash, or the gate program
+scripts/run_gate.py	_scratch_tree	a host tool (objdump, readelf, cc, as, objcopy, llvm-mc, patch, tar, time, prlimit, strace); git
+scripts/sdlc/lost_by_merge.py	sh	git (each caller passes git and its arguments)
+scripts/sdlc/lost_by_merge.py	is_text	git
+scripts/test_exec_semantics_gate.py	run_gate	bash or sh on a script
+scripts/test_exec_semantics_gate.py	tier_env_seen	a fake cargo script, or bash on the gate script
+scripts/test_gate_wiring.py	scratch	git
+scripts/test_gate_wiring.py	run_lint	a Python harness of this repository (its starts follow this rule)
+scripts/test_gate_wiring.py	hygiene_problem	bash or sh on a script
+scripts/test_gate_wiring.py	main	bash, a fake cargo script, and Python scanners of this repository
+scripts/test_gate_wiring.py	remove_ci_keystone_feature	git
+scripts/test_gate_wiring.py	del_commit_msg_hook	git
+scripts/test_gate_wiring.py	unset_exec_bit	git
+scripts/test_gate_wiring.py	unset_payload_exec_bit	git
+scripts/test_gate_wiring.py	del_posthooks	git
+scripts/test_gate_wiring.py	overflow_harness	git
+scripts/test_gate_wiring.py	erase_harness	git
+scripts/test_gate_wiring.py	git	git
+scripts/test_no_ai_attribution.py	rulebook	bash or sh on a script
+scripts/test_no_ai_attribution.py	git	git
+scripts/test_no_ai_attribution.py	run_gate	bash or sh on a script
+scripts/test_no_ai_attribution.py	_merge_with_identity	git
+scripts/test_no_ai_attribution.py	_run_ccm	bash or sh on a script
+scripts/test_no_ai_attribution.py	case_anatomy_indexes_only_tracked_files	bash or sh on a script
+scripts/test_no_ai_attribution.py	case_anatomy_integrity_check_sees_a_torn_index	bash or sh on a script
+scripts/test_no_ai_attribution.py	case_anatomy_failed_render_keeps_the_previous_index	bash or sh on a script
+scripts/test_no_ai_attribution.py	case_author_identity_guard_rejects_trailing_dot_and_accepts_exact	bash or sh on a script
+scripts/test_no_ai_attribution.py	case_identity_anchor_exempts_history_unless_forced	bash or sh on a script; git
+scripts/test_no_ai_attribution.py	case_committed_anatomy_matches_the_tracked_tree	git
+scripts/test_smoke_wiring_lint.py	git	git
+scripts/test_smoke_wiring_lint.py	anatomy_scratch	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	main	loads the tracked smoke_wiring_lint.py (this rule scans it) as a module, to run its checks
+scripts/test_smoke_wiring_lint.py	run_hook	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	check_index	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	run	a Python harness of this repository (its starts follow this rule)
+scripts/test_smoke_wiring_lint.py	case_anatomy_crashed_generator_leaves_the_index_untouched	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	case_anatomy_killed_generator_leaves_the_index_untouched	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	case_anatomy_refuses_an_index_that_disagrees_with_itself	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	case_anatomy_sweeps_dead_temp_files_only	true; bash or sh on a script
+scripts/test_smoke_wiring_lint.py	case_anatomy_check_rejects_a_damaged_index	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	staged	git
+scripts/test_smoke_wiring_lint.py	case_precommit_hook_never_stages_a_bad_anatomy	bash or sh on a script
+scripts/test_smoke_wiring_lint.py	case_committed_anatomy_matches_the_tracked_tree	git
+scripts/verify_ci_green.py	gh_api	gh, the GitHub CLI
+scripts/workflow_scan.py	run_cargo_test_matrix	cargo
+scripts/workflow_scan.py	_matrix_row_environment_probe	a fake cargo script
+tests/_self_host_loop_advance_support.py	patch	getattr of the loop module by the names of each patch call, kept to restore them; it starts no process
+tests/_tls13_client_modes.py	build	mindc (the Rust host compiler, not a seed or candidate)
+tests/_tls13_client_modes.py	call	getattr of the built .so by the literal export name of each caller (tls13ct_*); it starts no process
+tests/_tls13_client_modes.py	run_case	mindc (the Rust host compiler, not a seed or candidate); a program the test built
+tests/check_claims_gate_tests.py	cost_run_gate	a Python harness of this repository (its starts follow this rule)
+tests/check_claims_gate_tests.py	cost_main	a Python harness of this repository (its starts follow this rule)
+tests/check_claims_gate_tests.py	surface_run_gate	a Python harness of this repository (its starts follow this rule)
+tests/check_claims_gate_tests.py	live_install	a Python harness of this repository (its starts follow this rule)
+tests/check_claims_gate_tests.py	install_case	a Python harness of this repository (its starts follow this rule)
+tests/gate_assert_count_contract_test.py	_gap_kind_rows	getattr of gap_corpus_smoke by the table names that each caller gives, kept to restore them; it starts no process
+tests/gate_assert_count_contract_test.py	_run	a Python harness of this repository (its starts follow this rule)
+tests/gate_assert_count_contract_test.py	case_runner_ignores_a_forged_count	a Python harness of this repository (its starts follow this rule)
+tests/gate_assert_count_contract_test.py	_runner	a Python harness of this repository (its starts follow this rule)
+tests/gate_assert_count_contract_test.py	_runner_shell	a Python harness of this repository (its starts follow this rule)
+tests/gate_assert_count_contract_test.py	main	the case_ fns of this file, read from globals() and run as test rows; it starts no process
+tests/self_host_loop_advance_contract_test.py	case_import_does_not_resolve_or_build_the_oracle	sys.executable (a Python probe of one import)
+tests/self_host_loop_advance_publication_test.py	case_preflight_self_host_branch_fails_closed_for_exit_statuses	bash or sh on a script
+tests/self_host_loop_advance_test.py	case_repository_seed_chain_verifies	a Python harness of this repository (its starts follow this rule)
+tests/self_host_loop_advance_test.py	case_git_history_is_refused_on_a_shallow_clone	git
+tests/self_host_loop_advance_test.py	main	the case_ fns of this file and of its two test modules, read from globals() and vars() and run as test rows; it starts no process
+tests/std_process_wait/_harness.py	bind	getattr of the built .so by the export names that accept.py gives (its SYMBOLS table); it starts no process
+tests/std_process_wait/cases_spawn.py	case_fork_leak	libc fork as a probe under RLIMIT_NPROC 1 that must fail; a child that it makes exits at once (os._exit); it feeds no compiler
+tools/bench_pairs.py	_code_strings	reads the string constants of a fn's code for a self-test row; it starts no process
+tools/bench_pairs.py	self_test	a Python harness of this repository (its starts follow this rule)
+tools/bench_pairs.py	_st_grade	a Python harness of this repository (its starts follow this rule)
+tools/bench_pairs.py	git	git
+tools/bench_pairs.py	run_pair	bash or sh on a script
+tools/bench_pairs.py	same	a Python harness of this repository (its starts follow this rule)
+tools/mindfuzz/mutate.py	llm_mutate	the claude CLI, through env
+tools/mindfuzz/oracles.py	_run	mindc (the Rust host compiler, not a seed or candidate)
+tools/mindfuzz/oracles.py	_scalar_reference	eval of the integer mirror directive of a fuzz seed, with no builtins but abs, min, max, sum and range, for the expected value; it starts no process
+tools/mindfuzz/oracles.py	canonical_output_hash	a ctypes lookup of the built .so by the entry name (CANON_ENTRY; the one caller gives no other); it starts no process
+tools/mindfuzz/oracles.py	oracle_reference	getattr and a ctypes lookup of the built .so by the kernel names of the _REF_KERNELS table; it starts no process
+tools/test_bench_gate.py	_load_gate	loads the tracked bench_gate.py (this rule scans it) as a module, for its parsers and its median rank
+tools/test_bench_gate.py	run_capture	a Python harness of this repository (its starts follow this rule)
+tools/test_bench_gate.py	run_args	a Python harness of this repository (its starts follow this rule)
+tools/test_bench_gate.py	main	bash or sh on a script
+tools/test_bench_gate.py	rf_run	a Python harness of this repository (its starts follow this rule)
+tools/test_bench_gate.py	check_base_step	bash or sh on a script
+tools/test_bench_gate.py	grade	a Python harness of this repository (its starts follow this rule)
+tools/test_bench_gate.py	step	bash or sh on a script
+tools/test_bench_gate.py	check_paired	a Python harness of this repository (its starts follow this rule)
+tools/test_bench_gate.py	git	git

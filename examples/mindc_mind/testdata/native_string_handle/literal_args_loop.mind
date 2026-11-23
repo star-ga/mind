@@ -1,0 +1,14 @@
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+
+fn main() -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 4 {
+        t = t + take("loop", 25);
+        i = i + 1;
+    }
+    t = t + take("", 1) + take("tab\tquote\"slash\\\n", 2) + take("été", 3);
+    return t + take("loop", 4) - 10;
+}

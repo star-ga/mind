@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 
-Ruling Q1.1: a file may be formatted only when its diff is layout-only AND
+A file may be formatted only when its diff is layout-only AND
 `--emit-ir` + `--emit-mic3` under one mindc are byte-identical for the
 pre-format and post-format bytes. This gate re-measures that proof for the
 pinned fifteen-file formatted set (H2b's fourteen plus the seed batch's
@@ -34,7 +34,7 @@ IR_REFUSAL_EXCLUSIONS = {
     "examples/mindc_mind/string_escape_driver.mind",
 }
 
-# These fourteen files are outside the formatted set. Q1.1 kept main.mind out of lane C.
+# These fourteen files are outside the formatted set. The formatting rule kept main.mind out of the formatted set.
 # The seven seed-batch entries (S6b, S6a, #289) are semantic std edits or new test
 # files made after the H2b base. The seed batch's one format-only file,
 # std/string.mind (S6b b8f15059), is measured in the pinned set instead.
@@ -128,6 +128,14 @@ SEMANTIC_EDIT_EXCLUSIONS = {
     "examples/mindc_mind/selfhost_driver.mind": (
         "3129845c: nb_report_unsupported reports the extern ABI refusal first, "
         "+4 code lines (semantic edit)"
+    ),
+    "std/net.mind": (
+        "0.10.4: the integer literal arguments of the net extern calls are i32, "
+        "+17/-17 (semantic edit)"
+    ),
+    "examples/mindc_mind/selfhost_argv_driver.mind": (
+        "0.10.4: the standalone argv driver skips the self-mode input magic of the "
+        "compiler source, +12/-1 (semantic edit)"
     ),
     # Main #383 e3b01d11 lint-warning fixes: renamed bindings, `let mut` plus
     # reassignment for shadowed lets, an unused import dropped (code edits).

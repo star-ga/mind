@@ -96,6 +96,12 @@ impl Project {
         self.build_with(entry_rel, "binary", historical_compiler())
     }
 
+    /// Build through the native compiler of the hosts that cannot run the
+    /// Linux x86-64 stage1, on every host, so Linux proves the host admits it.
+    pub fn build_native_portable(&self, entry_rel: &str) -> (i32, String, Option<Vec<u8>>) {
+        self.build_with(entry_rel, "binary", portable_native_compiler())
+    }
+
     fn build_with(
         &self,
         entry_rel: &str,
@@ -149,42 +155,53 @@ fn native_compiler() -> PathBuf {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 fn native_compiler() -> PathBuf {
-    historical_compiler()
+    portable_native_compiler()
 }
 
-/// The host-native drain fixture, built once per test binary on any host.
-fn historical_compiler() -> PathBuf {
+/// The native compiler of the hosts that cannot run the committed image: the
+/// drain fixture with the native-lane-v1 mark, which the host requires.
+fn portable_native_compiler() -> PathBuf {
     static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
     FIXTURE
-        .get_or_init(|| {
-            let dir = tempfile::tempdir().expect("native fixture directory");
-            let root = dir.keep();
-            let output = root.join(if cfg!(windows) {
-                "draining_native_compiler.exe"
-            } else {
-                "draining_native_compiler"
-            });
-            let status = Command::new("rustc")
-                .args([
-                    "--edition",
-                    "2024",
-                    "--crate-name",
-                    "draining_native_compiler",
-                ])
-                .arg(repo_path(
-                    "tests/native_bridge_support/draining_native_compiler.rs",
-                ))
-                .arg("-o")
-                .arg(&output)
-                .status()
-                .expect("compile host-native drain fixture");
-            assert!(
-                status.success(),
-                "host-native drain fixture compilation failed: {status}"
-            );
-            output
-        })
+        .get_or_init(|| drain_fixture(&["--cfg", "native_lane_mark"]))
         .clone()
+}
+
+/// The unmarked host-native drain fixture, built once per test binary.
+fn historical_compiler() -> PathBuf {
+    static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
+    FIXTURE.get_or_init(|| drain_fixture(&[])).clone()
+}
+
+/// Compile the host-native drain fixture with the extra rustc arguments.
+fn drain_fixture(extra: &[&str]) -> PathBuf {
+    let dir = tempfile::tempdir().expect("native fixture directory");
+    let root = dir.keep();
+    let output = root.join(if cfg!(windows) {
+        "draining_native_compiler.exe"
+    } else {
+        "draining_native_compiler"
+    });
+    let status = Command::new("rustc")
+        .args([
+            "--edition",
+            "2024",
+            "--crate-name",
+            "draining_native_compiler",
+        ])
+        .args(extra)
+        .arg(repo_path(
+            "tests/native_bridge_support/draining_native_compiler.rs",
+        ))
+        .arg("-o")
+        .arg(&output)
+        .status()
+        .expect("compile host-native drain fixture");
+    assert!(
+        status.success(),
+        "host-native drain fixture compilation failed: {status}"
+    );
+    output
 }
 
 /// Assert a semantic result where the real Linux x86-64 image is available.

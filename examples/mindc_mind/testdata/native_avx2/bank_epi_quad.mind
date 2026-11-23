@@ -1,6 +1,6 @@
 // Copyright 2026 STARGA Inc.
 // R-02e finish-row sequence on 4 fixed i64 lanes at shifts 63, 47, 32, 16, using only
-// kinds 70, 71, 80-83, 94-99 and the ruling's substitutes: per-row constants from a
+// kinds 70, 71, 80-83, 94-99 and their substitutes: per-row constants from a
 // 32-byte cell (kind 70), select = y + ((x - y) & m), abs = a - 2(a & m), and the
 // guard bad = bad | gt(out, limit) kept in a cell (kind 71) and read back with 4
 // scalar loads; a row whose guard is set is not written. Exit 0 iff the vector

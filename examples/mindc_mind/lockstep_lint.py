@@ -42,7 +42,8 @@ member *set* is never hardcoded -- add an `nb_foo_expr` walker and it is picked 
 
 USAGE:
   python3 lockstep_lint.py                 # lint ./main.mind, print matrix, exit 1 on gaps
-  python3 lockstep_lint.py --file X.mind   # lint a copy (used by the planted-bug self-test)
+  python3 lockstep_lint.py --file X.mind   # lint a copy (used by the planted-bug self-test);
+                                           # the kind tags are read from nb_ast.mind in X's directory
   python3 lockstep_lint.py --all-walkers   # also list dispatch-walkers outside scope (dtype/etc)
 
 Exit code 0 = every family in lockstep; 1 = at least one desync-risk gap flagged.
@@ -221,6 +222,13 @@ def analyse(path, prefix, show_all):
     lines = load(path)
     fns = function_table(lines)
     ast_kinds = ast_kind_constants(lines, fns)
+    # the kind tags live in the part nb_ast.mind, beside main.mind
+    part = os.path.join(os.path.dirname(os.path.abspath(path)), "nb_ast.mind")
+    if os.path.exists(part):
+        part_lines = load(part)
+        ast_kinds.update(ast_kind_constants(part_lines, function_table(part_lines)))
+    if not ast_kinds:
+        raise SystemExit(f"error: no `ast_X() -> i64` kind constants in {path} or the nb_ast.mind beside it")
     walkers = discover_walkers(lines, fns, ast_kinds)
     descent = descent_closure(lines, fns, set(walkers))
 

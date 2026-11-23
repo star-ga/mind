@@ -17,6 +17,7 @@ import struct
 import subprocess
 
 from _stdlib_manifest import seed_blob
+from _selfhost_sources import self_mode_image, start_child
 
 HERE = Path(__file__).resolve().parent
 LIMIT = 2 * 1024 ** 3
@@ -37,7 +38,7 @@ def run(argv, *, data=None, timeout=120):
         if key.startswith("LD_") or key == "GLIBC_TUNABLES":
             env.pop(key)
     env["LC_ALL"] = "C"
-    return subprocess.run(argv, input=data, stdout=subprocess.PIPE,
+    return start_child(argv, data, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, timeout=timeout,
                           preexec_fn=limited, env=env)
 
@@ -178,7 +179,7 @@ def main():
               "harness": digest(Path(__file__).read_bytes()),
               "assembled": digest(combined), "packet": digest(packet)}
     (evidence / "INPUT_HASHES.txt").write_text("".join(f"{value}  {key}\n" for key, value in hashes.items()))
-    build = observe("build", run([str(seed)], data=packet, timeout=180))
+    build = observe("build", run([str(seed)], data=self_mode_image(packet, seed), timeout=180))
     (evidence / "build.stderr").write_bytes(build.stderr)
     (evidence / "build.exit").write_text(str(build.returncode) + "\n")
     assert build.returncode == 0 and build.stderr == b"", (build.returncode, build.stderr)

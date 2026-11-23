@@ -1,0 +1,375 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The text and position helpers of the lane refusal report (nb_report_lane in
+// selfhost_driver.mind). The report is ONE line on fd 2 in the shape of the host's lane
+// refusals: the key, the fn where the site lies in one, and the line and column counted
+// from the start of the user region; a site in the std region gets "in the std region"
+// in place of line and column. It names no other backend.
+// The token reads stay in the driver, which may call main.mind; these helpers take the
+// token kinds and spans as arguments. PART RULE: intrinsics and parts only.
+
+import nb_emit_core;
+import nb_lane_keys;
+
+// The key name at dst, or "lane.key." and the decimal id for an id with no row; the length.
+pub fn nblr_put_key(dst: i64, key: i64) -> i64 {
+    let n: i64 = nb_lane_key_name(key, dst);
+    if n > 0 {
+        return n;
+    }
+    let a: i64 = nb_lane_frag(dst, 9);
+    a + nbk_dec(dst + a, key)
+}
+
+// 1 for a byte of a name: a letter, a digit or `_`.
+pub fn nblr_name_byte(b: i64) -> i64 {
+    if b == 95 {
+        return 1;
+    }
+    if b >= 97 {
+        if b <= 122 {
+            return 1;
+        }
+    }
+    if b >= 65 {
+        if b <= 90 {
+            return 1;
+        }
+    }
+    if b >= 48 {
+        if b <= 57 {
+            return 1;
+        }
+    }
+    0
+}
+
+// 1 for a name byte at src[p] inside the source, else 0.
+pub fn nblr_name_more(src: i64, p: i64, src_len: i64) -> i64 {
+    if p >= src_len {
+        return 0;
+    }
+    nblr_name_byte(load_byte(src, p))
+}
+
+// The length of the name at src[site, src_len): 0 when no name starts there. The loop has no
+// early return (the mic@3 module driver has none inside a loop).
+pub fn nblr_name_at(src: i64, site: i64, src_len: i64) -> i64 {
+    let mut n: i64 = 0;
+    let mut go: i64 = nblr_name_more(src, site, src_len);
+    while go == 1 {
+        n = n + 1;
+        go = nblr_name_more(src, site + n, src_len);
+    }
+    n
+}
+
+// 1 while src[i] is inside the source and is not a line feed.
+pub fn nblr_in_line(src: i64, i: i64, src_len: i64) -> i64 {
+    if i >= src_len {
+        return 0;
+    }
+    if load_byte(src, i) == 10 {
+        return 0;
+    }
+    1
+}
+
+// The bytes of trivia at src[p]: 1 for a space, a tab, a carriage return or a line feed; a line
+// comment up to its line feed; 0 for any other byte and at the end. The lexer takes only line comments.
+pub fn nblr_trivia(src: i64, p: i64, src_len: i64) -> i64 {
+    if p >= src_len {
+        return 0;
+    }
+    let b: i64 = load_byte(src, p);
+    if b == 32 {
+        return 1;
+    }
+    if b == 9 {
+        return 1;
+    }
+    if b == 10 {
+        return 1;
+    }
+    if b == 13 {
+        return 1;
+    }
+    if b != 47 {
+        return 0;
+    }
+    if nblr_in_line(src, p + 1, src_len) == 0 {
+        return 0;
+    }
+    if load_byte(src, p + 1) != 47 {
+        return 0;
+    }
+    let mut i: i64 = p + 2;
+    let mut go: i64 = nblr_in_line(src, i, src_len);
+    while go == 1 {
+        i = i + 1;
+        go = nblr_in_line(src, i, src_len);
+    }
+    i - p
+}
+
+// The first byte at or after p that is not trivia.
+pub fn nblr_skip(src: i64, p: i64, src_len: i64) -> i64 {
+    let mut i: i64 = p;
+    let mut t: i64 = nblr_trivia(src, i, src_len);
+    while t > 0 {
+        i = i + t;
+        t = nblr_trivia(src, i, src_len);
+    }
+    i
+}
+
+// The symbol of an extern refusal (keys 64 to 67): " Symbol `name`." when the site is the name of a
+// function, that is a name, then trivia, then `(` (the declaration or the call). Nothing for another
+// key or another site (the convention of an empty block). The report buffer holds a name of any length.
+pub fn nblr_put_sym(dst: i64, src: i64, src_len: i64, key: i64, site: i64) -> i64 {
+    if key < 64 {
+        return 0;
+    }
+    if key > 67 {
+        return 0;
+    }
+    let n: i64 = nblr_name_at(src, site, src_len);
+    if n == 0 {
+        return 0;
+    }
+    let q: i64 = nblr_skip(src, site + n, src_len);
+    if q >= src_len {
+        return 0;
+    }
+    if load_byte(src, q) != 40 {
+        return 0;
+    }
+    // " Symbol `"
+    __mind_store_i64(dst, 2336364775232590624);
+    __mind_store_i8(dst + 8, 96);
+    let c: i64 = nblr_copy(dst + 9, src, site, 0, n);
+    // "`."
+    __mind_store_i8(dst + 9 + c, 96);
+    __mind_store_i8(dst + 10 + c, 46);
+    11 + c
+}
+
+// The end of the report: the symbol words, then " No artifact written." and the line feed.
+pub fn nblr_put_tail(dst: i64, src: i64, src_len: i64, key: i64, site: i64) -> i64 {
+    let a: i64 = nblr_put_sym(dst, src, src_len, key, site);
+    a + nb_lane_frag(dst + a, 8)
+}
+
+pub fn nblr_copy(dst: i64, src: i64, lo: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    __mind_store_i8(dst + i, load_byte(src, lo + i));
+    nblr_copy(dst, src, lo, i + 1, n)
+}
+
+pub fn nblr_min(a: i64, b: i64) -> i64 {
+    if a < b {
+        return a;
+    }
+    b
+}
+
+// " in fn `name`" for the name at src[lo, lo + len) (at most 120 bytes of it); nothing for len <= 0.
+pub fn nblr_put_fn(dst: i64, src: i64, lo: i64, len: i64) -> i64 {
+    if len <= 0 {
+        return 0;
+    }
+    let a: i64 = nb_lane_frag(dst, 2);
+    let n: i64 = nblr_copy(dst + a, src, lo, 0, nblr_min(len, 120));
+    a + n + nb_lane_frag(dst + a + n, 3)
+}
+
+// The position words: " in the std region." below user_lo, " at line L, column C of the composed
+// user image." inside the image (both counted from user_lo), else just ".".
+pub fn nblr_put_pos(dst: i64, src: i64, user_lo: i64, src_len: i64, site: i64) -> i64 {
+    if site < user_lo {
+        return nb_lane_frag(dst, 7);
+    }
+    if site > src_len {
+        return nb_lane_frag(dst, 10);
+    }
+    let a: i64 = nb_lane_frag(dst, 4);
+    let b: i64 = a + nbk_dec(dst + a, nblr_lines(src, user_lo, site));
+    let c: i64 = b + nb_lane_frag(dst + b, 5);
+    let d: i64 = c + nbk_dec(dst + c, nblr_col(src, user_lo, site));
+    d + nb_lane_frag(dst + d, 6)
+}
+
+pub fn nblr_nl(b: i64) -> i64 {
+    if b == 10 {
+        return 1;
+    }
+    0
+}
+
+// 1 + the line feeds in buf[lo, hi): the line of the byte at hi, counted from lo.
+pub fn nblr_lines(buf: i64, lo: i64, hi: i64) -> i64 {
+    let mut n: i64 = 1;
+    let mut i: i64 = lo;
+    while i < hi {
+        n = n + nblr_nl(load_byte(buf, i));
+        i = i + 1;
+    }
+    n
+}
+
+pub fn nblr_start(s: i64, i: i64, b: i64) -> i64 {
+    if b == 10 {
+        return i + 1;
+    }
+    s
+}
+
+// 0 for a UTF-8 continuation byte, else 1: the column counts characters, as the host's does.
+pub fn nblr_char(b: i64) -> i64 {
+    if b >= 128 {
+        if b < 192 {
+            return 0;
+        }
+    }
+    1
+}
+
+// 1 + the characters between the start of the line of the byte at site and site.
+pub fn nblr_col(buf: i64, lo: i64, site: i64) -> i64 {
+    let mut s: i64 = lo;
+    let mut i: i64 = lo;
+    while i < site {
+        s = nblr_start(s, i, load_byte(buf, i));
+        i = i + 1;
+    }
+    let mut c: i64 = 1;
+    let mut j: i64 = s;
+    while j < site {
+        c = c + nblr_char(load_byte(buf, j));
+        j = j + 1;
+    }
+    c
+}
+
+pub fn nblr_pick(c: i64, a: i64, b: i64) -> i64 {
+    if c == 1 {
+        return a;
+    }
+    b
+}
+
+pub fn nblr_live(lo: i64, site: i64) -> i64 {
+    if lo <= site {
+        return 1;
+    }
+    0
+}
+
+// Lexer kinds the driver does not pass. The numbers are the lexer's: tk_lparen 3,
+// tk_rparen 4, tk_semi 8, tk_lbracket 40, tk_rbracket 41. A part cannot call main.mind.
+pub fn nblr_lparen() -> i64 {
+    3
+}
+
+pub fn nblr_rparen() -> i64 {
+    4
+}
+
+pub fn nblr_semi() -> i64 {
+    8
+}
+
+pub fn nblr_lbracket() -> i64 {
+    40
+}
+
+pub fn nblr_rbracket() -> i64 {
+    41
+}
+
+// 1 iff the token (kind k) is a `fn` (kind kfn) at grouping depth 0, at or before the site.
+pub fn nblr_is_fn(k: i64, depth: i64, live: i64, kfn: i64) -> i64 {
+    if live == 1 {
+        if depth == 0 {
+            if k == kfn {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+pub fn nblr_step(depth: i64, k: i64, open: i64, close: i64) -> i64 {
+    if k == open {
+        return depth + 1;
+    }
+    if k == close {
+        if depth > 0 {
+            return depth - 1;
+        }
+    }
+    depth
+}
+
+// 1 when this token is the `}` (kind krb) that closes a body: grouping depth 1.
+pub fn nblr_at_rbrace(k: i64, krb: i64, depth: i64) -> i64 {
+    if k == krb {
+        if depth == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
+// 1 when this token is a `;` at grouping depth 0: a declaration that has no body.
+pub fn nblr_at_semi(k: i64, depth: i64) -> i64 {
+    if k == nblr_semi() {
+        if depth == 0 {
+            return 1;
+        }
+    }
+    0
+}
+
+// 1 once the current fn has closed before the site. A `}` at grouping depth 1 closes a body.
+// A `;` at grouping depth 0 closes a declaration that has no body. A new fn resets it.
+// Grouping depth counts braces, parentheses and brackets, so a semicolon inside a signature's
+// `[i64; N]` does not close the fn.
+pub fn nblr_closed(closed: i64, isfn: i64, k: i64, krb: i64, depth: i64, live: i64, lo: i64, site: i64) -> i64 {
+    if isfn == 1 {
+        return 0;
+    }
+    if live == 0 {
+        return closed;
+    }
+    if lo >= site {
+        return closed;
+    }
+    if nblr_at_rbrace(k, krb, depth) == 1 {
+        return 1;
+    }
+    if nblr_at_semi(k, depth) == 1 {
+        return 1;
+    }
+    closed
+}
+
+pub fn nblr_depth(depth: i64, k: i64, live: i64, klb: i64, krb: i64) -> i64 {
+    if live == 0 {
+        return depth;
+    }
+    let d0: i64 = nblr_step(depth, k, klb, krb);
+    let d1: i64 = nblr_step(d0, k, nblr_lparen(), nblr_rparen());
+    nblr_step(d1, k, nblr_lbracket(), nblr_rbracket())
+}
+
+pub fn nblr_next(i: i64, n: i64, live: i64) -> i64 {
+    if live == 1 {
+        return i + 1;
+    }
+    n
+}

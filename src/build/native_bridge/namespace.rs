@@ -439,7 +439,7 @@ mod tests {
             );
         }
         // Closed image: omission drops the whole seed, so the seed's own
-        // visibility of `helper` is irrelevant (NB2 ruling, F3 item 2).
+        // visibility of `helper` is irrelevant.
         let public_seed = SEED.replacen("fn helper", "pub fn helper", 1);
         assert_eq!(decision(USER, &public_seed), Ok(true));
     }

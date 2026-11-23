@@ -108,7 +108,7 @@ jobs:
 
           # The tag is the sole source of the release name and version, so a
           # malformed one must stop here rather than produce a garbage release.
-          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+          if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$TAG"; then
             echo "RELEASE BLOCKED: tag '$TAG' is not vMAJOR.MINOR.PATCH[-suffix]." >&2
             exit 1
           fi
@@ -276,31 +276,37 @@ jobs:
           IN_IMAGE
           )"
 
-      - name: Package (Unix)
+      # Every leg's archive holds the binary, the std/ directory of this tag, the std
+      # manifest and a SHA256SUMS file over the std files and the manifest. The same
+      # action packs the archive in ci.yml's release_profile job and in installers.yml.
+      - name: Package (binary, std/, std manifest, SHA256SUMS)
+        uses: ./.github/actions/package-release
+        with:
+          binary: target/${{ matrix.target }}/release/mindc${{ runner.os == 'Windows' && '.exe' || '' }}
+          archive: ${{ matrix.artifact }}.${{ matrix.ext }}
+
+      - name: Checksum file (Unix)
         if: runner.os != 'Windows'
         run: |
-          cd target/${{ matrix.target }}/release
-          tar -czf ../../../${{ matrix.artifact }}.${{ matrix.ext }} mindc
-          cd ../../..
           if command -v sha256sum &> /dev/null; then
             sha256sum ${{ matrix.artifact }}.${{ matrix.ext }} > ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
           else
             shasum -a 256 ${{ matrix.artifact }}.${{ matrix.ext }} > ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
           fi
 
-      - name: Package (Windows)
+      - name: Checksum file (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cd target\${{ matrix.target }}\release
-          7z a ..\..\..\${{ matrix.artifact }}.${{ matrix.ext }} mindc.exe
-          cd ..\..\..
           $hash = (Get-FileHash ${{ matrix.artifact }}.${{ matrix.ext }} -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "${{ matrix.artifact }}.${{ matrix.ext }}.sha256" -Value "$hash  ${{ matrix.artifact }}.${{ matrix.ext }}"
 
       # Post-build smoke on what ships: the .sha256 file verifies, the archive
-      # unpacks, and `mindc --version` prints exactly the tag's version. A leg
-      # that fails here uploads nothing, so the release job never publishes.
+      # unpacks, `mindc --version` prints exactly the tag's version, and the std
+      # members pass their gates (SHA256SUMS verifies, the manifest equals the tag's,
+      # every std file equals the tag's and occurs in the binary; on x86-64 Linux a
+      # native build against the archived std equals one against the embedded std).
+      # A leg that fails here uploads nothing, so the release job never publishes.
       # The same action runs in ci.yml's release_profile job on every PR.
       - name: Post-build smoke (checksum, unpack, --version == tag)
         id: smoke
@@ -397,10 +403,18 @@ jobs:
           ```bash
           # Linux/macOS
           curl -LO https://github.com/star-ga/mind/releases/download/v${{ needs.gate.outputs.version }}/mindc-linux-x64.tar.gz
-          tar -xzf mindc-linux-x64.tar.gz
-          sudo mv mindc /usr/local/bin/
+          mkdir mindc-dist && tar -xzf mindc-linux-x64.tar.gz -C mindc-dist
+          sudo mv mindc-dist/mindc /usr/local/bin/
           mindc --version
           ```
+
+          ### Archive contents
+
+          Each archive holds the compiler binary, `std/` (the std sources of this
+          tag; every file occurs byte for byte inside the binary), `stdlib_manifest.txt`
+          and `SHA256SUMS`. `SHA256SUMS` lists the sha256 of every file under `std/` and
+          of the manifest (not of the binary); check it with `sha256sum -c SHA256SUMS`
+          (`shasum -a 256 -c SHA256SUMS` on macOS) inside the unpacked directory.
 
           ### Linux compatibility
 
@@ -420,7 +434,7 @@ jobs:
             image=$(sed -n 's/^image=//p' "$env_file")
             floor=$(sed -n 's/^glibc_floor=//p' "$env_file")
             max=$(sed -n 's/^glibc_max=//p' "$env_file")
-            printf '%s\n' "$image" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo "RELEASE BLOCKED: $leg build image '$image' is not pinned by digest."; exit 1; }
+            grep -Eq '@sha256:[0-9a-f]{64}$' <<<"$image" || { echo "RELEASE BLOCKED: $leg build image '$image' is not pinned by digest."; exit 1; }
             test -n "$floor" && test -n "$max" || { echo "RELEASE BLOCKED: $env_file has no glibc floor or measured maximum."; exit 1; }
             printf '| `%s.tar.gz` | `%s` | %s | GLIBC_%s |\n' "$leg" "$image" "$floor" "$max" >> release-notes.md
           done

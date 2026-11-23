@@ -22,21 +22,21 @@
 // `--allow-nondeterministic` and, with it, attested `nondeterministic`.
 
 extern "C" {
-    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
-    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: *const u8) -> i32;
+    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: *mut u8) -> i32;
     unsafe fn __errno_location() -> *mut i32;
 }
 
 // cpu_affinity_sys_set — sched_setaffinity(2) of the calling thread to the
 // `size` mask bytes at `mask`. Returns 0, or -1 when the call fails.
 pub fn cpu_affinity_sys_set(size: i64, mask: i64) -> i64 {
-    sched_setaffinity(0, size, mask) as i64
+    sched_setaffinity(0, size, mask as *const u8) as i64
 }
 
 // cpu_affinity_sys_get — sched_getaffinity(2) of the calling thread into the
 // `size` mask bytes at `mask`. Returns 0, or -1 when the call fails.
 pub fn cpu_affinity_sys_get(size: i64, mask: i64) -> i64 {
-    sched_getaffinity(0, size, mask) as i64
+    sched_getaffinity(0, size, mask as *mut u8) as i64
 }
 
 // cpu_affinity_sys_errno — the errno of the calling thread, read through

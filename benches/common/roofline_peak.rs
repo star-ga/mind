@@ -150,7 +150,7 @@ pub fn host_family_model() -> (u32, u32) {
 // deferred: prefer measured core cycles via perf_event_open(PERF_COUNT_HW_CPU_CYCLES)
 // over a calibrated CLOCK_MONOTONIC window, because nominal undercounts turbo and
 // overcounts throttling — stubbed because it needs libc + CAP_PERFMON (perf_event
-// paranoid<=1) which is unavailable on the CI/U1 box; upgrade path: gate the syscall
+// paranoid<=1) which is unavailable on the CI box; upgrade path: gate the syscall
 // behind a bench-only `roofline-perf` feature and fall back to nominal (as now) on
 // EACCES. Until then we report NOMINAL and say so at every print site.
 pub fn host_clock_ghz() -> (f64, bool) {

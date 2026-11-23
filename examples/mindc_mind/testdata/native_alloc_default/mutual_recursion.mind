@@ -1,0 +1,22 @@
+// Two functions that call each other, called from a loop; the free is at the bottom of the recursion. 1,100 x 1 MB. Exit status 33.
+fn ping(n: i64, p: i64) -> i64 {
+    if n == 0 {
+        return __mind_free(p);
+    }
+    return pong(n - 1, p);
+}
+fn pong(n: i64, p: i64) -> i64 {
+    return ping(n, p);
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, i);
+        acc = acc + __mind_load_i64(p) - i;
+        let z: i64 = ping(2, p);
+        i = i + 1;
+    }
+    return acc + 33;
+}

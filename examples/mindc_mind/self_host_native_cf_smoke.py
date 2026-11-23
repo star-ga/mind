@@ -115,7 +115,7 @@ _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
 import _cf_corpus as C  # noqa: E402
 import _cf_oracle as O  # noqa: E402
-from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import compiler_library, self_mode_image, start_child  # noqa: E402
 from _cf_giant import (  # noqa: E402
     FLAT_CPU,
     REFUSE_ADDR,
@@ -169,8 +169,8 @@ ETXTBSY_TRIES, ETXTBSY_WAIT = 250, 0.02  # up to 5 s for a writer to let go
 _etxtbsy_retries = [0]
 
 
-def exec_run(argv, **kw):
-    """subprocess.run for every exec this gate performs, retried while the target
+def exec_run(argv, payload=None, **kw):
+    """start_child for every exec this gate performs, retried while the target
     is busy (ETXTBSY). The gate writes ELFs (stage1, the bounded compiler, every
     program) and execs them from a thread pool; a sibling thread's fork holds a
     copy of a just-written file's write descriptor until its child execs, and an
@@ -179,19 +179,19 @@ def exec_run(argv, **kw):
     never lets go, still fails the gate."""
     for _ in range(ETXTBSY_TRIES - 1):
         try:
-            return subprocess.run(argv, **kw)
+            return start_child(argv, payload, **kw)
         except OSError as e:
             if e.errno != errno.ETXTBSY:
                 raise
             _etxtbsy_retries[0] += 1
             time.sleep(ETXTBSY_WAIT)
-    return subprocess.run(argv, **kw)
+    return start_child(argv, payload, **kw)
 
 
 def derive_stage1(td: pathlib.Path) -> pathlib.Path:
     comb = BLOB + compiler_library() + b"\n" + (_HERE / "selfhost_driver.mind").read_bytes()
     img = struct.pack("<qq", len(BLOB), len(comb)) + comb
-    r = exec_run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
+    r = exec_run([str(SEED)], self_mode_image(img, SEED), capture_output=True, timeout=1800, preexec_fn=nice)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise SystemExit(f"BLOCKED: frozen seed could not compile this tree (rc={r.returncode}): "
                          f"{r.stderr[-300:]!r}")
@@ -216,7 +216,7 @@ def derive_stage1_bounded(td: pathlib.Path) -> pathlib.Path:
     emits this tree's compiler with the bounded layout (768 MiB arena, 384 MiB stack)."""
     comb = BLOB + compiler_library() + b"\n" + (_HERE / "selfhost_driver.mind").read_bytes()
     img = v2_header() + struct.pack("<qq", len(BLOB), len(comb)) + comb
-    r = exec_run([str(SEED)], input=img, capture_output=True, timeout=1800, preexec_fn=nice)
+    r = exec_run([str(SEED)], self_mode_image(img, SEED), capture_output=True, timeout=1800, preexec_fn=nice)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise SystemExit(f"BLOCKED: frozen seed could not emit the bounded compiler (rc={r.returncode}): "
                          f"{r.stderr[-300:]!r}")
@@ -253,7 +253,7 @@ def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v
         if cpu > 0:
             resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 10))
     try:
-        r = exec_run([str(stage1b)], input=img, capture_output=True, timeout=900, preexec_fn=capped_cpu)
+        r = exec_run([str(stage1b)], img, capture_output=True, timeout=900, preexec_fn=capped_cpu)
     except subprocess.TimeoutExpired:
         return ("compile-timeout", 900)
     if r.returncode in (-signal.SIGXCPU, -signal.SIGKILL) and cpu > 0:
@@ -269,7 +269,7 @@ def native_bounded(stage1b, src: bytes, td: pathlib.Path, seeded: bool = True, v
 
 
 def native_compile(stage1: pathlib.Path, src: bytes, seeded: bool = True):
-    r = exec_run([str(stage1)], input=image(src, seeded), capture_output=True, timeout=600,
+    r = exec_run([str(stage1)], image(src, seeded), capture_output=True, timeout=600,
                        preexec_fn=nice)
     ok = r.returncode == 0 and r.stdout[:4] == b"\x7fELF"
     return ok, r.returncode, r.stdout, r.stderr.decode(errors="replace")

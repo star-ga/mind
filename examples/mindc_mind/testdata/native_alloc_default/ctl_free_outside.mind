@@ -1,0 +1,8 @@
+// A free outside every loop. BUMP: the image equals the base compiler's. Exit status 33.
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(1000000);
+    __mind_store_i64(p, 30);
+    let v: i64 = __mind_load_i64(p);
+    let f: i64 = __mind_free(p);
+    return v + f + 3;
+}

@@ -30,7 +30,7 @@ before any timing number is trusted.
 ## Hardware / flags
 
 - CPU: Intel Core i7-5930K @ 3.50 GHz (Haswell-E, AVX2), 12 threads. Single core, pinned (`taskset -c 2`).
-- Host: STARGA U1 hub, Linux 6.17.
+- Host: STARGA workstation hub, Linux 6.17.
 - `rustc 1.95.0`, `cargo --release`. Rust built at **-O2 and -O3**, each in two flavours: `target-cpu=native` (AVX2 available) and generic (`cargo build --release` default, SSE2 only).
 - MIND: `mindc` @ commit `7be6139`, built with `--features "mlir-build std-surface cross-module-imports"`; kernels emitted with `--emit-shared` (default AVX2 int8 path, `vpmaddwd`).
 - MACs = N³; GMAC/s = N³ / median_seconds / 1e9.

@@ -19,21 +19,23 @@ import sys
 import threading
 import time
 
+from _selfhost_sources import start_child
+
 ETXTBSY_TRIES, ETXTBSY_WAIT = 250, 0.02  # up to 5 s for a writer to let go
 _retries = [0]
 
 
-def exec_run(argv, **kw):
-    """subprocess.run, retried while the target is busy (ETXTBSY) and only then."""
+def exec_run(argv, payload=None, **kw):
+    """start_child (stdin = `payload`), retried while the target is busy (ETXTBSY) and only then."""
     for _ in range(ETXTBSY_TRIES - 1):
         try:
-            return subprocess.run(argv, **kw)
+            return start_child(argv, payload, **kw)
         except OSError as e:
             if e.errno != errno.ETXTBSY:
                 raise
             _retries[0] += 1
             time.sleep(ETXTBSY_WAIT)
-    return subprocess.run(argv, **kw)
+    return start_child(argv, payload, **kw)
 
 
 def _hold(path: pathlib.Path):

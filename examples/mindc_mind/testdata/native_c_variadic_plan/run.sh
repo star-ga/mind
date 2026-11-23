@@ -20,8 +20,6 @@ sha256sum --check PREEXECUTION.sha256 > preexecution-check.stdout
 printf '%s  %s\n' "$seed_hash" "$seed" | sha256sum --check > seed-check.stdout
 printf '%s  %s\n' "$mindc_hash" "$mindc" | sha256sum --check > mindc-check.stdout
 mkdir run
-cp "$seed" run/compiler.elf
-chmod 500 run/compiler.elf
 printf '1\n' > run/pass.stdout
 printf '0\n' > run/fail.stdout
 : > run/empty
@@ -30,12 +28,11 @@ ulimit -c 0
 build() {
     local variant=$1
     local dest="$out/run/$variant"
+    local rc
     mkdir "$dest"
-    set +e
-    (ulimit -t 180; timeout 240s "$out/run/compiler.elf" < "$out/$variant/input.packet") > "$dest/native.elf" 2> "$dest/native-build.stderr"
-    local rc=$?
-    set -e
-    printf '%s\n' "$rc" > "$dest/native-build.exit"
+    # transport.py built native.elf from input.packet: a seed gets stdin bytes only through start_child
+    cp "$out/native/$variant/native.elf" "$out/native/$variant/native-build.stderr" "$out/native/$variant/native-build.exit" "$dest/"
+    rc=$(cat "$dest/native-build.exit")
     test "$rc" = 0
     cmp "$dest/native-build.stderr" "$out/run/empty"
     chmod 500 "$dest/native.elf"

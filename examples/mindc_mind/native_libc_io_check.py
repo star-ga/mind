@@ -3,6 +3,7 @@
 # Author: STARGA Inc.
 import argparse, fcntl, hashlib, json, os, resource, shutil, struct, subprocess, sys
 from pathlib import Path
+from _selfhost_sources import start_child
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[1]
 TD=HERE/'testdata/native_libc_io'
@@ -110,7 +111,7 @@ def main():
         assert sorted(str(x) for x in (ROOT/'std').rglob('*.mind'))==sorted(x for x in captured if x.startswith(str(ROOT/'std')+'/'))
     rows=[]
     def run(name,args,data=None,cwd=None,pass_fds=(),preexec=limits,timeout=700):
-        q=subprocess.run(list(map(str,args)),input=data,capture_output=True,cwd=cwd,env=env,pass_fds=pass_fds,preexec_fn=preexec,timeout=timeout)
+        q=start_child(list(map(str,args)),data,capture_output=True,cwd=cwd,env=env,pass_fds=pass_fds,preexec_fn=preexec,timeout=timeout)
         stem=f'{len(rows):04d}-{name}';(e/(stem+'.stdout')).write_bytes(q.stdout);(e/(stem+'.stderr')).write_bytes(q.stderr)
         rows.append(dict(name=name,argv=list(map(str,args)),cwd=str(cwd or Path.cwd()),stdin_sha256=None if data is None else sha(data),exit=q.returncode,stdout_sha256=sha(q.stdout),stderr_sha256=sha(q.stderr),pass_fds=list(pass_fds)))
         (e/'executions.json').write_text(json.dumps(rows,indent=2)+'\n');return q
@@ -132,7 +133,7 @@ def main():
             at=body.index(marker);assert body[at-2:at]==b'\xff\x15';ps.append((at,index));body[at:at+4]=bytes(4)
     image_input=pack(1,0,0,0,len(body),len(cs),len(ps))+body+b''.join(pack(*r) for r in cs)+b''.join(pack(*r) for r in ps)
     (e/'image.input').write_bytes(image_input)
-    sys.path.insert(0,str(HERE));from _stdlib_manifest import seed_modules
+    sys.path.insert(0,str(HERE));from _stdlib_manifest import seed_modules;from _selfhost_sources import self_mode_image
     prefix=b'\n'.join(captured[str(ROOT/'std'/(n+'.mind'))] for n in seed_modules())+b'\n';source=b'\n'.join(captured[str(HERE/n)] for n in MODULES);combined=prefix+source
     packet=pack(int.from_bytes(b'MINDLAY\x01','little'),536870912,134217728,4096,len(prefix),len(combined))+combined
     (e/'build.packet').write_bytes(packet);(e/'assembled.mind').write_bytes(combined)
@@ -148,7 +149,7 @@ def main():
         for side,path in [('native',native),('mlir',oracle)]:assert sha(path.read_bytes())==out[side]['sha256']
         (e/'REUSE.json').write_text(json.dumps(dict(directory=str(old),manifest_sha256=sha((old/'OUTPUTS.json').read_bytes()),producer_harness_sha256=old_inputs[runner],runner_harness_sha256=inputs[runner],packet_sha256=sha(packet)),indent=2)+'\n')
     else:
-        q=run('native-build',[a.seed],packet);assert (q.returncode,q.stderr)==(0,b'') and q.stdout.startswith(b'\x7fELF'),('native-build',q.returncode,q.stderr[-500:])
+        q=run('native-build',[a.seed],self_mode_image(packet,a.seed));assert (q.returncode,q.stderr)==(0,b'') and q.stdout.startswith(b'\x7fELF'),('native-build',q.returncode,q.stderr[-500:])
         native=e/'fixture.native';native.write_bytes(q.stdout);native.chmod(0o700)
         project=e/'mlir';project.mkdir();(project/'main.mind').write_bytes(source);(project/'Mind.toml').write_text('[package]\nname="io-thunk-diagnostic"\nversion="0.0.0"\n[build]\nentry="main.mind"\n')
         oracle=project/'fixture.mlir';q=run('mlir-build',[a.mindc,'--allow-nondeterministic','build','--backend','mlir','--target','cpu','--emit','binary','--optimize','release','--no-cache','--out',oracle],cwd=project);assert q.returncode==0 and oracle.exists(),q.stderr[-1000:]
@@ -242,7 +243,7 @@ def main():
                     assert old_inputs[str(a.seed)]==a.seed_sha256,'MUTANT_COMPILER_DRIFT'
                     old_rows=json.loads((prior/'executions.json').read_text())
                     old_index,receipt=next((i,r) for i,r in enumerate(old_rows) if r['name']==name+'-build')
-                    assert receipt['argv']==[str(a.seed)] and receipt['stdin_sha256']==sha(changed_packet)
+                    assert receipt['argv']==[str(a.seed)] and receipt['stdin_sha256']==sha(self_mode_image(changed_packet,a.seed))
                     assert receipt['exit']==0 and receipt['stderr_sha256']==sha(b'')
                     reused=(prior/(f'{old_index:04d}-'+name+'-build.stdout')).read_bytes()
                     assert sha(reused)==receipt['stdout_sha256'] and reused.startswith(b'\x7fELF')
@@ -250,7 +251,7 @@ def main():
                     assert (prior/(name+'.mutant.mind')).read_bytes()==changed[name]
                     (e/(name+'.REUSE.json')).write_text(json.dumps(dict(prior=str(prior),packet_sha256=sha(changed_packet),compiler_sha256=a.seed_sha256,executable_sha256=sha(reused),receipt=receipt),indent=2)+'\n')
             if reused is None:
-                q=run(name+'-build',[a.seed],changed_packet)
+                q=run(name+'-build',[a.seed],self_mode_image(changed_packet,a.seed))
                 assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF'),(name,'build failure is not detection',q.returncode,q.stderr[-500:])
                 reused=q.stdout
             exe=e/(name+'.fixture');exe.write_bytes(reused);exe.chmod(0o700)

@@ -105,7 +105,7 @@ fn candidate_intrinsic_definitions_cannot_forge_compiler_bindings() {
 /// Whole-module admission REFUSES an uncalled out-of-profile body.
 ///
 /// This test previously asserted the opposite -- that entry-rooted admission
-/// should ACCEPT such a program -- under a ruling that has since been reversed.
+/// should ACCEPT such a program -- under a decision that has since been reversed.
 /// Root preserves whole-user-program admission: the image is not pruned, so an
 /// unreachable out-of-profile body still becomes bytes in the artifact, and
 /// admitting it by reachability would let unproven bytes into a byte-identity
@@ -125,7 +125,7 @@ fn whole_module_admission_refuses_an_uncalled_out_of_profile_body() {
 }
 
 /// The same body, now reachable, must still refuse. This is the half of the
-/// ruling that keeps the fence honest.
+/// decision that keeps the fence honest.
 #[test]
 fn reachable_out_of_profile_body_still_refuses() {
     let ir = lower(

@@ -1,5 +1,5 @@
 {
-  "comment": "H2b external digest pins. These digests live outside any gate run: changing an excluded file without updating this catalogue is a red pin check. Referenced by .gitignore reason lines as the pin site for digest-pinned-gate-input exclusions (Ruling Q1.3 / Schedule R7).",
+  "comment": "H2b external digest pins. These digests live outside any gate run: changing an excluded file without updating this catalogue is a red pin check. Referenced by .gitignore reason lines as the pin site for digest-pinned-gate-input exclusions.",
   "entries": [
     {
       "path": "examples/mindc_mind/native_c_call_emit_driver.mind",
@@ -103,7 +103,7 @@
     },
     {
       "path": "examples/mindc_mind/native_emission_context.mind",
-      "sha256": "32f89926eb89e41d72385f264c95417f0ab59164741b738f3b5db3119d3bfc7a",
+      "sha256": "d696f1bd2ff7d21e97f169667571228413583f6bbb2fc42b575ab1234a24f092",
       "kind": "caller-exclusion",
       "reason_class": "digest-pinned-gate-input",
       "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
@@ -189,7 +189,7 @@
       "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
       "owning_gate": "examples/mindc_mind/self_host_source_note_smoke.py",
       "sealed_imports": [],
-      "note": "restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established under any available composition (standalone and assembled both refuse), so Q1.1 forbids formatting this file"
+      "note": "restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established under any available composition (standalone and assembled both refuse), so the formatting rule forbids formatting this file"
     },
     {
       "path": "examples/mindc_mind/string_escape_driver.mind",
@@ -199,7 +199,7 @@
       "pin_site": "examples/mindc_mind/testdata/h2b_exclusion_pins.json",
       "owning_gate": "examples/mindc_mind/self_host_native_string_escape_smoke.py",
       "sealed_imports": [],
-      "note": "restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established under any available composition (standalone and assembled both refuse), so Q1.1 forbids formatting this file"
+      "note": "restored to parent bytes; --emit-ir/--emit-mic3 identity cannot be established under any available composition (standalone and assembled both refuse), so the formatting rule forbids formatting this file"
     }
   ]
 }

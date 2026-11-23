@@ -1,0 +1,26 @@
+// Loop-carried copy with a call in the let: n0 = id(a + b + i); b = a; a = n0.
+// a, b = 1, 2; four trips give a = 18. main returns 42 only for that value.
+fn xms_id(x: i64) -> i64 {
+    return x;
+}
+
+fn f() -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = 2;
+    let mut i: i64 = 0;
+    while i < 4 {
+        let n0: i64 = xms_id(a + b + i);
+        b = a;
+        a = n0;
+        i = i + 1;
+    }
+    return a;
+}
+
+fn main() -> i64 {
+    let v: i64 = f();
+    if v == 18 {
+        return 42;
+    }
+    return 43;
+}

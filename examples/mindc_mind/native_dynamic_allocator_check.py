@@ -8,6 +8,7 @@ code ownership/canaries. Neither is a product runtime or compiler fallback.
 import argparse,csv,hashlib,json,os,re,resource,shutil,struct,subprocess
 from pathlib import Path
 from native_dynamic_writer_check import encoder
+from _selfhost_sources import self_mode_image, start_child
 
 HERE=Path(__file__).resolve().parent
 CASE_SHA='ecfa89f8568d718ef14e532d639cdd94af15a86f5829b54f51759f56306e9d00'
@@ -37,7 +38,7 @@ def main():
     env.update(LC_ALL='C',OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
     records=[]
     def run(label,argv,data=None,cwd=None,timeout=240):
-        q=subprocess.run(list(map(str,argv)),input=data,capture_output=True,cwd=cwd,env=env,timeout=timeout,preexec_fn=limit)
+        q=start_child(list(map(str,argv)),data,capture_output=True,cwd=cwd,env=env,timeout=timeout,preexec_fn=limit)
         stem=f'{len(records):03d}-{label}';(e/(stem+'.stdout')).write_bytes(q.stdout);(e/(stem+'.stderr')).write_bytes(q.stderr)
         records.append(dict(id=stem,argv=list(map(str,argv)),exit=q.returncode,stdout_sha256=sha(q.stdout),stderr_sha256=sha(q.stderr)))
         (e/'executions.json').write_text(json.dumps(records,indent=2)+'\n');return q
@@ -58,7 +59,7 @@ def main():
     source=(base+body+'\n'+driver).encode();(e/'emitter.mind').write_bytes(source)
     packet=struct.pack('<6q',int.from_bytes(b'MINDLAY\x01','little'),268435456,134217728,4096,0,len(source))+source
     (e/'input.packet').write_bytes(packet)
-    q=run('native-build',[a.seed],packet);assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF'),(q.returncode,q.stderr)
+    q=run('native-build',[a.seed],self_mode_image(packet, a.seed));assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF'),(q.returncode,q.stderr)
     native=e/'emitter.native';native.write_bytes(q.stdout);native.chmod(0o700)
     project=e/'mlir';project.mkdir();(project/'main.mind').write_bytes(source)
     (project/'Mind.toml').write_text('[package]\nname="dynamic_allocator_check"\nversion="0.1.0"\nauthors=["STARGA Inc."]\n[build]\nentry="main.mind"\n')
@@ -127,7 +128,7 @@ def main():
             mutbody=head+q.stdout.decode()
         msource=(base+mutbody+'\n'+driver).encode();(e/(mid+'.mind')).write_bytes(msource)
         packet=struct.pack('<6q',int.from_bytes(b'MINDLAY\x01','little'),268435456,134217728,4096,0,len(msource))+msource
-        q=run(mid+'-build',[a.seed],packet);assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF'),(mid,'mutation build failed')
+        q=run(mid+'-build',[a.seed],self_mode_image(packet, a.seed));assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF'),(mid,'mutation build failed')
         exe=e/(mid+'.elf');exe.write_bytes(q.stdout);exe.chmod(0o700)
         req=(1,4096,4096,4096,0,8192,1048576,65536,4096,67108864)
         q=run(mid+'-emit',[exe],struct.pack('<10q',*req));assert q.returncode==0 and not q.stderr
@@ -150,7 +151,7 @@ def main():
     old+='\nfn main()->i64 { let code:String=nb_rt_blob_p1(string_new(),'+','.join(str(vals[k]) for k in range(1,7))+'); if __mind_write(1,string_addr(code),string_len(code),0-1)!=string_len(code) {return 3;} 0 }\n'
     old=old.encode();(e/'static-emitter.mind').write_bytes(old)
     packet=struct.pack('<6q',int.from_bytes(b'MINDLAY\x01','little'),268435456,134217728,4096,0,len(old))+old
-    q=run('static-build',[a.seed],packet);assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF')
+    q=run('static-build',[a.seed],self_mode_image(packet, a.seed));assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF')
     exe=e/'static-emitter.elf';exe.write_bytes(q.stdout);exe.chmod(0o700)
     expected=(e/'static.bin').read_bytes()
     for k,v in vals.items():expected=expected.replace(bytes([k])+b'\x11'*7,struct.pack('<q',v))

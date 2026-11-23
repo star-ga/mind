@@ -178,9 +178,10 @@ fn std_symbol_collision_is_refused() {
 }
 
 /// A REACHABLE imported f32 compare refuses by the fence's name, never by a parser
-/// failure (L12 proves `/` via `reachable_div_in_import`). The fence is the lane
-/// fence where the committed stage1 runs (Linux x86-64); other hosts run a drain
-/// fixture with no lane-v1 mark, so there the frozen-profile fence owns it.
+/// failure (L12 proves `/` via `reachable_div_in_import`). The host lane fence runs
+/// before the compiler, and the compiler of every host carries the lane-v1 mark
+/// (the committed stage1 on Linux x86-64, the marked drain fixture elsewhere), so
+/// the lane fence owns this refusal on every host.
 #[test]
 fn reachable_out_of_profile_import_is_refused_by_the_fence() {
     let p = Project::new("reach_f32cmp");
@@ -202,12 +203,8 @@ fn reachable_out_of_profile_import_is_refused_by_the_fence() {
 }
 
 fn f32_fence_refusal(err: &str) -> bool {
-    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        err.contains("outside candidate native-lane-v1 (lane.type.non_f64_float)")
-            && err.contains("No artifact written.")
-    } else {
-        err.contains("frozen native profile (out-of-profile construct: type.non_f64_float)")
-    }
+    err.contains("outside candidate native-lane-v1 (lane.type.non_f64_float)")
+        && err.contains("No artifact written.")
 }
 
 #[test]

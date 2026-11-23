@@ -7,6 +7,7 @@ The original source runtime contract and static byte contract remain separate.
 """
 import argparse, hashlib, json, os, resource, shutil, struct, subprocess, sys, time
 from pathlib import Path
+from _selfhost_sources import start_child
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[1]
 POINTER_CATALOGUE=HERE/'native_pointer_origin_cases.json'
@@ -287,7 +288,7 @@ def main():
     deps=paths+[POINTER_CATALOGUE,Path('/lib64/ld-linux-x86-64.so.2').resolve(),Path('/lib/x86_64-linux-gnu/libc.so.6').resolve()]+stdpaths+[Path(__file__).resolve(),HERE/'_stdlib_manifest.py',HERE/'testdata/stdlib_manifest.txt',ROOT/'runtime-support/mind_intrinsics.c',ROOT/'runtime-support/mind_fs_read.h']
     captured={str(f.resolve()):f.read_bytes() for f in deps}
     inputs={f:sha(b) for f,b in captured.items()};inputs.update({str(seed):a.seed_sha256,str(mindc):a.mindc_sha256})
-    sys.path.insert(0,str(HERE));from _stdlib_manifest import seed_modules
+    sys.path.insert(0,str(HERE));from _stdlib_manifest import seed_modules;from _selfhost_sources import self_mode_image
     modules=seed_modules();prefix=b'\n'.join(captured[str((ROOT/'std'/f'{m}.mind').resolve())] for m in modules)+b'\n'
     source=b'\n'.join(captured[str(f.resolve())] for f in paths)+b'\n'+DRIVER.encode()
     combined=prefix+source
@@ -311,11 +312,11 @@ def main():
         for f,d in inputs.items():assert sha(Path(f).read_bytes())==d,('input drift',f)
     receipts=[]
     def run(label,argv,data=None,cwd=None,timeout=300):
-        start=time.monotonic();q=subprocess.run(list(map(str,argv)),input=data,capture_output=True,cwd=cwd,env=env,preexec_fn=limited,timeout=timeout)
+        start=time.monotonic();q=start_child(list(map(str,argv)),data,capture_output=True,cwd=cwd,env=env,preexec_fn=limited,timeout=timeout)
         stem=f'{len(receipts):04d}-{label}';(e/(stem+'.stdout')).write_bytes(q.stdout);(e/(stem+'.stderr')).write_bytes(q.stderr)
         receipts.append(dict(label=label,argv=list(map(str,argv)),cwd=str(cwd or Path.cwd()),exit=q.returncode,stdin_sha256=None if data is None else sha(data),stdout_sha256=sha(q.stdout),stderr_sha256=sha(q.stderr),elapsed=time.monotonic()-start))
         (e/'executions.json').write_text(json.dumps(receipts,indent=2)+'\n');return q
-    intact();q=run('native-build',[seed],buildpacket,timeout=600)
+    intact();q=run('native-build',[seed],self_mode_image(buildpacket,seed),timeout=600)
     assert q.returncode==0 and q.stdout.startswith(b'\x7fELF') and not q.stderr,('native build',q.returncode,q.stderr)
     native=e/'context.native';native.write_bytes(q.stdout);native.chmod(0o700)
     project=e/'mlir';project.mkdir();(project/'main.mind').write_bytes(source)

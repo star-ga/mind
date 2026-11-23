@@ -8,13 +8,12 @@
 //! i64 array bound by `let` to a literal (`arrays.rs`). Unsigned/narrow
 //! arithmetic and other aggregates refuse, each with a named kind (`names.rs`);
 //! std seed functions are admitted only as reached and walked under the same
-//! rules (`seed`); fixed-arity `extern "C"` declarations are admitted only
-//! against the closed libc table and only under a compiler carrying the
-//! `nbextc01` mark (`admit_extern`).
+//! rules (`seed`); fixed-arity `extern "C"` declarations are typed by their
+//! ABI classes (`admit_extern`) and admitted only under a compiler carrying
+//! the `nbextc01` mark; which symbols exist is that compiler's decision.
 
 mod admit;
 mod admit_extern;
-mod admit_extern_cuda;
 mod admit_ir;
 mod alloc_size;
 mod arrays;

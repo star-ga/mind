@@ -1,0 +1,51 @@
+// Part 1: a block grows from 64 B to 1 MB with two other blocks live, 1,100 times. Every word of every block is checked after the growth, and the grown block is freed with the others. A heap that treats the grown block as a block of another allocator fails a check or faults.
+// Part 2: a 1,000,000 B block grows by 8 B and the grown block is freed, 1,100 times. A realloc that does not release the old block leaks 1.1 GB, more than a 1 GiB arena holds, and the run ends with another status. Exit status 33.
+fn rg_fill(a: i64, n: i64, v: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < n {
+        __mind_store_i64(a + k * 8, v + k);
+        k = k + 1;
+    }
+    return 0;
+}
+fn rg_bad(a: i64, n: i64, v: i64) -> i64 {
+    let mut k: i64 = 0;
+    let mut r: i64 = 0;
+    while k < n {
+        if __mind_load_i64(a + k * 8) != v + k {
+            r = r + 1;
+        }
+        k = k + 1;
+    }
+    return r;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 1100 {
+        let a: i64 = __mind_alloc(64);
+        let b: i64 = __mind_alloc(64);
+        let f1: i64 = rg_fill(a, 8, i);
+        let f2: i64 = rg_fill(b, 8, i + 7);
+        let g: i64 = __mind_realloc(a, 1000000);
+        let c: i64 = __mind_alloc(64);
+        let f3: i64 = rg_fill(c, 8, i + 13);
+        __mind_store_i64(g + 999992, i);
+        acc = acc + rg_bad(g, 8, i) + rg_bad(b, 8, i + 7) + rg_bad(c, 8, i + 13);
+        acc = acc + __mind_load_i64(g + 999992) - i;
+        let z1: i64 = __mind_free(g);
+        let z2: i64 = __mind_free(b);
+        let z3: i64 = __mind_free(c);
+        i = i + 1;
+    }
+    let mut j: i64 = 0;
+    while j < 1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, j);
+        let q: i64 = __mind_realloc(p, 1000008);
+        acc = acc + __mind_load_i64(q) - j;
+        let zq: i64 = __mind_free(q);
+        j = j + 1;
+    }
+    return acc + 33;
+}

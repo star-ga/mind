@@ -27,14 +27,15 @@ shipped exit codes rather than a re-implementation.
 Run: ``python3 scripts/test_smoke_wiring_lint.py`` (no third-party deps).
 
 SECOND MODE, ``--anatomy``: the ANATOMY.md self-test (atomic generation, the
-refresh-on-main-only hook rule, the push-to-main freshness scope; architecture
-ruling 17). It lives here, behind a flag, because the harness ratchet in
+refresh-on-main-only hook rule, the push-to-main freshness scope; ANATOMY.md is
+regenerated on main only). It lives here, behind a flag, because the harness ratchet in
 scripts/check_gate_wiring.py caps the tracked .py/.sh count and every other
 script with room is a different gate. The docs-claims workflow runs it as
 ``run_gate.py scripts/test_smoke_wiring_lint.py --anatomy``.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import shutil
@@ -106,10 +107,21 @@ fi
 """
 
 SMOKES = ("alpha_smoke", "beta_smoke", "gamma_smoke", "delta_smoke")
+# The first manifest line names a fixture tree of this test; only such a tree may lack the
+# committed bounded seed. REAL_HEAD is the first line of a tree that is not a fixture.
+FIXTURE_HEAD = "# fixture manifest"
+REAL_HEAD = "# SMOKE_WIRING.tsv"
 
 
-def build(tmp: Path, rows: list[tuple[str, str, str, str]], preflight: str) -> Path:
-    """Materialise a fixture repo and return the path of the lint inside it."""
+def build(tmp: Path, rows: list[tuple[str, str, str, str]], preflight: str,
+          elf: bytes | None = None, smokes: dict[str, str] | None = None,
+          head: str = FIXTURE_HEAD) -> Path:
+    """Materialise a fixture repo and return the path of the lint inside it.
+
+    `elf`, when set, is the bounded stage1 the mark check reads. `smokes` adds
+    gate files the manifest names. Both go through the copied lint's `main`.
+    `head` is the first manifest line.
+    """
     smoke_dir = tmp / "examples" / "mindc_mind"
     smoke_dir.mkdir(parents=True)
     (tmp / ".github" / "workflows").mkdir(parents=True)
@@ -118,8 +130,14 @@ def build(tmp: Path, rows: list[tuple[str, str, str, str]], preflight: str) -> P
     (tmp / "scripts" / "preflight.sh").write_text(preflight, encoding="utf-8")
     for name in SMOKES:
         (smoke_dir / f"{name}.py").write_text("", encoding="utf-8")
+    for name, text in (smokes or {}).items():
+        (smoke_dir / f"{name}.py").write_text(text, encoding="utf-8")
+    if elf is not None:
+        elf_path = smoke_dir / "testdata" / "selfhost_loop_bounded" / "stage1.elf"
+        elf_path.parent.mkdir(parents=True, exist_ok=True)
+        elf_path.write_bytes(elf)
     (smoke_dir / "SMOKE_WIRING.tsv").write_text(
-        "# fixture manifest\n" + "".join("\t".join(r) + "\n" for r in rows),
+        head + "\n" + "".join("\t".join(r) + "\n" for r in rows),
         encoding="utf-8",
     )
     shutil.copyfile(LINT, smoke_dir / "smoke_wiring_lint.py")
@@ -129,9 +147,11 @@ def build(tmp: Path, rows: list[tuple[str, str, str, str]], preflight: str) -> P
     return smoke_dir / "smoke_wiring_lint.py"
 
 
-def run(rows: list[tuple[str, str, str, str]], preflight: str) -> tuple[int, str]:
+def run(rows: list[tuple[str, str, str, str]], preflight: str,
+        elf: bytes | None = None, smokes: dict[str, str] | None = None,
+        head: str = FIXTURE_HEAD) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as td:
-        lint = build(Path(td), rows, preflight)
+        lint = build(Path(td), rows, preflight, elf=elf, smokes=smokes, head=head)
         p = subprocess.run(
             [sys.executable, str(lint)], capture_output=True, text=True
         )
@@ -148,13 +168,25 @@ FIXED = [
 GAMMA_OK = ("gamma_smoke", "preflight", "tool", "Analysis only; prints numbers, no verdict.")
 DELTA_OK = ("delta_smoke", "none", "helper", "Imported by the smokes; not a gate.")
 
+# The mark check reads this elf through main(), then compares its bytes with the
+# value-shapes note. A direct call of _mark_claim_errors never sees a deleted
+# call, a stubbed bounded_seed_mark_errors, or a byte read replaced by a constant.
+VS = "native_lane_value_shapes_smoke"
+VS_DOC = '"""value shapes"""\n'
+NO_MARK = b"bounded-seed-without-the-lane-mark"
+HAS_MARK = b"nblane02"
+VS_POSSESS = (VS, "none", "helper", "carries the nblane02 mark")
+VS_DENY = (VS, "none", "helper", "does not carry the nblane02 mark")
+VS_SILENT = (VS, "none", "helper", "value shapes through the bounded seed")
+
 
 def main() -> int:
     results: list[tuple[str, int, int, str]] = []
 
-    def case(label, want, gamma=GAMMA_OK, delta=DELTA_OK, preflight=PREFLIGHT_CLAIM_OUTSIDE):
-        rc, out = run(FIXED + [gamma, delta], preflight)
-        ok = rc == want
+    def case(label, want, gamma=GAMMA_OK, delta=DELTA_OK, preflight=PREFLIGHT_CLAIM_OUTSIDE,
+             extra=(), elf=None, smokes=None, need="", head=FIXTURE_HEAD):
+        rc, out = run(FIXED + [gamma, delta, *extra], preflight, elf=elf, smokes=smokes, head=head)
+        ok = rc == want and (need in out if need else True)
         # ONE VERDICT LINE PER CASE, printed here rather than recapped at the end.
         # scripts/gate_assert.py derives `asserted=<N>` from reported verdicts, so
         # a single summary line publishes the same count whether this list holds
@@ -191,6 +223,51 @@ def main() -> int:
     # `--full` branch is false and must red the lint.
     case("preflight claims UNCONDITIONALLY from inside --full -> exit 1", 1,
          preflight=PREFLIGHT_CLAIM_INSIDE)
+
+    # Through main(), against elf bytes. Returning [] from bounded_seed_mark_errors,
+    # dropping its call, or replacing the byte read with False leaves the honest
+    # tree green; these four fixtures are the cases that go red.
+    case("possession while the bounded elf lacks the mark -> exit 1", 1,
+         extra=(VS_POSSESS,), elf=NO_MARK, smokes={VS: VS_DOC},
+         need="stage1.elf does not")
+    case("denial while the bounded elf has the mark -> exit 1", 1,
+         extra=(VS_DENY,), elf=HAS_MARK, smokes={VS: VS_DOC},
+         need="stage1.elf has nblane02")
+    case("denial while the bounded elf lacks the mark -> exit 0", 0,
+         extra=(VS_DENY,), elf=NO_MARK, smokes={VS: VS_DOC})
+    case("possession while the bounded elf has the mark -> exit 0", 0,
+         extra=(VS_POSSESS,), elf=HAS_MARK, smokes={VS: VS_DOC})
+    # No verdict is no pass: a tree that is not a fixture of this test must hold the bounded seed,
+    # and a text that states no claim about the mark can not be checked against it.
+    case("no bounded elf in a tree that is not a fixture -> exit 1", 1, head=REAL_HEAD,
+         need="selfhost_loop_bounded/stage1.elf does not exist")
+    case("a tree that is not a fixture, with the bounded elf and a true claim -> exit 0", 0,
+         extra=(VS_POSSESS,), elf=HAS_MARK, smokes={VS: VS_DOC}, head=REAL_HEAD)
+    case("a value-shapes text with no mark claim -> exit 1", 1,
+         extra=(VS_SILENT,), elf=HAS_MARK, smokes={VS: VS_DOC}, need="states no mark claim")
+
+    spec = importlib.util.spec_from_file_location("swl_mark", LINT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # The real tree with its bounded seed path pointed at a file that does not exist.
+    real_elf, mod._BOUNDED_ELF = mod._BOUNDED_ELF, mod._BOUNDED_ELF.with_name("absent_stage1.elf")
+    absent = mod.bounded_seed_mark_errors(mod.parse_manifest()[0]) if not mod._BOUNDED_ELF.exists() else []
+    mod._BOUNDED_ELF = real_elf
+    probes = (
+        ("the real tree without its bounded seed -> refused", absent, True),
+        ("possession while the elf lacks the mark -> refused",
+         mod._mark_claim_errors("(carries the nblane02 mark)", "", False), True),
+        ("denial while the elf has the mark -> refused",
+         mod._mark_claim_errors("(does not carry the nblane02 mark)", "", True), True),
+        ("denial while the elf lacks the mark -> allowed",
+         mod._mark_claim_errors("(does not carry the nblane02 mark)", "does not carry nblane02", False), False),
+        ("committed value-shapes note matches the bounded seed",
+         mod.bounded_seed_mark_errors(mod.parse_manifest()[0]), False),
+    )
+    for label, got, want_err in probes:
+        ok = bool(got) == want_err
+        print(f"[{'PASS' if ok else 'FAIL'}] {label} (expected exit {int(want_err)}, got {int(bool(got))})")
+        results.append((label, int(want_err), int(bool(got)), "" if ok else str(got)))
 
     failures = [r for r in results if r[3]]
     for label, want, rc, out in failures:
@@ -524,7 +601,7 @@ def case_precommit_hook_never_stages_a_bad_anatomy() -> None:
 
 
 def case_precommit_hook_refreshes_anatomy_on_main_only() -> None:
-    """Architecture ruling 17: ANATOMY.md is regenerated on main only.
+    """ANATOMY.md is regenerated on main only.
 
     A generated file every landing changes made every open PR conflict with
     main, and GitHub starts no pull_request workflow on a conflicting PR. So the
@@ -606,7 +683,7 @@ def case_precommit_hook_refreshes_anatomy_on_main_only() -> None:
 
 
 def freshness_enforced(env: "dict[str, str] | os._Environ[str]" = os.environ) -> bool:
-    """True only on a push to main (architecture ruling 17).
+    """True only on a push to main (ANATOMY.md is regenerated there only).
 
     ANATOMY.md is regenerated on main only, so a PR branch carries whatever copy
     it forked from and is stale by design; comparing it with the PR's tracked

@@ -50,6 +50,27 @@ fail=0
 PF_TARGET="${PF_TARGET:-target-preflight}"
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 bad()  { printf '\033[31mFAIL:\033[0m %s\n' "$1"; fail=1; }
+# A red section shows its cause. red_lines <output> <cause-regex> [<list-regex> [head|tail]]
+# prints every line that starts a FAIL verdict, and every <cause-regex> line,
+# first and uncut; then the other lines that match <list-regex>, cut to 12 (the
+# first 12, or the last 12 with "tail"). With no cause line at all it prints the
+# last 20 lines, so a red never hides what failed behind a list.
+RED_FAIL_RE='^(FAIL|\[FAIL\]|VACUOUS|run_gate: FAIL)'
+red_lines() {
+  local out=$1 cause=$RED_FAIL_RE list=${3:-} cut=${4:-head} hits rest
+  [ -n "${2:-}" ] && cause="$cause|$2"
+  # No reader that stops early (grep -q, head) on a pipe: under pipefail the writer's
+  # SIGPIPE on a large output turns "found" into "no FAIL line" and hides every one.
+  if hits=$(printf '%s\n' "$out" | grep -E -- "$cause"); then
+    printf '%s\n' "$hits"
+  else
+    echo "(no FAIL line in this output; its last 20 lines follow)"
+    printf '%s\n' "$out" | tail -20
+  fi
+  [ -n "$list" ] || return 0
+  rest=$(printf '%s\n' "$out" | grep -vE -- "$cause" | grep -E -- "$list")
+  [ -z "$rest" ] || "$cut" -12 <<<"$rest"
+}
 
 # The gate scripts use python 3.12 syntax; an older interpreter shows up as five
 # unrelated-looking reds. Not a gate: this is the one early stop, with one named
@@ -105,12 +126,12 @@ if [ "${1:-}" != "--bench-only" ]; then
 step "rustfmt  [ci.yml Format Check]"
 if cargo fmt --check >/dev/null 2>&1; then echo "ok"; else
   bad "rustfmt drift — run: cargo fmt"
-  cargo fmt --check 2>&1 | grep "Diff in" | head
+  red_lines "$(cargo fmt --check 2>&1)" '^Diff in'
 fi
 
 step "build (default features = std-surface)  [ci.yml Build & Test]"
 if cargo build --quiet 2>/tmp/preflight-build.err; then echo "ok"; else
-  bad "build broken"; tail -15 /tmp/preflight-build.err
+  bad "build broken"; red_lines "$(cat /tmp/preflight-build.err)" '^error|^ *--> ' '.' tail
 fi
 
 step "mindc check std/ examples/  [ci.yml mindcraft_check — error-severity incl. fmt::drift]"
@@ -132,7 +153,7 @@ if CARGO_TARGET_DIR="$PF_TARGET" cargo build --release --no-default-features --f
   errs=$("$PF_TARGET/release/mindc" check std/ examples/ 2>&1 | grep -E ': error:' || true)
   if [ -z "$errs" ]; then echo "ok (warnings allowed)"; else
     bad "mindc check error-severity diagnostics (fmt::drift → mindc fmt <file>; tuple-return → #[repr(C)] struct):"
-    printf '%s\n' "$errs" | head
+    red_lines "$errs" ': error:'
   fi
 else
   bad "could not build mindc"
@@ -150,7 +171,7 @@ for feats in "" "std-surface" "cross-module-imports" "std-surface,cross-module-i
   else flag=(--no-default-features --features "$feats"); label="--no-default-features --features $feats"; fi
   if ! cargo check "${flag[@]}" --quiet 2>/tmp/preflight-nf.err; then
     bad "cargo check $label BROKEN — this is the exact class that slips past the std-surface gates:"
-    grep -E '^error' /tmp/preflight-nf.err | head -4
+    red_lines "$(cat /tmp/preflight-nf.err)" '^error|^ *--> '
     nf_ok=0
   fi
 done
@@ -174,7 +195,7 @@ if [ -f scripts/cfg_gate_wiring_lint.py ]; then
     printf '%s\n' "$cw_out" | tail -1
   else
     bad "cfg-gate wiring contract FAILED — a feature-gated test file runs NOWHERE in CI:"
-    printf '%s\n' "$cw_out" | head -12
+    red_lines "$cw_out" '' '.'
   fi
 else
   bad "scripts/cfg_gate_wiring_lint.py MISSING — CI runs it; preflight cannot verify it"
@@ -189,11 +210,11 @@ step "tier gate fails CLOSED on a failing test  [ci.yml executable_semantics_tie
 # Synthetic tier logs replayed through --from-log, asserting the exit code — pure
 # text analysis, sub-second, so it belongs in the FAST path beside the lint above.
 if [ -f scripts/test_exec_semantics_gate.py ]; then
-  if tg_out=$(python3 scripts/run_gate.py scripts/test_exec_semantics_gate.py 2>&1); then
+  if tg_out=$(python3 scripts/run_gate.py --min-asserted 77 scripts/test_exec_semantics_gate.py 2>&1); then
     printf '%s\n' "$tg_out" | grep -E '^ran=' | sed 's/^/  /'
   else
     bad "tier-gate mutation proof FAILED — exec_semantics_gate.sh no longer reds on a failing test:"
-    printf '%s\n' "$tg_out" | grep -E '^\[FAIL\]|^ran=' | head -12
+    red_lines "$tg_out" '' '^ran='
   fi
 else
   bad "scripts/test_exec_semantics_gate.py MISSING — CI runs it; preflight cannot verify it"
@@ -210,7 +231,7 @@ if [ -f scripts/enumeration_drift_lint.py ]; then
     printf '%s\n' "$ed_out" | tail -1
   else
     bad "comment-enumeration contract FAILED — a comment disagrees with its code:"
-    printf '%s\n' "$ed_out" | head -12
+    red_lines "$ed_out" '' '.'
   fi
 else
   bad "scripts/enumeration_drift_lint.py MISSING — CI runs it; preflight cannot verify it"
@@ -227,7 +248,7 @@ if [ -f examples/mindc_mind/smoke_wiring_lint.py ]; then
     printf '%s\n' "$sw_out" | tail -1
   else
     bad "smoke-corpus wiring contract FAILED — a smoke is unclassified or its wiring drifted:"
-    printf '%s\n' "$sw_out" | head -12
+    red_lines "$sw_out" '' '.'
   fi
 else
   bad "examples/mindc_mind/smoke_wiring_lint.py MISSING — CI runs it; preflight cannot verify it"
@@ -247,7 +268,7 @@ if [ -f examples/mindc_mind/stdlib_manifest_lint.py ]; then
     printf '%s\n' "$sm_out" | tail -1
   else
     bad "std manifest contract FAILED — a std module list drifted, or the seed blob changed:"
-    printf '%s\n' "$sm_out" | head -12
+    red_lines "$sm_out" '' '.'
   fi
 else
   bad "examples/mindc_mind/stdlib_manifest_lint.py MISSING — CI runs it; preflight cannot verify it"
@@ -255,7 +276,7 @@ fi
 
 # The lint's own mutation proof: a damaged copy of the REAL manifest (duplicated or
 # wrong count header) run through the lint's real entry point must exit non-zero.
-python3 scripts/run_gate.py examples/mindc_mind/stdlib_manifest_lint.py --self-test \
+python3 scripts/run_gate.py --min-asserted 341 examples/mindc_mind/stdlib_manifest_lint.py --self-test \
   || bad "std manifest lint self-test FAILED — the lint no longer judges the real manifest's count headers"
 
 step "no-AI-attribution FILE gate  [docs-claims.yml — no model/tool credit in TRACKED FILES]"
@@ -277,7 +298,7 @@ else
     printf '%s\n' "$na_out" | tail -1
   else
     bad "no-AI-attribution file gate FAILED — a tracked file credits a model or a tool:"
-    printf '%s\n' "$na_out" | grep -E '^(::error::|ANATOMY\.md:|[^ ]+:[0-9]+:)' | head -12
+    red_lines "$na_out" '' '^(::error::|ANATOMY\.md:|[^ ]+:[0-9]+:)'
   fi
 fi
 
@@ -305,7 +326,7 @@ else
       printf '%s\n' "$cm_out" | grep -E '^commit-message gate:' | tail -1
     else
       bad "commit-message gate FAILED — a commit message credits a model or a tool. Fix by AMENDING/REBASING the messages BEFORE pushing:"
-      printf '%s\n' "$cm_out" | grep -E '^(::error::|    msg:)' | head -12
+      red_lines "$cm_out" '' '^(::error::|    msg:)'
     fi
   else
     bad "commit-message hygiene base unresolved. Tried: $(tr '\n' ' ' < "${hygiene_err}"). Fetch refs/heads/main or refs/remotes/origin/main, or set MIND_HYGIENE_BASE to a commit. Do not skip (a skipped message gate is how a credit reaches public history)"
@@ -364,18 +385,26 @@ python3 scripts/run_gate.py scripts/gate_runner_wiring_lint.py \
 python3 scripts/run_gate.py scripts/gate_runner_wiring_lint.py --self-test \
   || bad "gate-runner cargo scope FAILED — a cargo gate is uncovered and undeclared"
 
+# The reader that the --full cargo matrix below replays: nine checks, one of
+# them a fake cargo proving that no caller MIND* variable reaches a row (it
+# exports seven, one a name no list holds). CI build_test and the workflow env
+# set none.
+python3 scripts/run_gate.py --min-asserted 9 scripts/workflow_scan.py --self-test \
+  || bad "cargo-test matrix reader self-test FAILED — a row would not run as CI runs it"
+
 # The contract behind every OTHER gate in this file: scripts/gate_assert.py must
 # derive `asserted=<N>` from evidence (evaluated asserts, reported verdicts), never
 # from an integer a gate printed. Measured before this test existed: a smoke whose
 # case loop was emptied still reported the length of its case list, and a gate
 # writing `asserted=99` to stderr outranked the shim's verdict. Text-only, seconds.
-python3 scripts/run_gate.py tests/gate_assert_count_contract_test.py \
+python3 scripts/run_gate.py --min-asserted 94 tests/gate_assert_count_contract_test.py \
   || bad "gate-assert count contract FAILED"
 
 # The smoke-wiring lint's own mutation proof: fixture repos in which a class=gate
-# row reaches no workflow, and in which preflight claims UNCONDITIONAL execution
-# from inside `--full`, must BOTH red the real lint. Two of its five cases are
-# controls that must stay green, so a lint stubbed either way is caught.
+# row reaches no workflow, in which preflight claims UNCONDITIONAL execution from
+# inside `--full`, and in which the value-shapes note disagrees with the bounded
+# elf's bytes, must red the real lint. Green controls sit beside those cases, so
+# a lint stubbed either way is caught.
 python3 scripts/run_gate.py scripts/test_smoke_wiring_lint.py \
   || bad "smoke-wiring lint self-test FAILED — the CI-coverage rule does not bite"
 
@@ -409,7 +438,7 @@ if [ "${1:-}" = "--full" ]; then
        --test phase_g_keystone_bootstrap --no-run 2>&1); ks_build_rc=$?
   if [ "$ks_build_rc" -ne 0 ]; then
     bad "BUILD_INCOMPLETE: keystone build exited $ks_build_rc; determinism was not evaluated"
-    printf '%s\n' "$ks_build_out" | tail -20
+    red_lines "$ks_build_out" '^error|^ *--> ' '.' tail
   else
     ks_out=$(MIND_BENCH_REQUIRE=1 cargo test --release --no-default-features \
          --features "mlir-build std-surface cross-module-imports" \
@@ -419,6 +448,7 @@ if [ "${1:-}" = "--full" ]; then
       echo "ok ($ks_n/7 byte-identical)"
     else
       bad "keystone NOT 7/7 (passed='${ks_n:-none}' rc=$ks_rc); completed build, runtime proof failed"
+      red_lines "$ks_out" 'panicked at|^test .* FAILED$|^error' '.' tail
     fi
   fi
 
@@ -433,7 +463,7 @@ if [ "${1:-}" = "--full" ]; then
     echo "ok (independent trace_hash passed=${ih_n})"
   else
     bad "independent trace_hash gate FAILED (passed='${ih_n:-none}' rc=$ih_rc)"
-    printf '%s\n' "$ih_out" | tail -40
+    red_lines "$ih_out" 'panicked at|^test .* FAILED$|^error' '.' tail
   fi
 
   step "cross-substrate determinism 24/24  [ci.yml cross_substrate_identity — THE wedge invariant]"
@@ -450,6 +480,7 @@ if [ "${1:-}" = "--full" ]; then
     echo "ok ($xs_n/24+ reproducibility gates byte-identical)"
   else
     bad "cross-substrate determinism gate did NOT prove itself (passed='${xs_n:-none}', need >=24) — 0 tests means the file was cfg'd out, NOT a pass; do NOT push"
+    red_lines "$xs_out" 'panicked at|^test .* FAILED$|^error' '.' tail
   fi
 
   step "executable-semantics tier  [ci.yml executable_semantics_tier — the tier that ran NOWHERE]"
@@ -470,7 +501,7 @@ if [ "${1:-}" = "--full" ]; then
       printf '%s\n' "$es_out" | grep -E '^(harnesses|tests executed|ok:)' | sed 's/^/  /'
     else
       bad "executable-semantics tier FAILED (a NON-quarantined target broke, or the tier collapsed to 0):"
-      printf '%s\n' "$es_out" | grep -E '^(FAIL|  - |harnesses|tests executed)' | head -12
+      red_lines "$es_out" '^cargo exit was ' '^(  - |harnesses|tests executed)'
     fi
   else
     bad "scripts/exec_semantics_gate.sh MISSING — CI runs it; preflight cannot verify it"
@@ -489,7 +520,7 @@ if [ "${1:-}" = "--full" ]; then
     printf '%s\n' "$vs_out" | grep -E '^(ran=|PASS )' | sed 's/^/  /'
   else
     bad "gate-vacuity sweep FAILED — a gate reports success with no compiler present:"
-    printf '%s\n' "$vs_out" | grep -E '^(VACUOUS|ran=|FAIL)' | head -12
+    red_lines "$vs_out" '' '^ran='
   fi
 
   step "release mindc for the artifact gates  [ambient cargo target dir]"
@@ -526,7 +557,7 @@ if [ "${1:-}" = "--full" ]; then
     else
       bad "could not build the mlir release mindc the artifact gates run (resolved ${mindc_rel})"
       if [ -f "$rel_err" ]; then
-        tail -20 "$rel_err"
+        red_lines "$(cat "$rel_err")" '^error|^ *--> ' '.' tail
       fi
     fi
   fi
@@ -536,10 +567,10 @@ if [ "${1:-}" = "--full" ]; then
   # lower.rs / emit / mic@3 change. Keystone cargo-test + oracle-parity do NOT cover the
   # whole-module FLIP — this is the gate that reverted #287-F2 (#223 -> #224).
   if [ -f examples/mindc_mind/mic3_flip_smoke.py ]; then
-    if fl_out=$(python3 scripts/run_gate.py examples/mindc_mind/mic3_flip_smoke.py 2>&1); then
+    if fl_out=$(python3 scripts/run_gate.py --min-asserted 3 examples/mindc_mind/mic3_flip_smoke.py 2>&1); then
       echo "ok (whole-module FLIP byte-identical)"
     else
-      bad "mic@3 whole-module FLIP gate FAILED — this is the #287-F2 revert class:"; printf '%s\n' "$fl_out" | tail -5
+      bad "mic@3 whole-module FLIP gate FAILED — this is the #287-F2 revert class:"; red_lines "$fl_out" '' '.' tail
     fi
   else
     bad "mic3_flip_smoke.py MISSING — the FLIP gate cannot run; do NOT push"
@@ -586,7 +617,7 @@ if [ "${1:-}" = "--full" ]; then
 # `_selfhost_so.resolve_so()` builds a fresh cdylib when MINDC_SO is unset and
 # REFUSES (non-zero) any oracle it cannot prove fresh -- so a missing or stale .so
 # still fails rather than skipping, and a stale one can no longer pass.
-MIND_DTK_SKIP_RUST_REGEN=1 python3 scripts/run_gate.py examples/mindc_mind/testdata/dtk_plan_parity_smoke.py \
+MIND_DTK_SKIP_RUST_REGEN=1 python3 scripts/run_gate.py --min-asserted 14 examples/mindc_mind/testdata/dtk_plan_parity_smoke.py \
   || bad "DTK regalloc parity FAILED"
 
 # Stale-oracle provenance contract for the ~47 self-host smokes (pure stdlib, no
@@ -611,12 +642,12 @@ python3 scripts/run_gate.py examples/mindc_mind/ri_d1_frozen_profile_gate.py || 
     # fresh oracle and refuses a non-fresh one, which is both fail-closed and
     # stale-proof. The old default named CI's /tmp path, which locally does not
     # exist at all.
-    if mp_out=$(python3 scripts/run_gate.py examples/mindc_mind/mic3_primitives_smoke.py 2>&1); then
+    if mp_out=$(python3 scripts/run_gate.py --min-asserted 122 examples/mindc_mind/mic3_primitives_smoke.py 2>&1); then
 
       echo "ok (mic@3 primitives byte-exact vs the live oracle)"
     else
       bad "mic@3 primitives smoke FAILED (stale golden vs live oracle — see #316):"
-      printf '%s\n' "$mp_out" | grep -E "FAIL|golden|live" | head -4
+      red_lines "$mp_out" 'FAIL' 'golden|live'
     fi
   else
     bad "mic3_primitives_smoke.py MISSING — CI runs it; preflight cannot verify it"
@@ -657,7 +688,7 @@ python3 scripts/run_gate.py examples/mindc_mind/ri_d1_frozen_profile_gate.py || 
   # cause (absent frozen fixture here; a refused fallback oracle under --reseed),
   # so print ITS reason rather than asserting one this script cannot know.
     bad "self-host loop gate BLOCKED — a required gate was not evaluated; do NOT push"
-    grep -E "FAIL|BLOCKED" /tmp/preflight-loop.out | tail -2
+    red_lines "$(cat /tmp/preflight-loop.out)" 'FAIL|BLOCKED'
   else
     # Do NOT prescribe --reseed here. This branch fires for EVERY non-zero exit, but
     # only one of the causes is drift; another is "no fresh oracle could be built"
@@ -667,8 +698,23 @@ python3 scripts/run_gate.py examples/mindc_mind/ri_d1_frozen_profile_gate.py || 
     # exactly who would do it. The smoke already prints the correct, cause-specific
     # advice; surface THAT rather than overriding it with a guess.
     bad "self-host loop gate FAILED — see the smoke's own verdict below and follow the advice it prints (/tmp/preflight-loop.out)"
-    grep -E "FAIL|BLOCKED|WARN\[_selfhost_so\]" /tmp/preflight-loop.out | tail -4
+    red_lines "$(cat /tmp/preflight-loop.out)" 'FAIL|BLOCKED' 'WARN\[_selfhost_so\]'
   fi
+
+  step "string rows and identity  [ci.yml — minted stage2, not the frozen seed]"
+  # Inside --full, as the ci.yml step. The runner self-test needs a compiler
+  # without the string rule, and the merged identity judge a reference without
+  # the lane rules. The frozen seed carries both since its advance, so both read
+  # the seed as it was before its last change. The minted stage2 is what the rows
+  # and the merged identity run judge; the host rows run through the release mindc.
+  sr_elf=/tmp/preflight-stage2.elf
+  sr_seed=examples/mindc_mind/testdata/selfhost_loop/stage1.elf
+  sr_ref=/tmp/preflight-seed-before-advance.elf
+  { git show "$(git log -1 --format=%H -- "$sr_seed")^:$sr_seed" > "$sr_ref" && chmod +x "$sr_ref"; } || bad "the seed before its advance is not in this checkout"
+  python3 examples/mindc_mind/native_lane_value_shapes_smoke.py --mint-stage2 "$sr_elf" --assert-fixed-point || bad "stage2 mint FAILED"
+  python3 scripts/run_gate.py --min-asserted 499 --timeout 3600 examples/mindc_mind/native_lane_value_shapes_smoke.py --string-rows "$sr_elf" --string-rows-mindc "${MINDC_BIN:-}" || bad "string rows FAILED"
+  python3 scripts/run_gate.py --min-asserted 140 --timeout 1800 examples/mindc_mind/native_lane_value_shapes_smoke.py --string-rows-selftest "$sr_ref" || bad "string rows self-test FAILED"
+  MIND_IDENTITY_PARTITION=merged python3 scripts/run_gate.py --min-asserted 557 --timeout 7200 examples/mindc_mind/native_lane_value_shapes_smoke.py --identity-vs "$sr_ref" --compiler "$sr_elf" || bad "identity FAILED"
 
 fi
 
@@ -698,7 +744,7 @@ if [ "${1:-}" = "--full" ] || [ "${1:-}" = "--bench-only" ]; then
         > "$bench_out" 2>"$bench_err" || bench_rc=$?
       if [ "$bench_rc" -ne 0 ]; then
         bad "compiler bench command failed (exit $bench_rc); the regression gate was not evaluated"
-        tail -15 "$bench_err"
+        red_lines "$(cat "$bench_err")" '^error' '.' tail
         echo "bench logs retained in $bench_tmp"
       else
         gate_rc=0

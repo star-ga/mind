@@ -5,7 +5,7 @@
 # (gate: backend_native_bridge_smoke.py).
 #
 # compiler:  testdata/selfhost_loop/stage1.elf (frozen pure-MIND stage0)
-# std_blob:  21 modules, sha256 5ec57f4e4e4e4af1365001438fbd29bf15cb3aba8dde8a99941beee929d771ee (417431 bytes)
+# std_blob:  21 modules, sha256 2101ce8fb1c462cddf9212ff9b488ef6b20c81925fad78973751a653bd52d2c4 (417787 bytes)
 # programs:  each row's source is <name>.mind in this directory; the gate reads the
 #            manifest and iterates every row. Previously the gate hardcoded ONE
 #            program, so "byte anchor" meant a single 492-byte artifact and a
@@ -17,10 +17,10 @@
 # wire:      stdin [8B user_lo LE][8B src_len LE][std_blob ++ program]; ELF -> stdout
 #
 # name  size_bytes  sha256  expected_exit_code
-add           492  ee995d4bc7d7880a8797951f6c55ce99d9b00ffe640c0dcdf04ccf81e3010e64  5
-const_return  397  757d23ad98898181dc0e6b1e953a429274dc7edb3eb9d593f29af0eb0be7b180  7
-local_call    474  8eacdb3e9f6bdc2f8978f277a7417ca544c30888f94da919e5d0885bdecaea3c  7
-while_sum     581  998de1303461d5f2a7ccb0911fed1b17e3d4205b944a66312addf392882a7e3e  45
+add           492  9527763db799ecdd6bea689d2b5c40185a77ccd1f296a65e597c4e86daed4aac  5
+const_return  397  313850eb0a449e0ede5e35cdb6120472722844ed129b9a4feda157b33bd297e9  7
+local_call    474  6b54fb177a02a6cdb13bfcacd24bf5059ec86e964e84e834d7ce0e015db78d1b  7
+while_sum     581  e76cfb2c976d213dbb201159bd031a623590bec0700f0d66db774bb12e7a4731  45
 #
 # Old-Rust divergence (native_elf_oracle/add.elf, sha b20651a5..., same 492B): 32 of 492
 # bytes differ, ALL in the tail (bytes 460-492). ELF header, entry (0x400120), program

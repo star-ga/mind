@@ -1,0 +1,254 @@
+// Copyright 2026 STARGA Inc.
+// The extern rule family of the native lane: one function that decides, for one
+// declaration of the user region, whether the compiler can bind it, and names the
+// refusal. A part: it calls intrinsics and other parts only, never a main.mind fn.
+//
+// A declaration is bound only when its calling convention is C or SysV and its
+// whole signature equals one row of the extern table (nbx_row). The decision
+// order is fixed; the first failing step names the refusal:
+//   67  lane.extern.callconv            the convention has no row (not C, not SysV)
+//   64  lane.extern.unknown_symbol      no row has the symbol's name
+//   65  lane.extern.arity               the parameter count differs from the row
+//   66  lane.extern.signature_mismatch  a parameter or result width or class differs
+//                                       from the row, or the declaration is variadic
+// The word is nb_lane_pack(key, site): the site is the byte offset of the
+// declaration name from the start of the composed image. A second declaration of a
+// name is judged like the first, against the same row, so two declarations with
+// equal types give one answer, and a pair whose types differ is refused at the
+// first declaration that differs from the row. The rule reads no lane mode: a
+// compiler with no row for a name refuses the name in every mode.
+//
+// A name that is no scalar of the registry (a struct, an alias, an unknown name) as a
+// parameter or result type does not end the registry: nb_lane_type_tag keeps it as a
+// tag no row has, so the declaration is judged by the same steps (65 when the count
+// differs, else 66) and a defect that stands earlier in the source keeps its word. A
+// form that is not a name (an array, a reference, a generic, a unit, a tuple, a slice
+// pointer, a function type, the parser's path `libc.pid_t`, `Name[N]`, `diff tensor<..>`,
+// and the `libc::pid_t` spelling the parser refuses) is kept the same way:
+// nb_lane_type_skip walks its tokens and the registry stores tag 127. A `__mind_`
+// name is kept as a declaration too; no row has such a name, so it is 64.
+//
+// The caller (main.mind nbx_check_row) passes the facts of the declaration and the
+// row record the name found. Row record words (nbx_put, nb_emit_core): +56 the
+// packed signature, +64 the second signature word, +72 the arity.
+
+import nb_lane_keys;
+
+// Capability mark: EXTERN KEYS V1. This compiler names its extern refusals
+// (lane.extern.* with the declaration site) and binds a second declaration of
+// an extern whose types equal the first. Compiled natively this body is `movabs
+// rax, imm64` whose little-endian immediate spells "nblxk001"; an earlier seed
+// does not carry it.
+pub fn nb_cap_extern_keys_v1() -> i64 {
+    3544386144880583278
+}
+
+// 0 when the declaration can be bound, else the reason word of the first failing
+// step. cc: the convention code of the declaration (0 C, 1 SysV, above 1 no row).
+// varargs: 1 for a `...` tail. found: the table index of the name (negative: no
+// row). arity, sig, sig2: the declared parameter count and packed signature words
+// (sig is negative when a declared type is outside the table's type set). rec: the
+// row record, read only when found is not negative. site: the offset of the name.
+pub fn nb_lane_extern_check(cc: i64, varargs: i64, found: i64, arity: i64, sig: i64, sig2: i64, rec: i64, site: i64) -> i64 {
+    if cc > 1 {
+        return nb_lane_pack(67, site);
+    }
+    if found < 0 {
+        return nb_lane_pack(64, site);
+    }
+    if arity != __mind_load_i64(rec + 72) {
+        return nb_lane_pack(65, site);
+    }
+    if varargs != 0 {
+        return nb_lane_pack(66, site);
+    }
+    if sig != __mind_load_i64(rec + 56) {
+        return nb_lane_pack(66, site);
+    }
+    if sig2 != __mind_load_i64(rec + 64) {
+        return nb_lane_pack(66, site);
+    }
+    0
+}
+
+// The type tag nb_cabi_type stores for the type name at token p. tolerant: word 6 of
+// the registry (1 in the registry of the native lane, 0 in every strict one). ident:
+// 1 when the token is an identifier. scalar: the registry's own tag, negative when
+// the name is no scalar. Negative result: the registry error 3, as before. Tag 127 has
+// no code in nbx_code, so the declaration's signature word is -1 and no row equals it.
+pub fn nb_lane_type_tag(tolerant: i64, ident: i64, scalar: i64) -> i64 {
+    if scalar >= 0 {
+        return scalar;
+    }
+    if tolerant == 0 {
+        return scalar;
+    }
+    if ident == 0 {
+        return scalar;
+    }
+    127
+}
+
+// 1 when the token after a type name is still part of that type: `<` of a generic,
+// `(` of a call shape, `[` of an array or of `Name[N]`, the string of `extern "C" fn`,
+// the `.` of a path `a.b`, the `:` of `a::b`, or the name after `diff`. diff: 1 when
+// the type name is the word `diff`.
+pub fn nb_lane_type_tail(kind: i64, diff: i64) -> i64 {
+    if kind == 22 {
+        return 1;
+    }
+    if kind == 9 {
+        return 1;
+    }
+    if kind == 1 {
+        return diff;
+    }
+    if kind == 16 {
+        return 1;
+    }
+    if kind == 3 {
+        return 1;
+    }
+    if kind == 40 {
+        return 1;
+    }
+    if kind == 42 {
+        return 1;
+    }
+    0
+}
+
+// Packed scan state. Low 8 bits: nesting depth. Next 8: fn arrows still owed.
+// Bit 16: a token of the type has been seen. Bit 17: the scan is live. Bits 18-19
+// (only nb_lane_type_skip sets them): 1 after the first `:` of a path, 2 after `::`.
+pub fn nb_lane_type_pack(depth: i64, owed: i64, begun: i64) -> i64 {
+    depth + owed * 256 + begun * 65536 + 131072
+}
+
+// 1 for `(`, `<`, `[`.
+pub fn nb_lane_type_open(kind: i64) -> i64 {
+    if kind == 3 {
+        return 1;
+    }
+    if kind == 16 {
+        return 1;
+    }
+    if kind == 40 {
+        return 1;
+    }
+    0
+}
+
+// How many nesting levels one closer ends: 1 for `)`, `>`, `]`, 2 for `>>`.
+pub fn nb_lane_type_close(kind: i64) -> i64 {
+    if kind == 4 {
+        return 1;
+    }
+    if kind == 17 {
+        return 1;
+    }
+    if kind == 41 {
+        return 1;
+    }
+    if kind == 34 {
+        return 2;
+    }
+    0
+}
+
+// 1 when `kind` ends a type that has already begun, at depth 0.
+pub fn nb_lane_type_term(kind: i64) -> i64 {
+    if kind == 0 {
+        return 1;
+    }
+    if kind == 4 {
+        return 1;
+    }
+    if kind == 6 {
+        return 1;
+    }
+    if kind == 7 {
+        return 1;
+    }
+    if kind == 8 {
+        return 1;
+    }
+    if kind == 11 {
+        return 1;
+    }
+    0
+}
+
+// Next state after `kind`, 0 to stop before this token, -1 when the form is
+// not a type. `state` is nb_lane_type_pack. An arrow at depth 0 is part of a
+// function type while one is still owed, and ends the type otherwise.
+pub fn nb_lane_type_skip(state: i64, kind: i64) -> i64 {
+    let depth: i64 = state & 255;
+    let owed: i64 = (state >> 8) & 255;
+    let begun: i64 = (state >> 16) & 1;
+    let path: i64 = nb_lane_type_path((state >> 18) & 3, kind);
+    if path < 0 {
+        return 0 - 1;
+    }
+    if path > 0 {
+        return nb_lane_type_pack(depth, owed, 1) + path * 262144;
+    }
+    if begun == 1 {
+        if depth == 0 {
+            if kind == 10 {
+                if owed > 0 {
+                    return nb_lane_type_pack(depth, owed - 1, 1);
+                }
+                return 0;
+            }
+            if nb_lane_type_term(kind) == 1 {
+                return 0;
+            }
+        }
+    }
+    if nb_lane_type_open(kind) == 1 {
+        if depth >= 200 {
+            return 0 - 1;
+        }
+        return nb_lane_type_pack(depth + 1, owed, 1);
+    }
+    let close: i64 = nb_lane_type_close(kind);
+    if close > 0 {
+        if depth < close {
+            return 0 - 1;
+        }
+        return nb_lane_type_pack(depth - close, owed, 1);
+    }
+    if kind == 18 {
+        if owed >= 200 {
+            return 0 - 1;
+        }
+        return nb_lane_type_pack(depth, owed + 1, 1);
+    }
+    if depth > 200 {
+        return 0 - 1;
+    }
+    nb_lane_type_pack(depth, owed, 1)
+}
+
+// The path state after `kind`: 1 after the first `:`, 2 after `::`, 0 when `kind` is
+// no part of a separator, -1 when the form is no type (one `:`, a third `:`, or a
+// `::` that no name follows). `path` is the state before `kind`.
+pub fn nb_lane_type_path(path: i64, kind: i64) -> i64 {
+    if path == 1 {
+        if kind == 9 {
+            return 2;
+        }
+        return 0 - 1;
+    }
+    if path == 2 {
+        if kind != 1 {
+            return 0 - 1;
+        }
+        return 0;
+    }
+    if kind == 9 {
+        return 1;
+    }
+    0
+}

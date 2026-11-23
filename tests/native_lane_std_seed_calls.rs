@@ -165,13 +165,15 @@ fn a_reached_seed_body_outside_the_lane_refuses_in_its_own_module() {
         "vec_zeroed",
         &["(lane.call.unknown) in std/vec.mind fn `vec_zeroed` at line 105"],
     );
-    // The default profile reclaims nothing: std.sha256 frees its scratch, so
-    // `sha256` reached from a loop refuses the free inside the seed body it
-    // calls (measured: `sha256_checked`).
-    refuses(
-        "std_sha256_in_loop",
-        &["(lane.alloc.free_in_loop) in std/sha256.mind fn `sha256_checked`"],
-    );
+}
+
+#[test]
+fn a_free_in_a_loop_builds_and_reclaims() {
+    // A free in a loop builds and reclaims: `sha256` reached from a loop runs
+    // three times (rc 0, first digest byte 0xe3 each) and `out` holds the
+    // FIPS 180-4 digest of the empty message: 3 * 0xe3 = 681, exit 681 & 255.
+    let empty = unhex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    parity("std_sha256_in_loop", 681 & 255, &empty);
 }
 
 #[test]
@@ -214,7 +216,7 @@ fn a_closed_vendoring_image_omits_the_seed_and_runs() {
             "`sha_compress_block` collides with a std seed-blob symbol (closure.std_symbol_collision)",
         ],
     );
-    // The NAES `decode` shape: a private fn named like std.json's public
+    // The external unit's `decode` shape: a private fn named like std.json's public
     // `decode`. Closed, the seed is omitted and the user body runs (argc 1,
     // exit 2); open, the refusal names the symbol and its std module.
     assert_eq!(run("naes_shape_public_name_closed", true), (2, vec![]));

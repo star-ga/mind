@@ -18,8 +18,9 @@
 //! Seed `extern "C"` declarations (one rule; `examples/mindc_mind/nbx_bind.mind`
 //! is its compiler twin). A reached seed body binds a seed declaration when it
 //! calls that name and the selected compiler carries the `nbsext01` mark. Each
-//! seed declaration of a called name must pass the `admit_extern` table. A
-//! declaration no reached body calls is not read. A user body never binds one.
+//! seed declaration of a called name is typed by `admit_extern`; whether its
+//! symbol has a row is the compiler's decision. A declaration no reached body
+//! calls is not read. A user body never binds one.
 
 use super::admit::{Admitted, extern_gate, signature, source_facts, walk_function};
 use super::admit_extern::admit_extern_fn;
@@ -280,8 +281,9 @@ fn reach<'s>(source: &ast::Module, seed: &'s LaneSeed) -> Check<Reached<'s>> {
     if !seed.binds_externs {
         return Ok(reached);
     }
-    // Every seed declaration of a called name must match its table row, so
-    // they all carry one signature: the declarations are one symbol.
+    // Every seed declaration of a called name is typed by its ABI classes; the
+    // last one read sets the signature. The compiler refuses a declaration
+    // that does not match its row (`nbx_bind.mind`).
     let externs = extern_index(seed.parsed()?);
     for name in called {
         for d in externs.get(name.as_str()).into_iter().flatten() {
@@ -317,8 +319,8 @@ impl Reached<'_> {
     /// of the user image, so a user function or extern named like a reached
     /// seed function, or a function named like a bound seed declaration,
     /// refuses as `lane.call.ambiguous`; any other user name stays unknown to
-    /// it. A user declaration of a bound seed declaration's name passed the
-    /// same table row: it is the same symbol.
+    /// it. A user declaration of a bound seed declaration's name is the same
+    /// symbol, not an ambiguity; the compiler decides whether they agree.
     fn shadow(&self, facts: &Admitted) -> Shadow {
         let named = |table: &Functions| -> Functions {
             table
@@ -342,56 +344,16 @@ impl Reached<'_> {
     // a reached body reading one refuses `lane.source.unbound`; bind them when
     // a seed helper the lane must admit needs one.
     ///
-    /// `from_loops` names seed functions the user image reached from a loop.
-    /// Those bodies, and the seed helpers they reach, are walked as loop
-    /// bodies so a repeated free refuses. Every other seed body is typed with
-    /// the size proof off: the blob already ships those dynamic sizes.
-    fn walk(&self, callees: Callees, seed: &LaneSeed, from_loops: &BTreeSet<String>) -> Check<()> {
+    /// Every reached seed body is walked at loop depth 0 with the size proof
+    /// off: the blob already ships those dynamic sizes.
+    fn walk(&self, callees: Callees, seed: &LaneSeed) -> Check<()> {
         let refuse = |r: LaneProfileRejection, f: &SeedFn<'_>, name: &str| {
             r.located(f.span.start())
                 .in_seed(seed.modules[f.module], name)
         };
-        let mut scratch = BTreeSet::new();
         for (name, f) in &self.functions {
-            if from_loops.contains(name) {
-                continue;
-            }
-            walk_function(
-                f.def,
-                &self.tier[name],
-                &BTreeMap::new(),
-                callees,
-                &mut scratch,
-                0,
-                false,
-            )
-            .map_err(|r| refuse(r, f, name))?;
-        }
-        let mut pending: BTreeSet<String> = from_loops
-            .iter()
-            .filter(|name| self.functions.contains_key(*name))
-            .cloned()
-            .collect();
-        let mut checked = BTreeSet::new();
-        while let Some(name) = pending.iter().find(|n| !checked.contains(*n)).cloned() {
-            checked.insert(name.clone());
-            let f = &self.functions[&name];
-            let mut found = BTreeSet::new();
-            walk_function(
-                f.def,
-                &self.tier[&name],
-                &BTreeMap::new(),
-                callees,
-                &mut found,
-                1,
-                false,
-            )
-            .map_err(|r| refuse(r, f, &name))?;
-            for next in found {
-                if self.functions.contains_key(&next) {
-                    pending.insert(next);
-                }
-            }
+            walk_function(f.def, &self.tier[name], &BTreeMap::new(), callees, false)
+                .map_err(|r| refuse(r, f, name))?;
         }
         Ok(())
     }
@@ -471,7 +433,7 @@ pub fn profile_lane_admits_source_seeded(
 ) -> Check<()> {
     let (reached, facts) = admitted(source, seed, extern_fixed)?;
     let shadow = reached.shadow(&facts);
-    reached.walk(shadow.callees(&reached.tier), seed, &facts.loop_calls)
+    reached.walk(shadow.callees(&reached.tier), seed)
 }
 
 /// Source and IR admission with the std seed tier. Returns the image's
@@ -485,7 +447,7 @@ pub fn profile_lane_admits_seeded(
     let (reached, facts) = admitted(source, seed, extern_fixed)?;
     let shadow = reached.shadow(&facts);
     let seed_callees = shadow.callees(&reached.tier);
-    reached.walk(seed_callees, seed, &facts.loop_calls)?;
+    reached.walk(seed_callees, seed)?;
     let callees = facts.callees(&reached.visible);
     check_ir(ir, &facts.user, callees)?;
     reached.lowered(seed_callees, seed)?;

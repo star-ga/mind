@@ -139,7 +139,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     // node fields (see `ast::SourceSpelling`); the side table lives in `ast/spelling.rs`.
     ("src/ast/mod.rs", 1168),
     ("src/bin/mind-ai.rs", 1101),
-    ("src/bin/mindc.rs", 3008),
+    ("src/bin/mindc.rs", 2990),
     ("src/build/mod.rs", 892),
     ("src/deps/mod.rs", 1060),
     ("src/doc/mod.rs", 888),

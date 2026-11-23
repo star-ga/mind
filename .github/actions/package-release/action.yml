@@ -1,0 +1,88 @@
+name: Package release archive
+description: >-
+  Write the archive a release ships. Every platform's archive holds the same
+  members: the compiler binary (`mindc`, or `mindc.exe` in a .zip), the `std/`
+  directory of the tree being released (every file, same relative paths),
+  `stdlib_manifest.txt` (a copy of examples/mindc_mind/testdata/stdlib_manifest.txt)
+  and `SHA256SUMS`. SHA256SUMS lists the sha256 of every file under `std/` and
+  of `stdlib_manifest.txt`, sorted with LC_ALL=C, one `<hash>  <path>` line per
+  file (two spaces) on every platform: each file is hashed in binary mode, and the
+  `*` marker that binary mode prints before the path (Git Bash on Windows prints it
+  by default) is written as a second space. Recompute it, inside the unpacked
+  archive, with
+  `find std stdlib_manifest.txt -type f | LC_ALL=C sort | xargs sha256sum -t | diff - SHA256SUMS`
+  (`shasum -a 256 -t` where `sha256sum` is missing). It does not list the binary:
+  the sibling `<archive>.sha256` file covers the whole archive. release.yml packs
+  every leg with this action, and so do ci.yml's release_profile job and
+  installers.yml, so the packing runs before any tag depends on it.
+
+inputs:
+  binary:
+    description: Path of the built mindc binary (mindc.exe for a .zip), relative to the workspace or absolute.
+    required: true
+  archive:
+    description: Path of the archive to write, ending in .tar.gz or .zip. Relative to the workspace or absolute.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: package
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+        ARCHIVE: ${{ inputs.archive }}
+      # Written for bash 3.2 too (macOS runners) and for Git Bash (Windows runner).
+      # A missing tool is an error, never a skipped step.
+      run: |
+        set -euo pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        native() { if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        # Git Bash on Windows: the POSIX find and sort, not System32's find.exe and sort.exe.
+        if command -v cygpath >/dev/null 2>&1; then PATH="/usr/bin:$PATH"; fi
+        for t in cp find grep mkdir mktemp sed sort tr wc; do command -v "$t" >/dev/null 2>&1 || fail "$t is not on PATH"; done
+        absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$PWD" "$1" ;; esac; }
+        bin=$(absolute "$(native "$BINARY")")
+        archive=$(absolute "$(native "$ARCHIVE")")
+        manifest=examples/mindc_mind/testdata/stdlib_manifest.txt
+        test -f "$bin" || fail "the binary $BINARY is missing"
+        test -f "$manifest" || fail "$manifest is missing: run this from the root of the tree being released"
+        test -d std || fail "std/ is missing: run this from the root of the tree being released"
+
+        if command -v sha256sum >/dev/null 2>&1; then
+          sha() { sha256sum -b "$@"; }
+        elif command -v shasum >/dev/null 2>&1; then
+          sha() { shasum -a 256 -b "$@"; }
+        else
+          fail "neither sha256sum nor shasum is on PATH"
+        fi
+        case "$archive" in
+          *.tar.gz) member=mindc; command -v tar >/dev/null 2>&1 || fail "tar is not on PATH" ;;
+          *.zip) member=mindc.exe; command -v 7z >/dev/null 2>&1 || fail "7z is not on PATH" ;;
+          *) fail "unknown archive type: $ARCHIVE" ;;
+        esac
+
+        tmp_root=$(native "${RUNNER_TEMP:-/tmp}")
+        stage=$(mktemp -d "$tmp_root/release-stage.XXXXXX")
+        cp "$bin" "$stage/$member"
+        mkdir "$stage/std"
+        cp -R std/. "$stage/std/"
+        cp "$manifest" "$stage/stdlib_manifest.txt"
+        test "$(cd "$stage" && find std -type f | wc -l)" -gt 0 || fail "std/ holds no file"
+        # Binary mode hashes the exact bytes on every platform. It prints `<hash> *<path>`;
+        # the line is written as `<hash>  <path>`, so the file has one form everywhere.
+        (cd "$stage" && find std stdlib_manifest.txt -type f | LC_ALL=C sort | while IFS= read -r f; do sha "$f"; done | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /' > SHA256SUMS)
+        nfiles=$(cd "$stage" && find std stdlib_manifest.txt -type f | wc -l | tr -d ' ')
+        test "$(grep -Ec '^[0-9a-f]{64}  [^ *]' "$stage/SHA256SUMS")" = "$nfiles" || fail "SHA256SUMS does not hold exactly $nfiles lines of the form '<hash>  <path>'"
+
+        mkdir -p "$(dirname "$archive")"
+        rm -f "$archive"
+        case "$archive" in
+          *.tar.gz) (cd "$stage" && COPYFILE_DISABLE=1 tar -czf "$archive" "$member" std stdlib_manifest.txt SHA256SUMS) ;;
+          *.zip)
+            if command -v cygpath >/dev/null 2>&1; then wa=$(cygpath -w "$archive"); else wa=$archive; fi
+            (cd "$stage" && 7z a -tzip "$wa" "$member" std stdlib_manifest.txt SHA256SUMS >/dev/null) ;;
+        esac
+        test -s "$archive" || fail "the archive $ARCHIVE was not written"
+        echo "PASS: wrote $ARCHIVE: $member + $(wc -l < "$stage/SHA256SUMS" | tr -d ' ') hashed files (std/ + stdlib_manifest.txt) + SHA256SUMS"
+        rm -rf "$stage"

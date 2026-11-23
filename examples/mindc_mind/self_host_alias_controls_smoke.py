@@ -20,6 +20,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import _stdlib_manifest  # noqa: E402
+from _selfhost_sources import start_child  # noqa: E402
 
 SO = pathlib.Path(os.environ["MINDC_SO"])
 SEED = pathlib.Path(os.environ.get(
@@ -48,8 +49,8 @@ def emit_so(lib, combined, user_lo):
 
 
 def emit_seed(seed, image):
-    p = subprocess.run(
-        [str(seed)], input=image, stdout=subprocess.PIPE,
+    p = start_child(
+        [str(seed)], image, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, timeout=120, check=False,
     )
     if p.returncode != 0:

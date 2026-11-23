@@ -1,7 +1,7 @@
 //! FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 //! a module, derived *purely* from its ops.
 //!
-//! Design: `mind-internal/plans/FP-CONTRACT-VERIFIER-INVARIANT-DESIGN.md`.
+//! Design: the FP-contract verifier invariant design note (kept private).
 //!
 //! Strict-FP in MIND is an emergent *negative* property: the compiler never
 //! emits a fastmath / reassociate / fma-contract attribute, so scalar `f64`/`f32`

@@ -27,7 +27,7 @@ extern "C" {
     unsafe fn open(pathname: *const u8, flags: i32, mode: i32) -> i32;
     unsafe fn read(fd: i32, buf: *mut u8, count: i64) -> i64;
     unsafe fn poll(fds: *mut u8, nfds: i64, timeout: i32) -> i32;
-    unsafe fn clock_gettime(clockid: i32, tp: i64) -> i32;
+    unsafe fn clock_gettime(clockid: i32, tp: *mut u8) -> i32;
     unsafe fn getenv(name: *const u8) -> *mut u8;
     unsafe fn setenv(name: *const u8, value: *const u8, overwrite: i32) -> i32;
     unsafe fn unsetenv(name: *const u8) -> i32;
@@ -115,7 +115,7 @@ pub fn procgroup_sys_poll(pfds: i64, k: i64, wait_ms: i64) -> i64 {
 // the clock does not answer. The caller picks the clock id (1 is
 // CLOCK_MONOTONIC on Linux, 6 on macOS) and turns the timespec into a deadline.
 pub fn procgroup_sys_clock(clockid: i64, ts: i64) -> i64 {
-    clock_gettime(clockid as i32, ts) as i64
+    clock_gettime(clockid as i32, ts as *mut u8) as i64
 }
 
 // ---- Environment ----

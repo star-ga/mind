@@ -7,6 +7,323 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-11-23
+
+### Added
+
+- **Native libc rows: refusal rows assert the frame's full report line.** The extern-key rows and the six libc refusal controls expect `error[native-lane]: ... (<key name>) at line L, column C of the composed user image.` (std sites: `in the std region.`), the key name read from `testdata/lane_keys.txt`; the row `xk_seed_other_types_reached` finds its std declaration by a rule and is back, and no row leaves the set.
+- **Self-host harness: every sender of compiler source sends the self-mode magic through one helper, and the identity tool judges the merged tree.** The smokes that feed the compiler's own source to a compiler ELF now go through `_selfhost_sources.self_mode_image`; `--mint-stage2 --assert-fixed-point` adds a positive control (with the magic the source gives hop 2 again, without it a `lane.` key refuses it); `--identity-vs` with `MIND_IDENTITY_PARTITION=merged` puts each program that differs from the reference in exactly one named class and prints a count per class.
+- **Lane mark value in the compiler source.** The constant of `nb_cap_native_lane_v1` and the mark of the two native-lane smokes now spell `nblane02`. The committed seeds of this release carry `nblane02` and not `nblane01`
+  (seed advance of this release), and so does a `mindc` built from this tree, which embeds them.
+- **Pure-MIND native compiler source: named extern refusals and a repeated
+  identical declaration.** The new part `examples/mindc_mind/nbt_extern_keys.mind`
+  holds one rule family, `nb_lane_extern_check`, that decides for each extern
+  declaration of the user region whether the compiler can bind it and names the
+  refusal: key 67 `lane.extern.callconv`, 64 `lane.extern.unknown_symbol`, 65
+  `lane.extern.arity`, 66 `lane.extern.signature_mismatch`, in that order. The
+  reason word is `key * 4294967296 + site` (`nb_lane_pack` in the part
+  `nb_lane_keys.mind`), the site being the byte offset of the declaration name
+  from the start of the composed image. A second declaration of an extern with
+  equal types, in one block or in several, is now accepted (it was refused even
+  when identical); one with other types is refused. The stage driver prints one
+  frame line and no earlier scaffold line: `error[native-lane]: the program is
+  outside candidate native-lane-v1 (<key>) at line L, column C of the composed
+  user image. No artifact written.` A site in the std region says `in the std
+  region.` A
+  parameter or result type that is no scalar of the registry (a struct, a
+  `#[repr(C)]` struct, a type alias, a pointer to a struct) is judged like any other
+  width (66, or 65 when the count differs), a `__mind_` name is key 64, and a
+  defect that stands earlier in the source keeps its word. The
+  capability mark is `nblxk001`; the committed seeds of this release carry it. The tests are the `xk_*` rows of
+  `native_lane_value_shapes_smoke.py --only libc_rows` (run on the committed
+  bounded seed): 241 rows (the family runs 260). Each key has refused programs with their
+  accepted twins, the order of the steps is pinned (convention, name, count, types),
+  the parameters 7 to 11 of the second signature word have a row each, repeated
+  declarations run and return the expected value (`close` and `lseek` declared in three
+  blocks and both called; a second `lseek` with an i32 offset is refused at that
+  declaration), two rows reach `tcp_close` of
+  `std/net.mind` so that the seed declaration of `close` joins the image beside the
+  accepted user declarations, and two rows reach a seed declaration that the rule
+  refuses (`xk_seed_region_unknown` reaches `proc_pid`, whose seed `getpid` has no row:
+  key 64; `xk_seed_other_types_reached` reaches `proc_getenv`, the first std function
+  that calls a std declaration of `getenv` with a `*mut u8` result, found by a rule:
+  key 66; each site lies in the std prefix). The seed declaration of `bind` is
+  `(i32, *const u8, i32) -> i32`.
+- **Pure-MIND native compiler source: ten more libc rows.** The new part
+  `examples/mindc_mind/nbx_libc_rows.mind` adds rows 89..98 to the extern table
+  of the self-host native compiler: `readlink`, `bind`, `getsockname`,
+  `sendto`, `recvfrom`, `getenv`, `creat`, `poll`, `listen` and `getsockopt`,
+  each bound through `libc.so.6` at `GLIBC_2.2.5` with the signature a
+  declaration must spell exactly (`sendto` and `recvfrom` use all six argument
+  registers; an `i32` result is sign-extended; `readlink`, `sendto` and
+  `recvfrom` return 64 bits). `getenv` returns `*const u8`, so
+  `nbx_row_sig` no longer refuses that result code; every declaration is still
+  checked against a whole row, and only `getenv` has such a result. The part
+  carries the capability mark `nblibc03`. The host holds no table of names:
+  `src/ir/native_lane_profile/admit_extern.rs` types a declaration and admits it.
+  A compiler minted from this tree binds the ten names, so `mindc build` with
+  that compiler builds a call of `getenv` and a call of `creat`. The committed
+  seeds carry `nblane02` and `nblibc03` (seed advance of this release). The rows
+  are tested through the committed bounded seed (`native_lane_value_shapes_smoke.py
+  --only libc_rows --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf`): programs that call each of the ten
+  functions and the seven older network rows, six refusal controls that each
+  call their extern, with an accepted twin for each, and the same
+  programs through `--backend mlir` as a cross-check (`--only
+  libc_rows_mlir`). One CI step runs both on the committed bounded seed, and a second step
+  runs both on a stage1 that the frozen seed mints from this tree (`--mint-stage1`).
+- **std evidence: `x509_verify_server_chain_ev` records the verdict of the plain chain
+  verify.** `std/x509_evidence.mind` has `x509_verify_server_chain_ev(chain, anchors,
+  expected_dns, at_unix, sink)`: it runs the unchanged `x509_verify_server_chain` with
+  every argument passed through and, with a sink, appends the record of the budget
+  variant, `[ evd_mod_x509 | refuse or accept | -code (0 on accept) | certificates in
+  the chain | 0 ]`; sink 0 records nothing. It carries `#[protection]`, and so does
+  `procgroup_wait_all_ev` now, like its sibling `_ev` wrappers. `x509_verify_server_chain`
+  allocates an 8-byte budget cell on each call and does not release it; the wrapper adds
+  no allocation. `tests/std_evidence_wrappers` checks the result and the record of an
+  accepted and a refused chain, a refused null input and sink 0 (exit ids 48 and 70 to
+  74); `tests/std_cpu_affinity_split.rs` requires `#[protection]` on each of the six `_ev`
+  wrappers.
+
+### Changed
+
+- **Native lane: the native compiler alone judges an `extern "C"` signature.** The host check of `mindc build --backend native` no longer refuses an extern by calling convention, varargs, arity, parameter type or result type (`lane.extern.callconv`, `lane.extern.varargs`, `lane.extern.arity`, `lane.extern.type`, `lane.extern.result_type` in the host); it types the declaration, passes every extern call result through, and the compiler's rows decide and name the refusal (64 `lane.extern.unknown_symbol`, 65 `lane.extern.arity`, 66 `lane.extern.signature_mismatch`, 67 `lane.extern.callconv`). A `getenv` declared with a `*const u8` result now reaches the compiler's row.
+- **String rows: a refused literal is named by the walk, and the order of the families is pinned.** A string literal with a raw line feed or an escape the lexer does not know is named `lane.string.raw_newline` or `lane.string.escape` at its own position and is no longer judged as an argument; of two refused constructs the smaller position wins. The string family is judged before the extern family. Five rows whose key the host's own check owns run through `mindc` when `--string-rows-mindc` is given and are counted apart otherwise; four rows were added.
+- **Native compiler: a default-profile image whose source frees at a loop position reclaims memory.**
+  In the pure-MIND native compiler (`examples/mindc_mind/`), the new part
+  `nb_alloc_select.mind` chooses one of two allocators for each default-layout image from the
+  source alone. When a `__mind_free` call stands in the condition or the body of a `while`, or in
+  the body of a `for`, directly or through calls over every function of the image (user and
+  standard library), the image takes the free-list runtime that explicit-layout images already
+  carry, on the 1 GiB arena: freed blocks are reused, and a full arena ends with
+  `error: native arena exhausted` and exit status 70. Every other image keeps the bump allocator
+  and its bytes. The line `// mind: native_alloc = bump` in the leading comment block keeps the
+  bump allocator; the compiler source carries it. A free that a `for` bound runs before the loop
+  is not at a loop position. A double free is undefined. A compiler minted from this tree
+  selects that runtime: `mindc build` with a compiler that carries `nblane02` admits a free
+  at a loop position and the image reclaims (three frees in a `while` exit 7; the corpus
+  program `r3_free_loop` exits 33). The committed seeds carry `nblane02`, so a build that uses them
+  is admitted. The host refuses a compiler that lacks `nblane02` before any profile
+  (`native.compiler_mark`) and writes no image. That refusal is not `lane.alloc.free_in_loop`.
+- **Native compiler: a string literal's handle is built once, not at every evaluation.**
+  In the pure-MIND native compiler (`examples/mindc_mind/main.mind`), the handle
+  `{addr, len, cap = 0}` of each string literal is written at compile time into the
+  read-only literal segment, 8-aligned after the literal's bytes, and the literal
+  expression is the address of that handle. Before, each evaluation of a literal
+  allocated a new 24-byte handle in the arena, so a literal in a long loop used arena
+  memory without bound and ended at the arena guard. Now a literal in a loop allocates
+  nothing per evaluation. The 8 MiB literal window counts the bytes, the alignment gap
+  (0 to 7 bytes) and the 24 handle bytes of every literal site, and the compiler still
+  refuses a program that passes it. A program with a string literal in a function body
+  gets a different image (an empty literal too, because its handle needs the read-only
+  segment). The image of a program with no string literal is unchanged. A `const` String
+  that no code reads lowers no handle, and the string rows refuse it all the same
+  (`lane.string.const`). A changed image has the same exit status and output, with three exceptions.
+  (1) A loop that evaluates a literal 2^25 times or more with no other allocation ended at
+  the arena guard before on the default layout and now ends with its value; on the bounded
+  layout the old run was the same. (2) A store through a literal handle did not fault before
+  and now faults, because the handle is read-only like the literal bytes. (3) A program that
+  uses a String value as a number or reads outside the literal bytes (it returns or prints
+  the handle address, reads a byte of an empty literal, reads past the length) gets another
+  value or another fault, because the handle now lives at another address. The committed
+  seeds of this release carry the change (seed advance of this release): a loop that passes a
+  literal to a function 2^25 times exits with its value (42) through `mindc build` with the
+  embedded seed and with each committed seed, and on the direct feed of the committed bounded
+  seed; on the direct feed the seed committed before this release ends that program at the
+  arena guard (signal 4).
+- **Native lane check: the Rust host no longer decides `String`, string
+  literals and field reads.** In the native-lane check of `mindc build` the
+  type annotation named exactly `String`, a string literal and a field read
+  are typed as the i64 word, and the check decides nothing more about them
+  (a field read walks its receiver first; a field write is still refused, and
+  so is every other type name: `u8`, `i16`, `usize` and the rest keep their
+  refusals). The special case for a string literal in `print` is removed
+  because the literal rule now covers it. The refusal `lane.source.string` is
+  no longer raised by the host, and a field read no longer raises
+  `lane.source.struct`. The lane mark is `nblane02`. The host runs a native
+  compiler only when that compiler carries `nblane02`. A compiler with another
+  mark, or with none, is refused with one message that names `nblane02`; the
+  host does not judge that compiler's program with the historical frozen
+  profile. The published 0.10.3 compiler keeps its behaviour. The seeds
+  embedded in this tree carry `nblane02` after the seed advance, so a native
+  build that uses them is admitted. A compiler that carries `nblane01` is refused.
+- **The Rust host no longer holds a table of `extern "C"` symbols for the
+  native lane.** The closed libc and CUDA-driver tables of the lane check
+  (`admit_extern.rs`, `admit_extern_cuda.rs`), their lookup and the unit test
+  that mirrored them against the compiler's rows are deleted, and no row is
+  added anywhere in Rust. The host now types each declaration by its ABI
+  classes and admits it whatever its name. Which symbols exist, and with which
+  widths, is decided by the pure-MIND native compiler, which refuses a
+  declaration that has no row or does not match its row (exit status 3, no
+  artifact). The host types each declaration and admits it. A varargs marker,
+  a calling convention other than C or SysV, an `f64` parameter, a `u32` result
+  and twelve parameters all pass the host. A compiler minted from this tree
+  names the refusal in the order convention, name, count, types.
+  `callconv(.win64)` is 67 `lane.extern.callconv` even when the name has no
+  row. A name with no row is 64 `lane.extern.unknown_symbol`, and that word
+  is the one printed for a varargs marker, an `f64` parameter, a `u32` result
+  and twelve parameters on such a name. When the name has a row, a varargs
+  marker, an `f64` parameter and a `u32` result are 66
+  `lane.extern.signature_mismatch`, and twelve parameters are 65
+  `lane.extern.arity`.
+  A compiler without `nblane02` is refused before any profile with the mark
+  message (`native.compiler_mark`) and writes no image; the committed seeds of
+  this release carry the mark. The host does not reach `unsupported construct` or `error[E2039]`
+  on that compiler. The determinism
+  classes of externs (`src/intrinsics.rs`) are unchanged.
+- **The Rust host no longer refuses a free in a loop on the native lane.** The
+  rule `lane.alloc.free_in_loop` of the native-lane check of `mindc build` is
+  deleted with all of its machinery. A `__mind_free` in a loop body or a loop
+  condition, or in a function that a loop calls (a user function or a std seed
+  function such as `sha256_checked` of `std.sha256`), is admitted by the host
+  check, which adds no rule in its place. Every reached std seed body is now
+  walked at loop depth 0, so a bare `break` or `continue` in a seed body that a
+  loop calls refuses `lane.source.loop_exit_scope`; no function of `std/` has
+  one. The committed seeds carry `nblane02`. A compiler that carries `nblane01` is
+  refused before any profile (`native.compiler_mark`) and writes no image; that
+  refusal is not `closure.unresolved_edge` and it is not `lane.alloc.free_in_loop`. A compiler
+  minted from this tree, and the committed seeds, reclaim: the corpus record `r3_free_loop` exits 33,
+  and `std_sha256_in_loop` in `tests/native_lane_std_seed_calls.rs` is the
+  positive row (exit `681 & 255`, the empty digest).
+- **The entry checks of the native bridge follow the allocator runtime prefix
+  on the default layout too.** They stepped over the prefix at the ELF entry
+  only for an explicit layout. On the default layout the prefix is now
+  recognised by its exact bytes with the default state page (arena base +
+  1 GiB - 4096) and followed to the program entry; any other entry, a prefix
+  for another state page and an altered prefix are checked as before, and a
+  prefix that jumps backwards is refused. Without this, a default-layout image
+  that starts with the runtime prefix would be refused for
+  `fn main(argc, argv)` and would pass the no-`main` backstop without being
+  checked.
+- **The release archive of every platform ships `std/`, `stdlib_manifest.txt` and
+  `SHA256SUMS`.** Besides the binary (`mindc`, `mindc.exe` in the zip), each
+  archive holds every file under `std/` of the tag with the same relative paths,
+  a copy of `examples/mindc_mind/testdata/stdlib_manifest.txt`, and `SHA256SUMS`:
+  the sha256 of every file under `std/` and of the manifest, sorted with
+  `LC_ALL=C`, one `<hash>  <path>` line per file on every platform (it does not
+  list the binary; the `<asset>.sha256` file covers the archive). The packer hashes
+  in binary mode and writes the `*` that mode prints before the path (Git Bash on
+  Windows prints it by default) as a second space. Recompute the file in the
+  unpacked directory with
+  `find std stdlib_manifest.txt -type f | LC_ALL=C sort | xargs sha256sum -t | diff - SHA256SUMS`.
+  The release job checks each archive before it uploads it
+  (`.github/actions/release-artifact-smoke`), and the `release_profile` job of
+  `ci.yml` runs the same checks on the two Linux legs before a tag exists:
+  - Every leg, G-b: `SHA256SUMS` lists exactly the shipped std files and the
+    manifest, and every hash matches (`sha256sum -c`, or `shasum -a 256 -c`). A
+    line may carry the binary-mode `*` marker; both forms verify.
+  - Every leg, G-c: the archived manifest is byte-equal to the tag's manifest, and
+    `std/` holds exactly the modules that manifest names.
+  - Every leg, G-a: every archived std file and the manifest is byte-equal to the
+    tag's file, and its whole byte sequence occurs in the binary of the same
+    archive (no `mindc` sub-command prints the embedded copy, so the binary is
+    searched). A found sequence proves the bytes are inside the binary, not which
+    table row carries them; `tests/std_bundled_module_table.rs` pins that every
+    std file has a row.
+  - The x86-64 Linux leg only, G-d: a native build (`--backend native`) of a small
+    program that imports `std.sha256`, with `MINDC_STD_DIR` set to the archived
+    `std/`, is byte-identical to the build that uses the embedded std, and the
+    program prints the SHA-256 of the empty message. Only the seed modules take
+    part in this build; an appended comment in each of the 21 seed modules of
+    the tree the gate was written against changed the file. The macOS, Linux
+    ARM64 and Windows legs run no rebuild check.
+  `installers.yml` now also packs a released binary in this layout and runs
+  `install.sh` and `install.ps1` on it, with the download replaced by a local copy:
+  each installer must install `mindc` (`mindc.exe`) and nothing else, and the
+  installed binary must print the release version. The installers unpack the whole
+  archive in a temporary directory and install only the binary; `std/` is not
+  installed. Its Windows leg also checks the `SHA256SUMS` of the zip that Git Bash
+  packed (one `<hash>  <path>` line per file, the files of the zip, `sha256sum -c`),
+  which is the `SHA256SUMS` part of G-b on Windows before a tag.
+- **`mindc verify --json` prints `scope`.** `"scope":"whole_program"` means every call
+  of the decoded IR body resolves to a function the body defines, a symbol the body
+  declares `extern`, or an intrinsic row; `"scope":"partial"` means at least one call
+  does not (for example a std function, or a function of another project module,
+  called by name: its body is not in the artifact). The check is by the bare name the
+  body keeps for a call, so a std or project function whose bare name equals a row of
+  the intrinsic table (it lists libc and POSIX names such as `readdir`, `connect`,
+  `fork` and `waitpid`) resolves and gives `whole_program` although its body is not in
+  the artifact. The attested report and the unattested report carry the key; the report
+  of an SSA fault (exit 1) does not, and the human-readable report does not print it.
+  The value relays the fact `verify` already computed for the `determinism` label
+  (`ir::reach::calls_outside_body`). It is derived from the decoded body on every run
+  and is not stored in the artifact, so no edit of the MAP can change it. Code behind
+  declared externs is not covered. Defined in RFC 0017 section 4.7 and tested in
+  `tests/verify_scope.rs`. The help text of `mindc verify` named
+  `mindc build --emit-evidence`, which the `build` sub-command does not accept; it now
+  names `mindc <file> --emit-evidence <path>`.
+- `release.yml`, the `release_profile` job of `ci.yml` and `installers.yml` pack
+  their archive with the new `.github/actions/package-release` action.
+  `scripts/check_release_gating.py` rule R9 fails when one of them builds an archive by
+  hand, when the action stops naming the std members, or when the smoke action loses a
+  gate.
+- Manual extraction (`docs/install.md`, the release notes): extract the archive
+  into an empty directory, because it now holds more than the binary.
+
+### Fixed
+
+- **Identity judge: a class accepts a difference only for the reason it names.** A std-site string key counts only when the program reaches that function; a libc row is newly admitted only when it states an exit and the image finishes with that exit under the row's environment; an extern refusal counts only when the program's row states its key and, where the row states one, its line and column; an allocator-prologue image counts only when the source frees at a loop position or its allocator row says reclaim.
+- **Identity judge: a literal that also frees, a free only in a while condition, and a std function reached only through a helper each have a planted case.**
+- **Pure-MIND native compiler source: `.addr` and `.len` of a String parameter in
+  a pointer cast.** `readlink(p.addr as *const u8, ..)` and `(s.len as *mut u8)`
+  compile and run where the same cast of an `i64` name does (they refused with the
+  generic `unsupported construct` text); `.cap`, another receiver and a shadowing
+  `let` keep their refusal. Nine `fcast_*` string rows.
+- **Native lane string rule: a `let` that shadows a String parameter ends the String binding.** A `let` of any type, or a loop binder, with the name of a String parameter makes that name a non-String in its scope: a field read of it (`s.addr`, also inside a pointer cast) is refused with `lane.source.struct` instead of reading the other struct's field or reaching the cast without a key. Rows `fcast_shadow_struct`, `shadow_struct_read`, `shadow_loop_read`.
+- **Native compiler: a program whose literals fill more than about 3 MiB of the read-only window builds on the bounded compiler.** `nb_rod_to_string` copied the rodata with one call frame per byte; on the 384 MiB stack of the bounded layout a chain of 50 fns with a 65,000-byte literal each ended in a segmentation fault while compiling. The copy is now a loop; every image is unchanged.
+- **std: `dns_free`, the `dns_resolve` free branches and the `std/net.mind` integer literals now pass the native check.** `dns_free` returns `0`, the two `freeaddrinfo` branches end in a value, and the 18 integer literals in `i32` slots of `net` extern calls carry `as i32`; behaviour is unchanged. `std.net` is a native seed module, so this edit moved the seed blob from `e3de1fce...` to `2101ce8f...`, which `stdlib_manifest.txt` pins.
+- **`std`: one declaration form per `extern` name, and `std.x25519` releases its
+  work buffers.**
+  - *One form per extern.* `std.iouring` declared `clock_gettime`, `setsockopt`,
+    `bind`, `getsockname`, `ioctl` and `open` with an `i64` where `std.dns`,
+    `std.net`, `std.tui` and `std.fs` declare the same C functions with pointer
+    types, and `std.procgroup_sys` declared `clock_gettime` with an `i64` (6 names
+    with two forms each, out of 28 names that more than one std module declares).
+    The native compiler binds one row per name and refuses the second
+    declaration of a name that has other types, so a native image that held both
+    modules could not compile the `clock_gettime` call of `std.dns`. Each of the 6
+    names now has one form that matches its C prototype; for `clock_gettime`
+    (`(i32, *mut u8) -> i32`) and `setsockopt` (`(i32, i32, i32, *const u8, i32)
+    -> i32`) it is also the row of the native compiler. Every call site that
+    passed an integer now casts it (`x as *mut u8`) and passes the same value as
+    before; `std.iouring`'s `open` takes the mode argument that `std.fs` already
+    passes (0 here, there is no `O_CREAT`). Two more shared names,
+    `sched_setaffinity` and `sched_getaffinity`, had one form but a wrong one:
+    `std.cpu_affinity_sys` and `std.iouring` both declared the `cpu_set_t` mask as
+    an `i64`. Both now declare `*const u8` (set) and `*mut u8` (get);
+    `std.cpu_affinity_sys` casts at its two call sites and `std.iouring` only
+    declares them. `stdlib_manifest_lint.py` has a new check that fails when two
+    std modules declare one extern name with other parameter or result types, and
+    when a shared name spells a parameter that its C prototype takes as a pointer
+    with an integer type (a table of 28 rows, one per shared name); its
+    `--self-test` has five mutants for the two checks.
+    `std.iouring` is a native seed module, so the seed blob hash in
+    `stdlib_manifest.txt` moved (`5ec57f4e...` to `e3de1fce...` with this
+    `std.iouring` edit, then to `2101ce8f...` with the `std.net` edit). The
+    manifest pins `2101ce8f...`. Native images
+    built from the corpus of admitted native programs and from the `std.iouring`
+    functions that compile natively keep their exit status and output and change
+    only in their last 32 bytes.
+  - *`std.x25519` releases its work buffers.* A call had 14 allocation sites (6,380
+    allocations) and released none: 1,261,008 bytes of allocator chunks per call. On the MLIR build
+    2000 chained calls grew the allocator's bytes in use by 2,522,016,080 and the
+    resident set by 2405 MiB (the vector driver peaked at about 3.6 GiB); after the
+    fix the same 2000 calls grow the allocator by 80 bytes and the resident set by
+    0.0 MiB (peak about 120 MiB). Every allocation site now has its release on the
+    one path the function has, and a buffer that held limbs derived from the
+    secret scalar is zeroed first. The results are unchanged (RFC 7748 vectors,
+    1 and 100 chained calls built with the native compiler). A compiler minted
+    from this tree reclaims on the native route too, with the source of
+    `std/x25519.mind` in the user unit (`import std.x25519` is refused on that
+    route: it is no native seed module): 1000 chained calls, each copying the
+    32-byte output into the next scalar, exit 0 and write
+    `684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51` (the RFC
+    7748 value after 1000 iterations). Over repeated runs the image's peak resident
+    set is 2056 to 2060 KiB (`/usr/bin/time -v`) and its VmHWM 2080 to 2088 KiB,
+    with transparent huge pages on. The allocator gate row `default/x25519_chain`
+    (`self_host_native_alloc_bounded_smoke.py`) builds that program, requires the
+    free-list runtime, exit 0 and the 32 bytes, and holds the image's VmHWM under
+    4096 KiB.
+
 ## [0.10.3] - 2026-11-18
 
 ### Added

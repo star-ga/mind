@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 
-The candidate native-lane-v1 profile (src/ir/native_lane_profile/mod.rs) admits
-three shapes the historical frozen profile refuses, because the downstream consumer
-programs need them and a compiler carrying the `nblane01` mark implements them:
-
-  * a store intrinsic's result read as a value (the `w_set` helper returns it):
-    the defined 0 that MLIR materialises and the marked compiler writes;
-  * full-width `i64 as f64` / `f64 as i64` (round-to-nearest-even / saturating);
-  * an `if` whose other branch returns, breaks or continues (lowering forwards
-    the reaching branch's value to the merge).
+The candidate native-lane-v1 profile (src/ir/native_lane_profile/mod.rs) admits three shapes the
+historical frozen profile refuses, because the downstream consumer programs need them and a compiler
+carrying the `nblane02` mark implements them: a store intrinsic's result read as a value (the
+`w_set` helper returns it: the defined 0 that MLIR materialises and the marked compiler writes);
+full-width `i64 as f64` / `f64 as i64` (round-to-nearest-even / saturating); an `if` whose other
+branch returns, breaks or continues (lowering forwards the reaching branch's value to the merge).
 
 Every case is built twice through `mindc build` -- `--backend native
 --native-profile bounded` with MINDC_NATIVE_ELF naming the marked compiler, and
@@ -21,8 +18,8 @@ result slot unwritten reads stale data and fails (the pre-fix frozen seed return
 because an explicit-layout image starts with the allocator runtime prefix, and
 the bridge must find the argc/argv binding at the program entry behind it.
 
-The smoke names its compiler explicitly and refuses to run without one; CI
-passes the committed bounded seed, which carries the mark since the reseed:
+The smoke names its compiler explicitly and refuses to run without one. The
+committed bounded seed carries the nblane02 mark; the CI step runs it as:
 
   MINDC_BIN=target/release/mindc python3 native_lane_value_shapes_smoke.py \\
       --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
@@ -34,11 +31,14 @@ NATIVE_ONLY_CASES are rows for native-only families (no MLIR twin): built
 through the stdin protocol (`direct_feed`) and/or the front door (`front_door`),
 then run and checked against the row (exit, stdout, objdump/readelf text, a named
 refusal: rc 3 and no ELF). Lanes add rows and `.mind` fixtures, never glue.
-Rehearsal modes (never a seed move): `--mint-stage2 OUT [--assert-fixed-point]`
+Rehearsal modes (never a seed move): `--mint-stage1 OUT` copies the stage1 that the frozen seed builds from this tree; `--mint-stage2 OUT [--assert-fixed-point]`
 mints frozen seed -> stage1 -> stage2 over the bundle WITH the compiler parts and
 prints its sha256; `--direct-compile PROG --compiler ELF --out ELF` feeds one
-program to a compiler ELF. `--only FAMILY` runs one row family. A
-`compiler_driver` row composes its fixture after main.mind + the parts (the minted
+program to a compiler ELF; `--identity-vs REF_ELF --compiler CAND_ELF [--self-mode]` feeds every
+program of the request corpus, of testdata/native_*/*.mind and of the exit rows here to both ELFs
+and requires the same image (or the same refusal) from each (`--self-mode`: MINDSLF to CAND only).
+`--string-rows ELF` (also `--string-rows-baseline`, `-mutant`, `-selftest`) runs the string-rule rows of
+tests/fixtures/native_lane_string_rows (README there); CI and preflight --full run it. `--only FAMILY` runs one row family. A `compiler_driver` row composes its fixture after main.mind + the parts (the minted
 unit) so it can call compiler fns; it compiles the whole compiler, so it runs only
 when `--only` names its family.
 
@@ -61,10 +61,11 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from _selfhost_sources import direct_compile, driver_compile, mint_stage2  # noqa: E402
-from _w8_native import cast_edges_oracle, cast_exprs_oracle, cast_words  # noqa: E402
+from _selfhost_sources import capture_bundle, direct_compile, driver_compile  # noqa: E402
+from _selfhost_identity import add_selfhost_args, selfhost_modes_main  # noqa: E402
+from _w8_native import cast_edges_oracle, cast_exprs_oracle, cast_words, extern_key_rows, mint_stage1  # noqa: E402
 FIXTURES = HERE / "testdata" / "native_lane_values"
-MARK = b"\x48\xb8nblane01"
+MARK = b"\x48\xb8nblane02"
 PRINT_MARK = b"\x48\xb8nbprint1"  # nb_print.mind; without it the native leg must refuse print
 # Used only when the variable is unset AND this path is an executable file. The
 # LLVM 23 leg installs no LLVM 20, so there the build finds the tools on PATH.
@@ -171,16 +172,17 @@ LICM_CASES = [("licm_basic", 131), ("licm_nested", 33), ("licm_chain", 242), ("l
               ("licm_float", 34), ("licm_div_zero", 80)]
 EXIT_CASES += [(f"{name}_{tag}", pre + (FIXTURES / f"{name}.mind").read_text(), want)
                for name, want in LICM_CASES for tag, pre in (("off", ""), ("on", LICM_DIRECTIVE))]
-# Native-only rows. Keys (all optional but fixture/family): fixture (path or
-# source text), family, expect_exit, expect_stdout (bytes), objdump_required /
-# objdump_forbidden / readelf_required / readelf_forbidden (substrings of
-# `objdump -D -b binary -m i386:x86-64` / `readelf -W -l -d` text), runner_prefix
-# (e.g. qemu-x86_64 -cpu Westmere), env, fake_driver (build the fake libcuda and
-# export LD_LIBRARY_PATH), timeout_s, stderr_required, refusal (named construct
-# the compiler prints: rc 3, no ELF), direct_feed, front_door, compiler_driver
-# (fixture is a driver for the composed compiler unit), mlir_expect, mark (a
-# capability mark; a compiler without it must refuse the fixture), encoder_table +
-# parts (the emitter's byte table, checked through the compiled parts; see below).
+# Loop-carried copies (`b = a; a = n0;` in a while loop): the native images before 0.10.3 returned wrong values; each fixture exits 42 only on the exact value.
+EXIT_CASES += [(n, (FIXTURES / f"{n}.mind").read_text(), 42) for n in ("loop_copy_bare", "loop_copy_call", "loop_copy_mut_temp", "loop_copy_chain4", "loop_copy_round8")]
+# Native-only rows. Keys (all optional but fixture/family): fixture (path or source text), family,
+# expect_exit, expect_stdout (bytes), objdump_required / objdump_forbidden / readelf_required /
+# readelf_forbidden (substrings of `objdump -D -b binary -m i386:x86-64` / `readelf -W -l -d` text),
+# runner_prefix (e.g. qemu-x86_64 -cpu Westmere), env, fake_driver (build the fake libcuda and export
+# LD_LIBRARY_PATH), timeout_s, stderr_required, refusal (named construct the compiler prints: rc 3, no
+# ELF), direct_feed, front_door (True: native front door; "mlir": `--backend mlir`), compiler_driver
+# (fixture is a driver for the composed compiler unit), mlir_expect, mark (a capability mark: a compiler
+# without it must refuse the fixture), pending_seed (no seed carries the mark yet: left out of the default
+# run), encoder_table + parts (the emitter's byte table, checked through the compiled parts; see below).
 BANK_ACC8 = bytes.fromhex(  # bank_acc8 / _layer_a / _scalar: the 8 x 32 accumulator bytes
     "9c8e009863ffe67daae54b1a710a7d36b89488eb7f8da524c65bb2fc8d481118d4fa8a169bfbbe13e2310a9ea966ab11"
     "f0c04d86b7490126fe6709ecc564c9cd0ce77636d3771a151afec5f9e142c920286d0c37ef85988736f4b5f5fd00e9c6"
@@ -228,7 +230,7 @@ EPI_FORMS = bytes.fromhex(  # bank_epi_forms / bank_epi_scalar: the six R-02e ro
 # bank_epi_forms: every epilogue op it emits, as objdump decodes it.
 EPI_FORMS_ASM = ["vpmuludq %ymm8,%ymm7,%ymm0", "vpand  %ymm7,%ymm8,%ymm14", "vpor   %ymm8,%ymm7,%ymm0", "vpcmpgtq %ymm8,%ymm7,%ymm14", "vpcmpgtq %ymm7,%ymm8,%ymm0", "vpsrlq %xmm14,%ymm7,%ymm0", "vpsllq %xmm14,%ymm8,%ymm0", "vpsllq %xmm14,%ymm8,%ymm7", "vpsllq %xmm14,%ymm8,%ymm8"]
 BANK_CANARY = bytes.fromhex("fff6c2ffffffffff4239d2ffffffffff857be1ffffffffffc8bdf0ffffffffff50f8540100000000")  # bank_canary / _scalar
-NATIVE_ONLY_CASES = [
+NATIVE_ONLY_CASES = ast.literal_eval((HERE / "testdata/native_libc_rows/ROWS.txt").read_text()) + extern_key_rows(capture_bundle(REPO)) + [
     {"id": "e1_direct_feed_control", "family": "control", "fixture": "fn main() -> i64 { 7 }",
      "direct_feed": True, "front_door": True, "expect_exit": 7,
      "objdump_required": ["syscall"], "readelf_required": ["LOAD"]},
@@ -291,8 +293,8 @@ NATIVE_ONLY_CASES = [
      "direct_feed": True, "refusal": "ymm.register_out_of_range"},
     {"id": "bank_twin_epi_reg15", "family": "ymm_bank", "mark": "nbbank01", "fixture": "testdata/native_avx2/bank_twin_epi_reg15.mind",
      "direct_feed": True, "expect_exit": 4},
-    # native_opt: the line-1 directive sets bit 3 of the flags word (nb_opt_level.mind) and moves no
-    # byte yet; bit 0 still captures argv beside it; the attribute form is refused on both fences.
+    # native_opt: the line-1 directive sets bit 3 of the flags word (nb_opt_level.mind, a compiler part: its
+    # case row goes in self mode) and moves no byte yet; bit 0 still captures argv; the attribute form is refused.
     {"id": "opt_level_recognizer", "family": "native_opt", "direct_feed": True, "expect_exit": 0,
      "fixture": (HERE / "nb_opt_level.mind").read_text() + (FIXTURES / "nb_opt_level_cases.mind").read_text()},
     {"id": "opt_full_argc", "family": "native_opt", "direct_feed": True, "expect_exit": 5,
@@ -613,6 +615,8 @@ def _encoder_table(row: dict, compiler: str, case_dir: pathlib.Path) -> list[str
     prog = case_dir / "table.mind"
     prog.write_bytes(b"\n".join((HERE / p).read_bytes() for p in (*row["parts"], row["fixture"])))
     exe = case_dir / "table.elf"
+    # The unit is compiler source (four parts of the compiler and a driver that calls their fns): direct_compile sends
+    # it in self mode (compiler_feed), like every other compiler source. The lane rules judge user programs.
     r = direct_compile(prog, pathlib.Path(compiler), exe)
     if not exe.exists():
         return [f"table driver: no ELF rc={r.returncode}"]
@@ -683,19 +687,19 @@ def run_native_only(rows: list[dict], compiler: str, mindc: str, env: dict, tmp:
         if row.get("front_door"):
             ran += 1
             exe = case_dir / "front"
-            rc, err = _build(mindc, source, exe, True, env)
+            rc, err = _build(mindc, source, exe, row["front_door"] != "mlir", env)
             if "stderr_required" in row and rc != 0:
                 ok = row["stderr_required"] in err and not exe.exists()
                 seen.append("refused" if ok else f"front rc={rc}")
             else:
-                seen += [f"front: {b}" for b in (_check_elf(row, exe, tmp) if rc == 0 else [f"build={rc}"])]
+                seen += [f"front: {b}" for b in (_check_elf(row, exe, tmp) if rc == 0 else [f"build={rc}: {err.strip()[-200:]}"])]
         if row.get("compiler_driver"):
             ran += 1
             exe = case_dir / "composed"
             r = driver_compile("examples/mindc_mind/" + src, pathlib.Path(compiler), exe)
             seen += [f"composed: {b}" for b in (_check_elf(row, exe, tmp) if exe.exists()
                                                  else [f"no ELF rc={r.returncode} {r.stderr[-200:]!r}"])]
-        bad = [x for x in seen if x != "refused"] if ran else ["no leg ran"]
+        bad = [x for x in seen if x != "refused"] if ran else [row.get("row_error", "no leg ran")]
         fail += bool(bad)
         print(f"  {'FAIL' if bad else 'PASS'}  {row['id']} [{row['family']}]: {'; '.join(bad) or 'ok'}")
     return fail, skipped
@@ -704,25 +708,15 @@ def run_native_only(rows: list[dict], compiler: str, mindc: str, env: dict, tmp:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--compiler", default=os.environ.get("MINDC_NATIVE_LANE_ELF"))
-    ap.add_argument("--mint-stage2", metavar="OUT")
-    ap.add_argument("--assert-fixed-point", action="store_true")
-    ap.add_argument("--direct-compile", metavar="PROG")
-    ap.add_argument("--out")
+    ap.add_argument("--mint-stage1", metavar="OUT")
     ap.add_argument("--only", metavar="FAMILY")
+    add_selfhost_args(ap)
     args = ap.parse_args()
-    if args.mint_stage2:
-        digest = mint_stage2(pathlib.Path(args.mint_stage2), assert_fixed_point=args.assert_fixed_point)
-        print(f"MINT stage2 {args.mint_stage2} sha256={digest}"
-              + (" (stage2 == stage3)" if args.assert_fixed_point else ""))
-        return 0
-    if args.direct_compile:
-        if not (args.compiler and args.out):
-            print("BLOCKED: --direct-compile needs --compiler ELF and --out ELF")
-            return 2
-        r = direct_compile(pathlib.Path(args.direct_compile), pathlib.Path(args.compiler), pathlib.Path(args.out))
-        sys.stderr.write(r.stderr.decode(errors="replace"))
-        print(f"DIRECT rc={r.returncode} out={'written' if pathlib.Path(args.out).exists() else 'none'}")
-        return r.returncode
+    if args.mint_stage1:
+        return mint_stage1(args.mint_stage1)
+    selfhost = selfhost_modes_main(args, [(c, s) for c, s, _ in EXIT_CASES] + [ARGV_CASE[:2]])
+    if selfhost is not None:
+        return selfhost
     # Absolute before use: `_build` runs mindc with the case directory as cwd, so
     # a relative MINDC_BIN or --compiler (the bridge reads MINDC_NATIVE_ELF from
     # there) would name nothing and the native leg would be refused, not tested.
@@ -758,7 +752,7 @@ def main() -> int:
     printing = PRINT_MARK in pathlib.Path(args.compiler).read_bytes()
     cases += [(f.stem, f, [], *ast.literal_eval(f.read_text().split("// expect: ")[1].split("\n")[0])) for f in sorted(FIXTURES.glob("print_*.mind"))]
     rows = [r for r in NATIVE_ONLY_CASES if args.only == r["family"]
-            or (args.only is None and not r.get("compiler_driver"))]
+            or (args.only is None and not r.get("compiler_driver") and not r.get("pending_seed"))]
     if args.only not in (None, "values"):
         cases = []
     ran = fail = 0

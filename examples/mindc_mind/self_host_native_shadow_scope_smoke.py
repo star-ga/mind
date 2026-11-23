@@ -82,7 +82,7 @@ HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
 from _exec_retry import check_exec_retry, exec_run  # noqa: E402
 from _stdlib_manifest import seed_blob  # noqa: E402
-from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import compiler_library, self_mode_image  # noqa: E402
 from _shadow_scope_lang import (  # noqa: E402
     Gen, alpha_rename, has_nested_shadow, model_exit, render)
 
@@ -103,7 +103,7 @@ def build_stage1(cache: pathlib.Path) -> pathlib.Path:
     out = cache / f"stage1_{key}.elf"
     if out.exists():
         return out
-    r = exec_run([str(FROZEN_SEED)], input=img, capture_output=True, timeout=1800)
+    r = exec_run([str(FROZEN_SEED)], self_mode_image(img, FROZEN_SEED), capture_output=True, timeout=1800)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise RuntimeError(f"frozen seed failed to build stage1: rc={r.returncode}")
     tmp = cache / f".{key}.{os.getpid()}"
@@ -118,7 +118,7 @@ def native_exit(stage1: pathlib.Path, src: str, wd: pathlib.Path, name: str):
     blob = seed_blob()
     combined = blob + src.encode()
     img = struct.pack("<qq", len(blob), len(combined)) + combined
-    r = exec_run([str(stage1)], input=img, capture_output=True, timeout=600)
+    r = exec_run([str(stage1)], img, capture_output=True, timeout=600)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         if r.returncode < 0:
             return "crash", f"stage1 signal {r.returncode}"

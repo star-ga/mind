@@ -1,0 +1,14 @@
+// mind: native_alloc = bump
+// A free loop with the opt-out directive: BUMP, and the image equals the base compiler's. 100 x 1000 B fit the bump arena. Exit status 33.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < 100 {
+        let p: i64 = __mind_alloc(1000);
+        __mind_store_i64(p, i);
+        acc = acc + __mind_load_i64(p) - i;
+        let z: i64 = __mind_free(p);
+        i = i + 1;
+    }
+    return acc + 33;
+}

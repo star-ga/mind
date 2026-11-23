@@ -49,7 +49,7 @@ runs:
         apt_get() { sudo apt-get "${APT_OPTS[@]}" "$@"; }
         san() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'; }
         candidate() {
-          apt-cache policy "$1" | awk '/Candidate:/ {print $2; exit}'
+          apt-cache policy "$1" | awk '/Candidate:/ && !seen {print $2; seen=1}'
         }
         setup_llvm23_repo() {
           if ! command -v gpg >/dev/null 2>&1; then

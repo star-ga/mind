@@ -1,0 +1,31 @@
+# Planted defects of the runner self-test: in a scratch copy of this directory, old is replaced by new (first occurrence) in file, and loading must be rejected with a message that holds want.
+# In old and new: \t is a tab, \n a line feed, and <id> <key> <line> (a refuse row of the rows file), <row> (that row) <rowc> (that row with status carrier), <adm> (an admit row id),
+# <arm> <arm2> (the first two mutant arms) and <r0> (the first row of the first arm) stand for the values of the shipped files.
+name	file	old	new	want
+unknown key	rows.tsv	<id>\trefuse\t<key>	<id>\trefuse\tlane.string.nonesuch	unknown key
+refuse without key	rows.tsv	<id>\trefuse\t<key>	<id>\trefuse\t	needs a key
+unknown status	rows.tsv	\tcarrier\t	\tmaybe\t	status
+carrier status without a record	rows.tsv	<row>	<rowc>	@carrier record
+profile outside both and default	rows.tsv	\tboth\trun\t	\tsometimes\trun\t	profile
+key on an admit row	rows.tsv	<adm>\tadmit\t\t	<adm>\tadmit\tlane.string.cap\t	only a refuse or by_run row names a key
+line that is not a number	rows.tsv	<id>\trefuse\t<key>\t<line>\t	<id>\trefuse\t<key>\tx\t	is not a number
+col without a line	rows.tsv	<key>\t<line>\t\t	<key>\t\t7\t	col needs line
+line on an admit row	rows.tsv	<adm>\tadmit\t\t\t	<adm>\tadmit\t\t5\t	belong to a refuse row
+exit on a refuse row	rows.tsv	<key>\t<line>\t\t\t	<key>\t<line>\t\t5\t	exit belongs to an admit row
+duplicated id	rows.tsv	<row>\n	<row>\n<row>\n	malformed or duplicated
+malformed id	rows.tsv	<id>\trefuse	Bad-Id\trefuse	malformed or duplicated
+header	rows.tsv	id\tverdict	id\tverdictx	header must be
+cell count	rows.tsv	<row>	<row>\textra	cells, want
+bad key in keys.tsv	keys.tsv	<key>\t	Bad_Key\t	keys.tsv
+repeated arm	mutants.tsv	\n<arm2>\t	\n<arm>\t	mutants.tsv
+unknown row in an arm	mutants.tsv	<r0>	<r0>,no_such_row	mutants.tsv
+repeated row in an arm	mutants.tsv	<r0>	<r0>,<r0>	mutants.tsv
+orphan program	programs.txt	\n=== 	\n=== orphan | text\nfn main() -> i64 { return 0; }\n=== 	without a row
+missing program	programs.txt	=== <id> | 	=== <id>_x | 	no program record
+unknown form	programs.txt	=== <id> | text	=== <id> | base64	unknown form
+record twice	programs.txt	=== <id> | text	=== <id> | text\nfn main() -> i64 { return 0; }\n=== <id> | text	duplicate record
+beyond record of a refuse row	programs.txt	=== paren_recv_ptr_ceiling_bare@beyond |	=== <id>@beyond |	@beyond record belongs
+README count of host rows	README.md	`host path, not run: 	`host path, not run: 9	README.md
+a row key moved, README unchanged	rows.tsv	<id>\trefuse\t<key>\t	<id>\trefuse\tlane.string.literal_capacity\t	README.md
+carrier record on a host row	programs.txt	=== s5_extern_arg_host_bounded | text	=== s5_extern_arg_host@carrier | carrier\nfn zz_c() -> i64 { return 0; }\n=== s5_extern_arg_host_bounded | text	@carrier record
+carrier record on an outside row	programs.txt	=== c5_sibling_scope | text	=== c4_const_read@carrier | carrier\nfn zz_c() -> i64 { return 0; }\n=== c5_sibling_scope | text	@carrier record

@@ -1,0 +1,43 @@
+// readlink on the C ABI path: a positive 64-bit length, the third argument as a
+// distinct 64-bit cap (5 truncates the text to 5 bytes), and the 64-bit error
+// result -1 for a path whose parent does not exist (errno 2).
+extern "C" {
+    unsafe fn readlink(path: *const u8, buf: *mut u8, cap: i64) -> i64;
+    unsafe fn __errno_location() -> *mut i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let path: i64 = __mind_alloc(16);
+    // "/proc/self/exe"
+    __mind_store_i64(path, 7310238724270485551);
+    __mind_store_i64(path + 8, 111567768086124);
+    let buf: i64 = __mind_alloc(4096);
+    let n: i64 = readlink(path as *const u8, buf as *mut u8, 4096);
+    if n <= 0 {
+        return 1;
+    }
+    if n >= 4096 {
+        return 2;
+    }
+    if __mind_load_i8(buf) != 47 {
+        return 3;
+    }
+    let cut: i64 = readlink(path as *const u8, buf as *mut u8, 5);
+    if cut != 5 {
+        return 4;
+    }
+    let miss: i64 = __mind_alloc(24);
+    // "/proc/nodir_mind/f"
+    __mind_store_i64(miss, 8029407289766211631);
+    __mind_store_i64(miss + 8, 7236837569704651108);
+    __mind_store_i64(miss + 16, 26159);
+    let bad: i64 = readlink(miss as *const u8, buf as *mut u8, 4096);
+    if bad != minus_one {
+        return 5;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 2 {
+        return 6;
+    }
+    return 42;
+}

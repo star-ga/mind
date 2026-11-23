@@ -47,7 +47,7 @@ pub(super) fn default_artifact_path(
     }
 }
 
-/// The native backend's artifact path with no `--out` (ruling 1.9): for a
+/// The native backend's artifact path with no `--out`: for a
 /// governed build (`governed` = root and manifest), the MLIR path function
 /// above (`target/<profile>/<name>`), so a native build replaces the file an
 /// MLIR build wrote there and a stale binary is never the one that runs; with

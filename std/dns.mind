@@ -263,8 +263,9 @@ fn dns_new_record() -> i64 {
 
 // dns_free — release a record returned by dns_resolve (success or failure).
 // The record must not be read afterwards.
-pub fn dns_free(r: i64) {
-    __mind_free(r)
+pub fn dns_free(r: i64) -> i64 {
+    __mind_free(r);
+    0
 }
 
 fn dns_fail(r: i64, code: i64) -> i64 {
@@ -488,7 +489,8 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
     __mind_free(slot);
     if rc != 0 {
         if head != 0 {
-            freeaddrinfo(head as *mut u8)
+            freeaddrinfo(head as *mut u8);
+            0
         }
         return dns_fail(r, dns_map_gai(rc));
     }
@@ -510,7 +512,8 @@ pub fn dns_resolve(name_addr: i64, name_len: i64) -> i64 {
         }
     }
     if head != 0 {
-        freeaddrinfo(head as *mut u8)
+        freeaddrinfo(head as *mut u8);
+        0
     }
     if st != dns_ok() {
         return dns_fail(r, st);

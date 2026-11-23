@@ -1310,7 +1310,7 @@ impl IRModule {
         ValueId(id)
     }
 
-    /// Step D (Amendment 1) — the canonical aggregate-type lookup: the SINGLE
+    /// Step D — the canonical aggregate-type lookup: the SINGLE
     /// source of aggregate-type truth for a ValueId. Two contributors:
     ///   1. an explicit `value_types` entry (dynamic / mutable / literal
     ///      aggregates — populated from S3/S4), and/or

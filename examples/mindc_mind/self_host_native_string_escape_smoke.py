@@ -11,6 +11,7 @@ HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE));sys.dont_write_bytecode=True
 from self_host_native_cf_smoke import v2_header,image,STD_MODULES,BLOB,std_blob
 from native_dynamic_writer_check import encoder
+from _selfhost_sources import self_mode_image, start_child
 
 def sha(data): return hashlib.sha256(data).hexdigest()
 
@@ -125,7 +126,7 @@ def main():
  env['MIND_STDLIB_PATH']=str(std)
  def run(name,argv,data=None):
   intact()
-  before=time.monotonic();q=subprocess.run(list(map(str,argv)),input=data,capture_output=True,cwd=out,timeout=600,preexec_fn=limits,env=env)
+  before=time.monotonic();q=start_child(list(map(str,argv)),data,capture_output=True,cwd=out,timeout=600,preexec_fn=limits,env=env)
   (out/(name+'.stdout')).write_bytes(q.stdout);(out/(name+'.stderr')).write_bytes(q.stderr)
   (out/(name+'.json')).write_text(json.dumps(dict(argv=list(map(str,argv)),exit=q.returncode,elapsed=time.monotonic()-before,stdin_sha256=None if data is None else sha(data),stdout_sha256=sha(q.stdout),stderr_sha256=sha(q.stderr)),indent=2)+'\n')
   intact()
@@ -156,7 +157,10 @@ def main():
  text=(HERE/'main.mind').read_text()+(HERE/'nb_emit_core.mind').read_text()+(HERE/'nb_float_lit.mind').read_text()
  names=['load_byte','char_escape_value','string_escape_value','nb_rodata_addr','nb_arena_addr','nb_string_step','nb_string_step_good','nb_string_step_advance','nb_string_decoded_length','nb_string_decoded_byte','nb_rod_room','nb_rod_decoded_copy']
  src=('\n'.join(encoder(text,n) for n in names)+'\n').encode()+(HERE/'string_escape_driver.mind').read_bytes()
- f,q=build('helpers',src,raw=True);assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF')
+ f=out/'helpers.mind';f.write_bytes(src)
+ packet=v2_header()+struct.pack('<2q',0,len(src))+src
+ (out/'helpers.packet').write_bytes(packet)
+ q=run('helpers-native-build',[args.native],self_mode_image(packet,args.native));assert q.returncode==0 and not q.stderr and q.stdout.startswith(b'\x7fELF')
  ne=out/'helpers.native.elf';ne.write_bytes(q.stdout);ne.chmod(0o500)
  me=out/'helpers.mlir.elf';q=run('helpers-mlir-build',[args.mlir,'build',f,'--backend','mlir','--release','--out',me]);assert q.returncode==0
  for r in helper_cases():

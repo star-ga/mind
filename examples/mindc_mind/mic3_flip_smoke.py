@@ -13,8 +13,10 @@ compare the emitted mic@3 bytes against mindc --emit-mic3 on the same input.
 Both legs get the same bytes. The Rust leg cannot take the unit with its part
 imports: standalone it refuses a local import (E2003), and as a Mind.toml project
 it adds the project struct registry (qualified std/crate structs) to the module.
-Eight additive record-binding regressions retain this original whole-module
+Forty-five additive record-binding regressions retain this original whole-module
 comparison and exercise descriptor-slot versus resolved-SSA-ID references.
+Seven refusal pins hold else forms that the reference accepts and this emitter
+refuses; a pin is red when the emitter admits its form.
 
 Verdicts:
   PASS  — nfn(main.mind) == mindc --emit-mic3 main.mind, byte-identical
@@ -114,6 +116,106 @@ RECORD_BINDING_CASES = [
      'struct Other { v:i64 }\npub fn probe(p:i64)->Ghost{let a:i64=p+2;Ghost{x:Inner{v:a},y:a}}\n'),
     ('array-let-record',
      'struct Other { v:i64 }\npub fn probe(p:i64)->i64{let a:i64=p+2;let xs=[Ghost{x:a}];0}\n'),
+    # An inner if assigns a let-mut of a block that returns: the later read is the merge id.
+    ('returning-block-merge-read',
+     'pub fn probe(w:i64,a:i64)->i64{if w!=0{let mut site:i64=a;if w==5{site=7;}return site+1;}a}\n'),
+    # A returning block rebinds an outer name: the merge after it keeps the pre-block id.
+    ('outer-name-after-returning-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}return s+1;}s}\n'),
+    ('outer-name-after-returning-assign',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=7;return s+1;}s}\n'),
+    ('outer-name-after-returning-while',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{while s<9{s=s+1;}return s+1;}s}\n'),
+    ('outer-names-after-returning-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{if w==5{s=7;t=8;}return s+t;}s+t}\n'),
+    # A returning block writes an outer name twice (a prefix assign, a while or a segment, then a later
+    # segment): the reference merges by name, so the block emits ONE binding + merge for it.
+    ('returning-assign-then-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}return s;}s}\n'),
+    ('returning-assign-then-if-noread',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}return s;}0}\n'),
+    ('returning-assign-then-if-ret0',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}return 0;}s}\n'),
+    ('returning-mul-assign-then-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s*2;if w==5{s=7;}return s;}s*3}\n'),
+    ('returning-two-ifs',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}if w==6{s=8;}return s;}s}\n'),
+    ('returning-assign-two-ifs',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}if w==6{s=8;}return s;}s}\n'),
+    ('returning-if-assign-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}s=s+1;if w==6{s=8;}return s;}s}\n'),
+    ('returning-two-names-then-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{s=s+1;t=t+2;if w==5{s=7;t=9;}return s+t;}s+t}\n'),
+    ('returning-two-names-order',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{t=t+2;s=s+1;if w==5{s=7;}return s+t;}s+t}\n'),
+    ('returning-two-names-cross',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{s=s+1;if w==5{t=9;}if w==6{s=7;}return s+t;}s+t}\n'),
+    ('returning-while-then-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{while s<9{s=s+1;}if w==5{s=7;}return s;}s}\n'),
+    ('returning-assign-if-while',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}while s<9{s=s+1;}return s;}s}\n'),
+    ('returning-assign-while',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;while s<9{s=s+1;}return s;}s}\n'),
+    ('returning-if-then-while',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}while s<9{s=s+1;}return s;}s}\n'),
+    ('returning-nested-returning-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;return s;}return s;}s}\n'),
+    ('returning-inner-returning-block',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=s+1;if w==6{s=7;}return s;}return s+1;}s}\n'),
+    ('returning-local-let-then-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{let mut q:i64=1;q=q+1;if w==5{q=7;}return q;}s}\n'),
+    # An outer write made BEFORE a later shadowing `let` of the same name in a returning block still
+    # escapes (one binding + merge); writes after the shadow are local. The last three are controls.
+    ('returning-assign-then-shadow',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let s:i64=99;return s;}s}\n'),
+    ('returning-assign-seg-then-shadow',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}let s:i64=99;return s;}s}\n'),
+    ('returning-seg-then-shadow',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}let s:i64=99;return s;}s}\n'),
+    ('returning-while-then-shadow',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{while s<9{s=s+1;}let s:i64=99;return s;}s}\n'),
+    ('returning-assign-shadow-assign',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let mut s:i64=3;s=s+2;return s;}s}\n'),
+    ('returning-assign-shadow-seg',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let mut s:i64=3;if w==5{s=7;}return s;}s}\n'),
+    ('returning-assign-shadow-reads-outer',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let s:i64=s+5;return s;}s}\n'),
+    ('returning-two-names-shadow-s',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{s=s+1;t=t+2;let s:i64=99;return s+t;}s+t}\n'),
+    ('returning-two-names-shadow-t-seg',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{s=s+1;t=t+2;let t:i64=99;if w==5{s=7;}return s+t;}s+t}\n'),
+    ('returning-assign-shadow-while',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let mut s:i64=3;while s<9{s=s+1;}return s;}s}\n'),
+    ('returning-assign-shadow-twice',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let s:i64=99;let s:i64=s+1;return s;}s}\n'),
+    ('returning-assign-shadow-ret0',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;let s:i64=99;return 0;}s}\n'),
+    ('returning-shadow-only',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{let s:i64=99;return s;}s}\n'),
+    ('returning-shadow-then-assign',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{let mut s:i64=99;s=s+1;return s;}s}\n'),
+    ('returning-shadow-then-seg',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{let mut s:i64=99;if w==5{s=7;}return s;}s}\n'),
+]
+
+# Else forms in or around a returning block: the reference accepts each one and the self-host emitter
+# REFUSES it (no bytes, fail closed). Each pin is red when the emitter admits the form: an admitted
+# form must then prove byte equality as a row of RECORD_BINDING_CASES.
+RECORD_BINDING_REFUSED_CASES = [
+    ('returning-inner-if-else',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}else{s=8;}return s;}s}\n'),
+    ('returning-if-else-assign-if',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}else{s=8;}s=s+1;if w==6{s=9;}return s;}s}\n'),
+    ('returning-then-else-falls',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}return s;}else{s=s+2;}s}\n'),
+    ('falling-then-returning-else',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w==0{s=s+2;}else{s=s+1;if w==5{s=7;}return s;}s}\n'),
+    ('returning-inner-if-else-twice',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{if w==5{s=7;}else{s=8;}if w==6{s=1;}else{s=2;}return s;}s}\n'),
+    ('returning-two-names-inner-else',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;let mut t:i64=w;if w!=0{s=s+1;t=t+1;if w==5{t=7;}else{s=8;}return s+t;}s+t}\n'),
+    ('falling-assign-if-then-else',
+     'pub fn probe(w:i64,a:i64)->i64{let mut s:i64=a;if w!=0{s=s+1;if w==5{s=7;}}else{s=s+2;}s}\n'),
 ]
 
 
@@ -137,6 +239,27 @@ def record_binding_regressions():
         print(f"FAIL: record binding regressions {len(RECORD_BINDING_CASES) - failures}/{len(RECORD_BINDING_CASES)}")
         return 1
     print(f"PASS: record binding regressions {len(RECORD_BINDING_CASES)}/{len(RECORD_BINDING_CASES)} byte-identical")
+    return 0
+
+
+def record_binding_refusal_pins():
+    failures = 0
+    for label, source in RECORD_BINDING_REFUSED_CASES:
+        oracle = oracle_mic3(source)
+        try:
+            emitted = nfn_mic3(source)
+        except Exception as exc:  # noqa: BLE001 — a crash is not a refusal
+            print(f"FAIL: refusal pin {label}: driver raised {exc!r}")
+            failures += 1
+            continue
+        if not oracle or emitted:
+            verdict = "equal: move it to RECORD_BINDING_CASES" if emitted and emitted == oracle else "bytes differ"
+            print(f"FAIL: refusal pin {label}: nfn={len(emitted)} B oracle={len(oracle or b'')} B ({verdict})")
+            failures += 1
+    if failures:
+        print(f"FAIL: refusal pins {len(RECORD_BINDING_REFUSED_CASES) - failures}/{len(RECORD_BINDING_REFUSED_CASES)}")
+        return 1
+    print(f"PASS: refusal pins {len(RECORD_BINDING_REFUSED_CASES)}/{len(RECORD_BINDING_REFUSED_CASES)} refused, reference accepts")
     return 0
 
 
@@ -176,7 +299,8 @@ def main():
             f"PASS: whole-module mic@3 FLIP byte-identical "
             f"({len(nfn)} B) — nfn(main.mind) == mindc --emit-mic3"
         )
-        return record_binding_regressions()
+        rows_rc = record_binding_regressions()
+        return record_binding_refusal_pins() or rows_rc
 
     n = min(len(nfn), len(oracle))
     di = next((i for i in range(n) if nfn[i] != oracle[i]), n)

@@ -40,6 +40,7 @@ def main():
             shutil.copyfile(HERE / name, out / name)
         shutil.copyfile(HERE / 'testdata/stdlib_manifest.txt', out / 'stdlib_manifest.txt')
         shutil.copyfile(Path(__file__), out / 'transport.py')
+        shutil.copyfile(HERE / '_selfhost_sources.py', out / 'start_child.py')
         # Capture unchanged small encoders verbatim, before any execution.
         import re
         whole = (out / 'main.mind').read_text() + (out / 'nb_emit_core.mind').read_text()
@@ -106,10 +107,15 @@ def main():
                 or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
             p.error('CAPTURE_IDENTITY')
         seen.add(name)
-    if not {'fixtures/run.sh', 'transport.py'}.issubset(seen):
+    if not {'fixtures/run.sh', 'transport.py', 'start_child.py'}.issubset(seen):
         p.error('CAPTURE_IDENTITY')
     if (out / 'transport.py').read_bytes() != Path(__file__).read_bytes():
         p.error('CAPTURE_IDENTITY')
+    if (out / 'start_child.py').read_bytes() != (HERE / '_selfhost_sources.py').read_bytes():
+        p.error('CAPTURE_IDENTITY')
+    from _selfhost_sources import bounded_native_builds  # the one stdin start helper builds with the seed
+    if not bounded_native_builds(out, a.seed, a.seed_sha256, sorted(n for n in seen if n.endswith('/input.packet'))):
+        p.error('SEED_IDENTITY')
     os.execv('/bin/bash', ['bash', str(out / 'fixtures/run.sh'), str(out),
                           str(a.seed.resolve()), a.seed_sha256,
                           str(a.mindc.resolve()), a.mindc_sha256])

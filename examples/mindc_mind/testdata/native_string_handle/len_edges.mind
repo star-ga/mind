@@ -1,0 +1,7 @@
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("") + len_of("a") + len_of("1234567") + len_of("12345678") + len_of("123456789") + len_of("123456789abcdef") + len_of("123456789abcdefg") + len_of("123456789abcdefgh");
+}

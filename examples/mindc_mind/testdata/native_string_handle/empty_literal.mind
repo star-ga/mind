@@ -1,0 +1,7 @@
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("");
+}

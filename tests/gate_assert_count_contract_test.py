@@ -29,6 +29,8 @@ Exit: 0 = every case passed, 1 = a case failed (prints the offending case).
 """
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -40,6 +42,9 @@ RUNNER = REPO / "scripts" / "run_gate.py"
 
 sys.path.insert(0, str(REPO / "examples" / "mindc_mind"))
 import smoke_wiring_lint  # noqa: E402
+
+sys.path.insert(1, str(REPO / "tests"))
+import _gate_floor_cases  # noqa: E402
 
 FAILURES: list[str] = []
 
@@ -343,6 +348,12 @@ def case_loop_gate_is_wired_with_both_legs_required() -> None:
     check("loop-gate call sites found", checked >= 2, True)
 
 
+def case_gate_floor_is_the_stated_verdict_count() -> None:
+    """The floor cases live in tests/_gate_floor_cases.py; each takes this `check`."""
+    _gate_floor_cases.case_flip_gate_floor_counts_every_leg(check)
+    _gate_floor_cases.case_declared_verdict_count_is_the_call_site_floor(check)
+
+
 def case_sweep_handle_is_a_whole_name() -> None:
     """The vacuity sweep reads a gate as compiler-dependent when its code names a
     toolchain handle. The handle `_selfhost_so` (the `.so` resolver module) was a
@@ -373,6 +384,84 @@ def case_sweep_handle_is_a_whole_name() -> None:
                       (smoke + "self_host_native_process_smoke.py", True)):
         check(f"sweep handle: {rel} is compiler-dependent",
               run_gate.compiler_dependent(rel), want)
+
+
+# A gate that takes its handle names from the runner's tuples types none, so the
+# sweep reads it as static and never runs it. The case below runs it instead.
+_RUNNER_TUPLES = re.compile(r"\b(?:TOOLCHAIN|BINARY|ENV_POINTED)_HANDLES\b")
+_PLANTED_COMPILER_GATE = (
+    "import os, subprocess, sys\n"
+    f"sys.path.insert(0, {str(REPO / 'scripts')!r})\n"
+    "import run_gate\n"
+    "binary = os.environ[run_gate.ENV_POINTED_HANDLES[1]]\n"
+    "assert subprocess.run([binary, '--version']).returncode == 0\n"
+)
+
+
+def _tripwire_env(td: Path, run_gate) -> tuple[dict[str, str], Path]:
+    """The sweep's absent-toolchain env with every handle that names a path, and
+    the PATH name of the binary, pointed at a tripwire that logs its call and
+    fails. Handle names come from the runner, never typed here."""
+    log = td / "tripwire.log"
+    bin_dir = td / "bin"
+    bin_dir.mkdir(parents=True)
+    path_name = next(h.strip("'") for h in run_gate.BINARY_HANDLES
+                     if h.strip("'").islower())
+    wire = bin_dir / path_name
+    wire.write_text(f'#!/bin/sh\necho "$0 $*" >> "{log}"\nexit 97\n',
+                    encoding="utf-8")
+    wire.chmod(0o755)
+    env = run_gate._absent_toolchain_env()
+    absent = env[run_gate.ENV_POINTED_HANDLES[0]]
+    for name in run_gate.ENV_POINTED_HANDLES:
+        if env.get(name) == absent:
+            env[name] = str(wire)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    return env, log
+
+
+def _static_reading_holds(run_gate, gate: str, td: Path) -> bool:
+    """True iff the gate passes on every workflow argv and never runs the tripwire."""
+    for i, args in enumerate(run_gate._ci_argvs(gate)):
+        env, log = _tripwire_env(td / f"argv{i}", run_gate)
+        r = run_gate.run_one(gate, args, env=env, echo=False)
+        if not r.ok or log.exists():
+            print(f"    {gate} {args}: rc={r.rc} reason={r.reason!r} "
+                  f"tripwire_called={log.exists()}")
+            return False
+    return True
+
+
+def case_a_gate_read_as_static_runs_no_compiler() -> None:
+    """The sweep requires RED only of gates whose code names a handle. A gate
+    that reads the names from the runner (this file, scripts/workflow_scan.py)
+    is read as static and exempt, so a compiler gate in that form would pass
+    the sweep unrun. Each such corpus gate is run here with every compiler
+    handle on a tripwire: it must pass and never call the tripwire. A planted
+    compiler gate in the same form must be read as static AND caught."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import run_gate
+
+    me = str(Path(__file__).resolve().relative_to(REPO))
+    declared = []
+    for rel in run_gate.corpus():
+        if rel == me or run_gate.compiler_dependent(rel):
+            continue
+        code = run_gate._code_without_prose((REPO / rel).read_text(encoding="utf-8"))
+        if _RUNNER_TUPLES.search(code):
+            declared.append(rel)
+    print(f"    read as static by the runner's names: {declared}")
+    check("a corpus gate reads its handle names from the runner", bool(declared), True)
+    with tempfile.TemporaryDirectory() as td:
+        for i, rel in enumerate(declared):
+            check(f"read as static, runs no compiler: {rel}",
+                  _static_reading_holds(run_gate, rel, Path(td) / f"g{i}"), True)
+        planted = Path(td) / "planted_compiler_gate.py"
+        planted.write_text(_PLANTED_COMPILER_GATE, encoding="utf-8")
+        check("planted compiler gate in the runner's-names form is read as static",
+              run_gate.compiler_dependent(str(planted)), False)
+        check("planted compiler gate in the runner's-names form is caught",
+              _static_reading_holds(run_gate, str(planted), Path(td) / "planted"), False)
 
 
 # ── the lint that keeps the shapes out of gate sources ─────────────────────

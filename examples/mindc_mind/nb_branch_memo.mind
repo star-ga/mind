@@ -12,11 +12,13 @@
 
 import nb_ast;
 
-// A native let cell: the 16 words +0..+120 (see nb_lower_fn_ctx) and the memo
-// word +128, 0 until the first query.
+// A native let cell: the 16 words +0..+120 (see nb_lower_fn_ctx), the memo
+// word +128, 0 until the first query, and the allocator class word +136
+// (nb_alloc_select.mind), 0 unless a production route stores it.
 pub fn nbwm_cell() -> i64 {
-    let c: i64 = __mind_alloc(136);
+    let c: i64 = __mind_alloc(144);
     __mind_store_i64(c + 128, 0);
+    __mind_store_i64(c + 136, 0);
     c
 }
 

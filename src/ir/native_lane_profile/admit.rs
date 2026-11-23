@@ -17,7 +17,6 @@ struct Source<'a> {
     callees: Callees<'a>,
     result: Ty,
     loops: usize,
-    loop_calls: &'a mut BTreeSet<String>,
     /// Proven-positive allocation sizes are required of the user image
     /// (`alloc_size`). A seed body is the shipped blob and is typed, not
     /// re-proved.
@@ -53,8 +52,6 @@ impl Source<'_> {
         for (i, arg) in args.iter().enumerate() {
             let checked = if i > 0 && !effect_free(arg) {
                 reject("lane.source.print_order")
-            } else if matches!(arg, Node::Lit(Literal::Str(_), _)) {
-                Ok(())
             } else {
                 match self.node(arg, env)? {
                     Ty::I64 | Ty::Bool => Ok(()),
@@ -84,13 +81,12 @@ impl Source<'_> {
     }
     fn node_kind(&mut self, node: &Node, env: &mut BTreeMap<String, Ty>) -> Check<Ty> {
         match node {
-            Node::Lit(Literal::Int(_), _) => Ok(Ty::I64),
+            Node::Lit(Literal::Int(_) | Literal::Str(_), _) => Ok(Ty::I64),
             Node::Lit(Literal::Float(_), _) => Ok(Ty::F64),
             Node::Lit(Literal::Ident(name), _) => env
                 .get(name)
                 .copied()
                 .ok_or_else(|| arrays::not_scalar(name, env)),
-            Node::Lit(Literal::Str(_), _) => reject("lane.source.string"),
             Node::Paren(inner, _) => self.node(inner, env),
             Node::Binary {
                 op, left, right, ..
@@ -112,7 +108,7 @@ impl Source<'_> {
                 if ty == Ty::F64 && !matches!(operand.as_ref(), Node::Lit(Literal::Float(_), _)) {
                     return reject("lane.source.float_neg_lowering");
                 }
-                if matches!(ty, Ty::I64 | Ty::F64) {
+                if matches!(ty, Ty::I64 | Ty::F64 | Ty::Never) {
                     Ok(ty)
                 } else {
                     reject("lane.source.neg_type")
@@ -158,7 +154,8 @@ impl Source<'_> {
                     alloc_size::forget(name, env);
                     return Ok(Ty::Unit);
                 }
-                if !matches!(ty, Ty::I64 | Ty::Bool | Ty::F64) {
+                // Never is an extern result: it matches the annotation already.
+                if !matches!(ty, Ty::I64 | Ty::Bool | Ty::F64 | Ty::Never) {
                     return reject("lane.source.binding_type");
                 }
                 env.insert(name.clone(), ty);
@@ -191,19 +188,6 @@ impl Source<'_> {
                         if !alloc_size::proven(size, env) {
                             return reject("lane.alloc.size_positive");
                         }
-                    }
-                }
-                if self.loops > 0 {
-                    // Native free does not reclaim arena storage. Do not admit
-                    // repeated frees (including calls through helper functions)
-                    // as evidence that repeated allocations fit in the arena.
-                    if callee == "__mind_free" {
-                        return reject("lane.alloc.free_in_loop");
-                    }
-                    if self.callees.user.contains_key(callee)
-                        || self.callees.seed.contains_key(callee)
-                    {
-                        self.loop_calls.insert(callee.clone());
                     }
                 }
                 Ok(result)
@@ -318,6 +302,7 @@ impl Source<'_> {
             // with the `nbprint1` mark lowers it natively; other compilers keep
             // the refusal at the source site (`print_statement`).
             Node::Print { args, .. } => self.print_statement(args, env),
+            Node::FieldAccess { receiver, .. } => self.node(receiver, env).map(|_| Ty::I64),
             Node::ExternBlock { .. } => reject("lane.extern.nested"),
             Node::FnDef(..) => reject("lane.source.nested_function"),
             Node::Const { .. }
@@ -348,7 +333,6 @@ impl Source<'_> {
             | Node::SetLit { .. }
             | Node::ForEach { .. }
             | Node::MethodCall { .. }
-            | Node::FieldAccess { .. }
             | Node::ExternConst { .. }
             | Node::TypeAlias { .. }
             | Node::StructDef { .. }
@@ -369,12 +353,10 @@ impl Source<'_> {
     }
 }
 
-/// User functions, the admitted extern tier and every helper reached from a
-/// loop (user or seed) of one module.
+/// User functions and the admitted extern tier of one module.
 pub(super) struct Admitted {
     pub(super) user: Functions,
     pub(super) externs: Functions,
-    pub(super) loop_calls: BTreeSet<String>,
     /// See `Callees::print`.
     pub(super) print: bool,
 }
@@ -424,16 +406,12 @@ pub(super) fn signature(fd: &ast::FnDefData) -> Check<Signature> {
 
 /// Walk one function body under `callees`: parameters over `globals`.
 ///
-/// `loops` is the depth already entered by the caller (one, when this body
-/// was reached from a loop). `loop_calls` collects helpers reached from there.
 /// `prove_alloc_size` is set for the user image only.
 pub(super) fn walk_function(
     fd: &ast::FnDefData,
     sig: &Signature,
     globals: &BTreeMap<String, Ty>,
     callees: Callees,
-    loop_calls: &mut BTreeSet<String>,
-    loops: usize,
     prove_alloc_size: bool,
 ) -> Check<()> {
     let mut env = globals.clone();
@@ -448,8 +426,7 @@ pub(super) fn walk_function(
     let mut walker = Source {
         callees,
         result: sig.result,
-        loops,
-        loop_calls,
+        loops: 0,
         prove_alloc_size,
         assigned: alloc_size::assigned_names(&fd.body),
     };
@@ -458,8 +435,7 @@ pub(super) fn walk_function(
 
 /// User signatures and bodies; `seed` is the reached std seed tier.
 ///
-/// The user image rechecks its own functions here; the seed walker rechecks
-/// the rest of `loop_calls`.
+/// The user image rechecks its own functions here.
 /// `print` is the selected compiler's `nbprint1` mark (`Callees::print`).
 pub(super) fn source_facts(source: &ast::Module, seed: &Functions, print: bool) -> Check<Admitted> {
     let mut functions = Functions::new();
@@ -474,7 +450,6 @@ pub(super) fn source_facts(source: &ast::Module, seed: &Functions, print: bool) 
             }
         }
     }
-    let mut loop_calls = BTreeSet::new();
     let externs = admit_extern::collect_externs(&source.items, &functions)?;
     let callees = Callees {
         user: &functions,
@@ -500,7 +475,6 @@ pub(super) fn source_facts(source: &ast::Module, seed: &Functions, print: bool) 
                     callees,
                     result: Ty::Unit,
                     loops: 0,
-                    loop_calls: &mut loop_calls,
                     prove_alloc_size: true,
                     assigned: BTreeSet::new(),
                 }
@@ -520,16 +494,8 @@ pub(super) fn source_facts(source: &ast::Module, seed: &Functions, print: bool) 
     }
     for node in &source.items {
         let checked: Check<()> = match node {
-            Node::FnDef(fd, _) => walk_function(
-                fd,
-                &functions[&fd.name],
-                &globals,
-                callees,
-                &mut loop_calls,
-                0,
-                true,
-            )
-            .map_err(|r| r.in_function(&fd.name)),
+            Node::FnDef(fd, _) => walk_function(fd, &functions[&fd.name], &globals, callees, true)
+                .map_err(|r| r.in_function(&fd.name)),
             Node::Const { .. } => Ok(()),
             // A plain project import names a module the bridge's resolver
             // already linked into this image; it has no runtime meaning,
@@ -554,33 +520,9 @@ pub(super) fn source_facts(source: &ast::Module, seed: &Functions, print: bool) 
     {
         return Err(LaneProfileRejection::new("lane.entry.f64_result").in_function("main"));
     }
-    // Close the set of helpers reachable from a loop. Rechecking with loop
-    // context also covers mutual recursion without recursing in this walker.
-    let mut checked = BTreeSet::new();
-    while let Some(name) = loop_calls.iter().find(|n| !checked.contains(*n)).cloned() {
-        checked.insert(name.clone());
-        for node in &source.items {
-            if let Node::FnDef(fd, _) = node {
-                if fd.name != name {
-                    continue;
-                }
-                walk_function(
-                    fd,
-                    &functions[&name],
-                    &globals,
-                    callees,
-                    &mut loop_calls,
-                    1,
-                    true,
-                )
-                .map_err(|r| r.in_function(&name))?;
-            }
-        }
-    }
     Ok(Admitted {
         user: functions,
         externs,
-        loop_calls,
         print,
     })
 }

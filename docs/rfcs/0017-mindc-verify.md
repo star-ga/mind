@@ -83,7 +83,7 @@ signature:  Ed25519 [OK] — key-id: <fingerprint>
 
 | Flag | Meaning |
 |---|---|
-| `--json` | Emit the report as a JSON object (incl. `trace_hash_valid`, `ssa_valid`, `signature`, `provenance_authenticated`) instead of human-readable text |
+| `--json` | Emit the report as a JSON object (incl. `trace_hash_valid`, `ssa_valid`, `signature`, `provenance_authenticated`, `scope`) instead of human-readable text |
 | `--require-strict-fp` | Fail (exit 1) unless the FP-contract mode is `strict` (no FMA-contraction / f32-reassociation). Fail-closed on `relaxed` / `unknown` / unattested |
 | `--require-deterministic` | Fail (exit 1) unless the artifact is `deterministic`. The mode is RE-DERIVED from the hashed body (not the forgeable MAP field), so this is fail-closed against a tampered `determinism` label |
 | `--signer-pubkey <hex>` | Trust anchor: pin the expected signer key(s) (repeatable; also `MIND_EVIDENCE_VERIFY_PUBKEYS`). Pinning makes a valid signature REQUIRED — an unsigned / signature-stripped artifact fails closed. A trusted signature authenticates the provenance preimage (`substrate` / `toolchain` / `parent`) |
@@ -227,6 +227,60 @@ and the result is embedded for downstream auditors.
 On cross-substrate mode, `substrate_a`/`substrate_b` replace `substrate` and
 `trace_hash_equal` is added.
 
+### 4.7 The `scope` key
+
+`mindc verify --json` prints a `scope` key with one of two values. It is in the
+attested report (the one that carries `trace_hash_valid`) and in the unattested
+report (the one that carries `"attested":false`):
+
+| Value | Meaning |
+|---|---|
+| `whole_program` | Every call in the decoded IR body resolves to a function the body defines, a symbol the body declares `extern`, or an intrinsic row of the compiler's intrinsic table. |
+| `partial` | At least one called name resolves to none of these. A std function, or a function of another project module, called by name is such a name, unless its bare name is also a row of the intrinsic table (see the list below): its body is not in the artifact. |
+
+What the value decides:
+
+- It relays the fact `run_verify` already computes from the decoded body,
+  `ir::reach::calls_outside_body`. `partial` is that fact being true.
+- A name resolves when it is the name of a function definition or an `extern`
+  declaration anywhere in the body (at any nesting depth), or a row of the intrinsic
+  table. Every `Instr::Call` at any depth is checked, by name. An intrinsic row counts
+  whatever its determinism class: a row classed as a world read still resolves.
+- The check is by the bare name that the body keeps for a call: the module qualifier
+  is not in the body. Besides the `__mind_*` names, the intrinsic table lists libc and
+  POSIX symbol names that the shipped std declares (for example `readdir`, `connect`,
+  `fork` and `waitpid`), the loader rows `dlopen`, `dlsym`, `dlclose` and `dlerror`
+  (they are in the table and std does not declare them), and the source-level name
+  `byte`. A std function or a project
+  function whose bare name equals one of these names resolves, although its body is not
+  in the artifact, and its scope is `whole_program`. For example, `std.posix`
+  `readdir(d)` called by that name gives `whole_program`; so does a project function
+  `connect` called as `w.connect(p)`, while a project function `twice` called as
+  `w.twice(p)` gives `partial`. `scope` does not check that the resolved name is the
+  same code as the row.
+- Code behind declared externs is not covered. `whole_program` says the body holds
+  every call target or names it as an `extern` symbol. It says nothing about the code
+  that an `extern` symbol binds to at run time.
+- `scope` is not the determinism label. The label is judged by a separate rule
+  (`determinism` in the same report).
+
+Where the value comes from:
+
+- Verify derives `scope` on every run from the decoded body. The artifact does not
+  store it and verify does not read one: no `evidence_chain.*` key carries a scope,
+  and the MAP epilogue is not consulted for it. Editing the MAP, or the stored
+  `determinism` word, cannot change `scope`.
+- `trace_hash` covers the body. Read `scope` together with `trace_hash_valid` and
+  the exit status. When the body does not match its `trace_hash`, verify exits 1 and
+  the report still prints the scope of the bytes it decoded.
+- An unattested report has no `trace_hash`: its `scope` describes the bytes that
+  were presented, and nothing anchors them.
+- The report of an SSA fault (exit 1) has no `scope`. It is a fixed form of four keys
+  (`artifact`, `ssa_valid`, `ssa_reason`, `attested`), printed both for a body that
+  does not decode and for a body that decodes but fails the SSA or operand check. In
+  the second case `verify` has computed the fact, and the report still omits it.
+- The human-readable report does not print `scope`.
+
 ## 5. Drawbacks
 
 - Adding a CLI subcommand that wraps an existing library is low-risk but adds CLI
@@ -321,6 +375,10 @@ a build step; conflating them obscures the audit trail. The correct model is:
    artifact reports `ssa_valid` with `attested: false` and exits 0; an SSA-faulted
    artifact exits 1 naming the violated rule and value id; an attested artifact
    reports BOTH `ssa_valid` and `trace_hash_valid`.
+9. `mindc verify --json` prints `scope` (§4.7) in the attested report and in the
+   unattested report: `whole_program` when every call of the decoded body resolves
+   in the body or the intrinsic table, `partial` otherwise. The value is derived from
+   the decoded body on every run, never read from the artifact.
 
 ### Shipping status (2026-06-06)
 
@@ -329,6 +387,12 @@ slice** (criterion 8) are SHIPPED — see `check_ssa_well_formed` in `src/ir/ver
 and `run_verify` in `src/bin/mindc.rs`, exercised by `tests/verify_ssa.rs`. Full
 SMT-proven verification (`--symbolic`, §4.3 / §9) remains future work; `--check-sig`
 and `--cross-substrate` (criteria 3, 4) remain scoped but unimplemented in this slice.
+
+### Shipping status, `scope` key (2026-11-19)
+
+The `scope` key (criterion 9, §4.7) is implemented in `run_verify` in
+`src/bin/mindc.rs` and exercised by `tests/verify_scope.rs`. The CHANGELOG lists it
+under `[Unreleased]`.
 
 ## 11. References
 

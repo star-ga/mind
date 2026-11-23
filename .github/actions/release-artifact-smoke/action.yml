@@ -2,8 +2,10 @@ name: Release artifact smoke
 description: >-
   Check a packaged mindc archive the way a downloader does: the sibling .sha256
   file matches it, it unpacks, and the binary inside runs and prints the
-  expected version on its first line. release.yml runs this after packaging each
-  leg; ci.yml's release_profile job runs the SAME action on the archive it
+  expected version on its first line. It then checks the std members the archive
+  ships (gates G-a, G-b, G-c on every platform, G-d on x86-64 Linux; each gate
+  states what it proves in its PASS line). release.yml runs this after packaging
+  each leg; ci.yml's release_profile job runs the SAME action on the archive it
   builds with the exact release command, so this logic executes on every PR
   before any tag can depend on it.
 
@@ -83,17 +85,182 @@ runs:
         # 3. The shipped binary runs and reports the expected version. An x86_64
         # macOS binary built on an Apple-silicon runner runs under Rosetta 2.
         prefix=""
-        if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] && file "$bin" | grep -q 'x86_64'; then
+        if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] && grep -q 'x86_64' <<<"$(file "$bin")"; then
           if ! arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
             sudo softwareupdate --install-rosetta --agree-to-license
           fi
           prefix="arch -x86_64"
         fi
         version_out=$($prefix "$bin" --version)
-        first=$(printf '%s\n' "$version_out" | head -n 1 | tr -d '\r')
+        first=$(head -n 1 <<<"$version_out" | tr -d '\r')
         if [ "$first" != "mind $WANT_VERSION" ]; then
           echo "FAIL: $name: '$bin --version' printed '$first', expected 'mind $WANT_VERSION'"
           exit 1
         fi
         echo "PASS: $name: checksum verified, unpacked, '$first' == 'mind $WANT_VERSION'"
         echo "binary=$bin" >> "$GITHUB_OUTPUT"
+
+    # The std members. `$BIN` is the binary unpacked from the archive, and the other
+    # members are unpacked beside it; the workspace is the tree the archive was built
+    # from. A missing tool is an error: nothing below passes for lack of a tool.
+    - id: members
+      shell: bash
+      env:
+        BIN: ${{ steps.smoke.outputs.binary }}
+      run: |
+        set -euo pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        native() { if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        # Git Bash on Windows: the POSIX find and sort, not System32's find.exe and sort.exe.
+        if command -v cygpath >/dev/null 2>&1; then PATH="/usr/bin:$PATH"; fi
+        for t in awk cmp diff find grep ls sed sort tr wc; do command -v "$t" >/dev/null 2>&1 || fail "$t is not on PATH"; done
+        bin=$(native "$BIN")
+        exe=$(basename "$bin")
+        ws=$(native "${GITHUB_WORKSPACE:-$PWD}")
+        tree_manifest="$ws/examples/mindc_mind/testdata/stdlib_manifest.txt"
+        test -d "$ws/std" && test -f "$tree_manifest" || fail "the tree the archive was built from is not at $ws"
+        if command -v sha256sum >/dev/null 2>&1; then
+          sumc() { sha256sum -c "$@"; }
+        elif command -v shasum >/dev/null 2>&1; then
+          sumc() { shasum -a 256 -c "$@"; }
+        else
+          fail "neither sha256sum nor shasum is on PATH"
+        fi
+        py=""
+        for c in python3 python; do
+          if "$c" -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then py=$c; break; fi
+        done
+        test -n "$py" || fail "no working python3 or python is on PATH"
+        cd "$(dirname "$bin")"
+
+        # The archive holds exactly the members the packer writes, with std files.
+        want=$(printf '%s\n' "$exe" SHA256SUMS std stdlib_manifest.txt | LC_ALL=C sort)
+        have=$(ls -A | LC_ALL=C sort)
+        test "$want" = "$have" || fail "the archive holds [$(echo $have)], expected [$(echo $want)]"
+        files=$(find std stdlib_manifest.txt -type f | LC_ALL=C sort)
+        n=$(printf '%s\n' "$files" | grep -c . || true)
+        test "$n" -gt 1 || fail "the archive holds no std file"
+        rows=$(awk -F'\t' '!/^#/ && NF == 3 { print "std/" $1 ".mind" }' "$tree_manifest" | LC_ALL=C sort)
+        nrows=$(printf '%s\n' "$rows" | grep -c . || true)
+        test "$nrows" -gt 0 || fail "the tree's manifest names no module"
+
+        # Each gate runs in a subshell, and every check in it ends in `|| fail`: errexit
+        # is off inside a function that is called from a condition. All gates run, so
+        # the log names every red one.
+        ran=0
+        red=0
+        gate() { if ( "$1" ); then ran=$((ran + 1)); else red=$((red + 1)); echo "RED: $1"; fi; }
+
+        # G-b. SHA256SUMS lists exactly the shipped std files and the manifest, and
+        # every listed hash matches. A file changed or dropped after SHA256SUMS was
+        # written is caught here. A line is `<hash>  <path>` or, in binary mode,
+        # `<hash> *<path>`: the packer writes the first form, and both verify. It does
+        # not prove the files are the right ones (G-a and G-c do), and it does not
+        # cover the binary.
+        gate_b() {
+          test "$(sed 's/^[0-9a-fA-F]\{64\} [ *]//' SHA256SUMS | LC_ALL=C sort)" = "$files" || fail "G-b: SHA256SUMS does not list exactly the files the archive holds under std/ and the manifest ($n)"
+          test "$(wc -l < SHA256SUMS | tr -d ' ')" = "$n" || fail "G-b: SHA256SUMS has more lines than shipped files"
+          if ! res=$(sumc SHA256SUMS 2>&1); then printf '%s\n' "$res" | grep -v ': OK$' || true; fail "G-b: the sha256 check of SHA256SUMS failed"; fi
+          test "$(printf '%s\n' "$res" | grep -c ': OK$' || true)" = "$n" || fail "G-b: fewer than $n files verified"
+          echo "PASS: G-b: SHA256SUMS lists and verifies all $n shipped files (std/ and the manifest)"
+        }
+
+        # G-c. The archived manifest is the tree's manifest, and std/ holds exactly the
+        # modules that manifest names. A std file dropped from the archive is caught
+        # here even when SHA256SUMS was written after the drop.
+        gate_c() {
+          cmp -s stdlib_manifest.txt "$tree_manifest" || fail "G-c: stdlib_manifest.txt differs from the tree's manifest"
+          test "$rows" = "$(find std -type f | LC_ALL=C sort)" || fail "G-c: the files under std/ are not the $nrows modules the manifest names"
+          echo "PASS: G-c: the archived manifest equals the tree's, and std/ holds exactly its $nrows modules"
+        }
+
+        # G-a. Every archived std file and the manifest equals the tree's file, and its
+        # whole byte sequence occurs in the shipped binary, where include_str! put it
+        # (the std bundle of src/project/stdlib.rs; the manifest of the native backend
+        # seed). No mindc sub-command prints the embedded copy, so the binary is
+        # searched. An occurrence proves the bytes are inside the binary, not which
+        # table row carries them: tests/std_bundled_module_table.rs pins that every std
+        # file has a row. A file cut to a prefix still occurs; the tree comparison
+        # catches it. The count is written as bytes: text mode on Windows would add a
+        # CR that `$(...)` keeps, and the comparison below would never match there.
+        gate_a() {
+          tree_ok=1
+          diff -r "$ws/std" std >/dev/null || { diff -rq "$ws/std" std || true; echo "G-a: the archived std differs from the tree's std/"; tree_ok=0; }
+          cmp -s stdlib_manifest.txt "$tree_manifest" || { echo "G-a: the archived manifest differs from the tree's"; tree_ok=0; }
+          binary_ok=1
+          if ! found=$(printf '%s\n' "$files" | "$py" -I -c '
+        import sys
+        binary = open(sys.argv[1], "rb").read()
+        paths = [p for p in sys.stdin.read().split("\n") if p]
+        absent = []
+        for p in paths:
+            data = open(p, "rb").read()
+            if not data or data not in binary:
+                absent.append(p)
+        for p in absent:
+            print("not in the binary: " + p, file=sys.stderr)
+        sys.stdout.buffer.write(b"%d %d\n" % (len(paths) - len(absent), len(paths)))
+        sys.exit(1 if absent or not paths else 0)
+        ' "$exe"); then binary_ok=0; echo "G-a: an archived file does not occur in $exe"; fi
+          test "$tree_ok$binary_ok" = 11 || fail "G-a: an archived file differs from the tree's or does not occur in $exe"
+          test "$found" = "$n $n" || fail "G-a: only '$found' of the $n shipped files occur in $exe"
+          echo "PASS: G-a: all $n shipped files equal the tree's and occur byte-for-byte in $exe"
+        }
+
+        gate gate_b
+        gate gate_c
+        gate gate_a
+        echo "members gates: ran=$ran red=$red"
+        test "$red" = 0 || fail "$red of the std member gates are red"
+        test "$ran" = 3 || fail "expected 3 gates to run, $ran ran"
+
+    # G-d, on x86-64 Linux only: the native backend runs an x86-64 compiler seed, so
+    # no other leg can run this build.
+    - id: rebuild
+      shell: bash
+      env:
+        BIN: ${{ steps.smoke.outputs.binary }}
+      run: |
+        set -euo pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        native() { if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
+        if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+          echo "G-d is not run here ($(uname -s) $(uname -m)): it needs the native backend, which runs on x86-64 Linux only. G-a, G-b and G-c ran."
+          exit 0
+        fi
+        for t in cmp grep mkdir mktemp od tr wc; do command -v "$t" >/dev/null 2>&1 || fail "G-d: $t is not on PATH"; done
+        bin=$(native "$BIN")
+        out=$(dirname "$bin")
+        test -d "$out/std" || fail "G-d: $out/std is missing"
+        work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/archived-std.XXXXXX")
+        cd "$work"
+        # The program calls std.sha256, a seed module. With the native backend the
+        # output file depends on the bytes of the seed modules: measured one module at
+        # a time, an appended comment in each of the 21 seed modules of the tree this
+        # gate was written against changes the file, and so does a changed constant in
+        # std/ring.mind or std/sha256.mind. The digest of the empty message is the
+        # FIPS 180-4 value; the exit status is its first byte, 0xe3 (227).
+        printf '%s\n' 'import std.sha256;' '' 'fn main() -> i64 {' \
+          '    let msg: i64 = __mind_alloc(8);' '    let out: i64 = __mind_alloc(32);' \
+          '    let rc: i64 = sha256(msg, 0, out);' '    __mind_write(1, out, 32, 0 - 1);' \
+          '    return __mind_load_i8(out) + rc;' '}' > prog.mind
+        build() { # build <output file> [VAR=value ...]
+          o=$1; shift
+          env -u MINDC_NATIVE_ELF -u MINDC_SO -u MINDC_STD_DIR "$@" "$bin" build --backend native prog.mind --out "$o" || fail "G-d: the native build of $o failed"
+        }
+        build embedded.elf
+        build archived.elf "MINDC_STD_DIR=$out/std"
+        cmp -s embedded.elf archived.elf || fail "G-d: the build against the archived std ($out/std) differs from the build against the embedded std"
+        # Controls: the variable is read (a directory with no module is refused), and the
+        # equal files are working programs, not two equal failures.
+        mkdir empty
+        if env -u MINDC_NATIVE_ELF -u MINDC_SO "MINDC_STD_DIR=$work/empty" "$bin" build --backend native prog.mind --out refused.elf 2> refused.err; then
+          fail "G-d: a build with MINDC_STD_DIR naming an empty directory succeeded, so the variable is not read"
+        fi
+        grep -q 'MINDC_STD_DIR is set to' refused.err || fail "G-d: the empty-directory build was refused for another reason: $(cat refused.err)"
+        rc=0
+        ./archived.elf > digest.bin || rc=$?
+        test "$rc" = 227 || fail "G-d: the archived-std program exited $rc, expected 227"
+        test "$(od -An -tx1 digest.bin | tr -d ' \n')" = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 || fail "G-d: the archived-std program did not print the SHA-256 of the empty message"
+        echo "PASS: G-d: a native build against the archived std equals the build against the embedded std ($(wc -c < archived.elf | tr -d ' ') bytes, cmp equal); the program prints the empty-message SHA-256; an empty MINDC_STD_DIR is refused"
+        echo "rebuild gate: ran=1 fail=0"

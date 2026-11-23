@@ -35,6 +35,11 @@ fn primitive_positive_controls() {
         "const A: i64 = 7; fn main() -> i64 { return A; }",
         "fn main() -> i64 { let x: f64 = __mind_bits_to_f64(0); return __mind_f64_to_bits(x); }",
         "fn main() -> i64 { let p = __mind_alloc(16); __mind_store_i64(p, 3); let x = __mind_load_i64(p); __mind_free(p); return x; }",
+        // A free in a loop body, through a helper called from a loop and in a
+        // loop condition: the host check does not refuse any of them.
+        "fn main() -> i64 { while 1 { __mind_free(0); } return 0; }",
+        "fn f() -> i64 { return __mind_free(0); } fn g() -> i64 { return f(); } fn main() -> i64 { while 1 { g(); } return 0; }",
+        "fn main() -> i64 { while __mind_free(0) { } return 0; }",
         "fn main() -> i64 { return __mind_read(0, 0, 0, -1); }",
         "fn main() -> i64 { return __mind_sys_getuid(); }",
         "fn main(argc: i64, argv: i64) -> i64 { return argc + (argv != 0); }",
@@ -90,9 +95,9 @@ fn calls_have_exact_types_arity_and_closed_names() {
         "fn __mind_alloc(x: i64) -> i64 { return x; }",
         "fn f(x: f64) -> i64 { return 0; } fn main() -> i64 { return f(1); }",
         "fn main() -> i64 { return __mind_sys_openat(0); }",
-        // `close` is a closed-table row now; only the reserved-name override
-        // still refuses at source.
-        "extern \"C\" { fn __mind_alloc(x: i64) -> i64; } fn main() -> i64 { return 0; }",
+        // An extern named like a compiler intrinsic is ambiguous where it is
+        // called; a declaration nothing calls is the compiler's decision.
+        "extern \"C\" { fn __mind_alloc(x: i64) -> i64; } fn main() -> i64 { return __mind_alloc(8); }",
     ] {
         let ast = crate::parser::parse(source).expect(source);
         assert!(profile_lane_admits_source(&ast, true).is_err(), "{source}");
@@ -142,7 +147,7 @@ fn exact_intrinsic_contract_inventory() {
 }
 
 /// `__mind_open` is admitted on the native lane (census R9). The census shapes
-/// (weights:243, naes_t1:732, selftest:65, main:230,367) all call
+/// (weights:243, unit:732, selftest:65, main:230,367) all call
 /// `__mind_open(path)` and use the returned fd. A mutant that removes the
 /// `__mind_open` row from the admission table turns this test red.
 #[test]
@@ -151,7 +156,7 @@ fn mind_open_is_admitted_on_the_native_lane() {
     for source in [
         // weights:243 — open a path, return fd + 100
         "fn main() -> i64 { let p = __mind_alloc(8); __mind_store_i8(p, 47); __mind_store_i8(p + 1, 0); let fd = __mind_open(p); return fd + 100; }",
-        // naes_t1:732 — open a path, check fd >= 0
+        // unit:732 — open a path, check fd >= 0
         "fn main() -> i64 { let p = __mind_alloc(8); __mind_store_i8(p, 47); __mind_store_i8(p + 1, 0); let fd = __mind_open(p); if fd < 0 { return 1; } return 0; }",
         // selftest:65 — open a path, read one byte
         "fn main() -> i64 { let p = __mind_alloc(8); __mind_store_i8(p, 47); __mind_store_i8(p + 1, 0); let fd = __mind_open(p); if fd < 0 { return 1; } let b = __mind_alloc(1); let n = __mind_read(fd, b, 1, 0 - 1); return n; }",
@@ -459,16 +464,14 @@ fn u32_casts_are_typed_in_both_legs() {
         format!(
             "{close_range}fn main() -> i64 {{ return close_range(1000 as u32, 2000 as u32, 0 as i32) as i64; }}"
         ),
+        // The class of an extern argument is the compiler's row, not a host key.
+        format!(
+            "{close_range}fn main() -> i64 {{ return close_range(1000, 2000 as u32, 0 as i32) as i64; }}"
+        ),
     ] {
         assert_eq!(admits(&source), Ok(()), "{source}");
     }
     for (source, kind) in [
-        (
-            format!(
-                "{close_range}fn main() -> i64 {{ return close_range(1000, 2000 as u32, 0 as i32) as i64; }}"
-            ),
-            "lane.type.mismatch",
-        ),
         (
             "fn main() -> i64 { return 5 as u32; }".to_string(),
             "lane.type.mismatch",

@@ -1,0 +1,141 @@
+// UDP over loopback on the C ABI path: sendto and recvfrom (six arguments, a
+// distinct value in every one: flags 64 and 2, lengths 10 and 64, address
+// length 16), poll before and after the datagram arrives, and the 64-bit error
+// results (recvfrom on an empty socket with MSG_DONTWAIT gives -1 with errno 11,
+// sendto and poll on bad arguments give -1 with errno 9 and 14).
+extern "C" {
+    unsafe fn socket(domain: i32, kind: i32, protocol: i32) -> i32;
+    unsafe fn bind(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+    unsafe fn sendto(sockfd: i32, buf: *const u8, len: i64, flags: i32, dest_addr: *const u8, addrlen: i32) -> i64;
+    unsafe fn recvfrom(sockfd: i32, buf: *mut u8, len: i64, flags: i32, src_addr: *mut u8, addrlen: *mut u8) -> i64;
+    unsafe fn poll(fds: *mut u8, nfds: i64, timeout_ms: i32) -> i32;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn __errno_location() -> *mut i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let rx: i64 = socket(2 as i32, 2 as i32, 0 as i32) as i64;
+    let tx: i64 = socket(2 as i32, 2 as i32, 0 as i32) as i64;
+    if rx < 0 {
+        return 1;
+    }
+    if tx < 0 {
+        return 2;
+    }
+    let sin: i64 = __mind_alloc(16);
+    __mind_store_i64(sin, 72058139498774530);
+    __mind_store_i64(sin + 8, 0);
+    if bind(rx as i32, sin as *const u8, 16 as i32) as i64 != 0 {
+        return 3;
+    }
+    let dest: i64 = __mind_alloc(16);
+    let dlen: i64 = __mind_alloc(8);
+    __mind_store_i64(dest, 0);
+    __mind_store_i64(dest + 8, 0);
+    __mind_store_i64(dlen, 16);
+    if getsockname(rx as i32, dest as *mut u8, dlen as *mut u8) as i64 != 0 {
+        return 4;
+    }
+    let pf: i64 = __mind_alloc(8);
+    // struct pollfd { fd: rx, events: POLLIN (1), revents: 0 }
+    __mind_store_i64(pf, rx + 4294967296);
+    if poll(pf as *mut u8, 0, 0 as i32) as i64 != 0 {
+        return 5;
+    }
+    if poll(0 as *mut u8, 0, 0 as i32) as i64 != 0 {
+        return 6;
+    }
+    if poll(pf as *mut u8, 1, 0 as i32) as i64 != 0 {
+        return 7;
+    }
+    if __mind_load_i32(pf + 4) != 1 {
+        return 8;
+    }
+    if poll(1 as *mut u8, 1, 0 as i32) as i64 != minus_one {
+        return 9;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 14 {
+        return 10;
+    }
+    let msg: i64 = __mind_alloc(16);
+    // "hello-udp!"
+    __mind_store_i64(msg, 7238741932651603304);
+    __mind_store_i64(msg + 8, 8560);
+    if sendto(tx as i32, msg as *const u8, 10, 64 as i32, dest as *const u8, 16 as i32) != 10 {
+        return 11;
+    }
+    if poll(pf as *mut u8, 1, 1000 as i32) as i64 != 1 {
+        return 12;
+    }
+    if __mind_load_i32(pf + 4) != 65537 {
+        return 13;
+    }
+    let buf: i64 = __mind_alloc(64);
+    let src: i64 = __mind_alloc(16);
+    let slen: i64 = __mind_alloc(8);
+    __mind_store_i64(src, 0);
+    __mind_store_i64(src + 8, 0);
+    __mind_store_i64(slen, 16);
+    if recvfrom(rx as i32, buf as *mut u8, 64, 2 as i32, src as *mut u8, slen as *mut u8) != 10 {
+        return 14;
+    }
+    if __mind_load_i64(buf) != 7238741932651603304 {
+        return 15;
+    }
+    if __mind_load_i32(slen) != 16 {
+        return 16;
+    }
+    if (__mind_load_i32(src) & 65535) != 2 {
+        return 17;
+    }
+    if __mind_load_i32(src + 4) != 16777343 {
+        return 18;
+    }
+    let buf2: i64 = __mind_alloc(64);
+    let src2: i64 = __mind_alloc(16);
+    let slen2: i64 = __mind_alloc(8);
+    __mind_store_i64(src2, 0);
+    __mind_store_i64(src2 + 8, 0);
+    __mind_store_i64(slen2, 16);
+    if recvfrom(rx as i32, buf2 as *mut u8, 64, 0 as i32, src2 as *mut u8, slen2 as *mut u8) != 10 {
+        return 19;
+    }
+    if __mind_load_i64(buf2) != 7238741932651603304 {
+        return 20;
+    }
+    if __mind_load_i32(buf2 + 8) != 8560 {
+        return 21;
+    }
+    let tport: i64 = __mind_alloc(16);
+    let tlen: i64 = __mind_alloc(8);
+    __mind_store_i64(tport, 0);
+    __mind_store_i64(tport + 8, 0);
+    __mind_store_i64(tlen, 16);
+    if getsockname(tx as i32, tport as *mut u8, tlen as *mut u8) as i64 != 0 {
+        return 22;
+    }
+    if __mind_load_i32(tport) != __mind_load_i32(src2) {
+        return 23;
+    }
+    if recvfrom(rx as i32, buf as *mut u8, 64, 64 as i32, 0 as *mut u8, 0 as *mut u8) != minus_one {
+        return 24;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 11 {
+        return 25;
+    }
+    if sendto(minus_one as i32, msg as *const u8, 10, 64 as i32, dest as *const u8, 16 as i32) != minus_one {
+        return 26;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 9 {
+        return 27;
+    }
+    if close(tx as i32) as i64 != 0 {
+        return 28;
+    }
+    if close(rx as i32) as i64 != 0 {
+        return 29;
+    }
+    return 42;
+}

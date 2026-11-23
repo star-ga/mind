@@ -17,7 +17,7 @@ runs:
         expected=$(cat src/ir/native_lane_profile/*.rs | grep -cE '^[[:space:]]*#\[test\]')
         out=$(timeout 900 cargo test --locked --no-default-features --features std-surface --lib ir::native_lane_profile::)
         echo "$out"
-        n=$(printf '%s\n' "$out" | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' | head -1)
+        n=$(sed -n '/^test result: ok\. \([0-9][0-9]*\) passed.*/{s//\1/p;q;}' <<<"$out")
         if [ "$expected" -lt 1 ] || [ "${n:-0}" -lt "$expected" ]; then
           echo "FAIL: ir::native_lane_profile ran ${n:-0} tests, the source has $expected #[test] fns - module or tests cfg'd out" >&2
           exit 1

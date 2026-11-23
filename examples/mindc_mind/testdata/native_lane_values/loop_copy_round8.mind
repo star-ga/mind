@@ -1,0 +1,37 @@
+// An 8-value round chain: each trip shifts h <- g <- f <- e and d <- c <- b <- a
+// and feeds e and a from two lets. a..h = 1..8; five trips give
+// a + 3b + 5c + 7d + 11e + 13f + 17g + 19h = 4367. main returns 42 only for
+// that value.
+fn f9() -> i64 {
+    let mut a: i64 = 1;
+    let mut b: i64 = 2;
+    let mut c: i64 = 3;
+    let mut d: i64 = 4;
+    let mut e: i64 = 5;
+    let mut f: i64 = 6;
+    let mut g: i64 = 7;
+    let mut h: i64 = 8;
+    let mut i: i64 = 0;
+    while i < 5 {
+        let t1: i64 = h + e + i;
+        let t2: i64 = a + b;
+        h = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = b;
+        b = a;
+        a = t1 + t2;
+        i = i + 1;
+    }
+    return a + b * 3 + c * 5 + d * 7 + e * 11 + f * 13 + g * 17 + h * 19;
+}
+
+fn main() -> i64 {
+    let v: i64 = f9();
+    if v == 4367 {
+        return 42;
+    }
+    return 43;
+}

@@ -1,0 +1,13 @@
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < 10 {
+        t = t + len_of("abc");
+        i = i + 1;
+    }
+    return t + len_of("xy");
+}

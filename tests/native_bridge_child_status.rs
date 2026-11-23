@@ -47,14 +47,14 @@ struct Run {
 /// Write an executable fixture without leaking a writable descriptor into a
 /// concurrent fork (which makes the later execve fail with ETXTBSY). Same
 /// handoff as `native_bridge_support::run`.
-fn write_executable(path: &Path, body: &str) {
+fn write_executable(path: &Path, body: &[u8]) {
     use std::os::unix::fs::PermissionsExt;
     let mut writer = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
         .expect("create fixture");
-    writer.write_all(body.as_bytes()).expect("write fixture");
+    writer.write_all(body).expect("write fixture");
     let mut perm = writer.metadata().expect("meta").permissions();
     perm.set_mode(0o755);
     writer.set_permissions(perm).expect("chmod fixture");
@@ -74,10 +74,15 @@ fn return42_project(name: &str) -> Project {
     p
 }
 
-/// A fixture compiler script inside the project directory.
+/// A fixture compiler script inside the project directory. The host runs only
+/// a compiler that carries the native-lane-v1 mark `nblane02`, so a trailing
+/// comment line carries it; the script never reads that line.
 fn fixture_compiler(p: &Project, name: &str, body: &str) -> PathBuf {
     let path = p.root().join(name);
-    write_executable(&path, body);
+    write_executable(
+        &path,
+        &[body.as_bytes(), b"\n# \x48\xb8nblane02\n"].concat(),
+    );
     path
 }
 

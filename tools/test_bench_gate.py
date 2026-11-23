@@ -74,6 +74,15 @@ def rows(ids: list[str], spreads: tuple[str, ...] = ("", "", "")) -> str:
                    for i, ns, sp in zip(ids, (3000, 6100, 16800), spreads))
 
 
+def _load_gate():
+    """bench_gate.py (GATE) as a module, for its parsers and its median rank."""
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("bench_gate", GATE)
+    module = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -282,10 +291,7 @@ def main() -> int:
         )
         champbeat = put(d, "champbeat.out", bencher(2400, 5000, 11800))
 
-        import importlib.util as _ilu  # the gate as a module: parsers + median rank
-        _spec = _ilu.spec_from_file_location("bench_gate", GATE)
-        _bg = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_bg)
+        _bg = _load_gate()  # the gate as a module: parsers + median rank
         champ_keys = len(_bg.parse_reference(champ))
 
         ratchet = ["--champion", str(champ), "--floor", str(base),

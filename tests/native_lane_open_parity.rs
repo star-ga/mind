@@ -4,7 +4,7 @@
 //! Native == MLIR execution parity for `__mind_open` (census R9) and for the
 //! process-argument rows `__mind_argc` / `__mind_argv`.
 //!
-//! The census's `__mind_open` shapes (weights:243, naes_t1:732, selftest:65,
+//! The census's `__mind_open` shapes (weights:243, unit:732, selftest:65,
 //! main:230,367) build natively and the call returns the same fd/values as
 //! the MLIR build. A mutant that removes the `__mind_open` row from the
 //! native lane's admission table turns this test red. The argv echo runs on
@@ -93,7 +93,7 @@ fn main() -> i64 {
     parity("open_fd_plus_100", source, None);
 }
 
-/// naes_t1:732 — open a path, check fd >= 0. "/dev/null" exists, so the
+/// unit:732 — open a path, check fd >= 0. "/dev/null" exists, so the
 /// program returns 0 on both backends.
 #[test]
 fn open_nonnegative_check_on_both_backends() {

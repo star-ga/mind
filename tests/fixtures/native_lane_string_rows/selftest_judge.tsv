@@ -1,0 +1,31 @@
+# Cases of the runner self-test: a row (verdict exit key line col) and what a compiler did (rc, image written, stderr with \n for a line feed,
+# exit status of the image), and ok = whether the row's verdict holds. The self-test judges each case with judge_row.
+name	verdict	exit	key	line	col	rc	image	stderr	image_exit	ok
+admit ok	admit	5				0	yes		5	yes
+admit wrong exit	admit	5				0	yes		6	no
+admit refused	admit	5				3	no			no
+admit no image	admit	5				0	no			no
+admit no image, no exit asked	admit					0	no			no
+refuse ok	refuse		lane.string.cap	4		3	no	x lane.string.cap at line 4		yes
+refuse compiled	refuse		lane.string.cap	4		0	yes			no
+refuse rc 3 with an image	refuse		lane.string.cap	4		3	yes	lane.string.cap line 4		no
+refuse wrong rc	refuse		lane.string.cap	4		1	no	lane.string.cap line 4		no
+refuse other key	refuse		lane.string.cap	4		3	no	lane.string.cap2 line 4		no
+refuse wrong line	refuse		lane.string.cap	4		3	no	lane.string.cap line 5		no
+refuse prefix key	refuse		lane.string.ca	4		3	no	lane.string.cap line 4		no
+refuse line 40 is not 4	refuse		lane.string.cap	4		3	no	lane.string.cap line 40		no
+refuse line on other stderr line	refuse		lane.string.cap	4		3	no	line 4\nlane.string.cap		no
+refuse col ok	refuse		lane.string.cap	4	9	3	no	lane.string.cap 4:9		yes
+refuse wrong col	refuse		lane.string.cap	4	9	3	no	lane.string.cap 4:10		no
+refuse no line asked	refuse		lane.string.cap			3	no	lane.string.cap		yes
+refuse key glued to a word	refuse		lane.string.cap	4		3	no	xlane.string.cap line 4		no
+refuse key absent, no line asked	refuse		lane.string.cap			3	no	boom		no
+refuse line word glued to a word	refuse		lane.string.cap	4		3	no	lane.string.cap baseline 4		no
+refuse colon form ok	refuse		lane.string.cap	4		3	no	lane.string.cap :4		yes
+refuse colon form of line 14	refuse		lane.string.cap	4		3	no	lane.string.cap 14:4		no
+refuse colon form of line 40	refuse		lane.string.cap	4		3	no	lane.string.cap :40		no
+refuse col form of line 14	refuse		lane.string.cap	4	9	3	no	lane.string.cap 14:9		no
+refuse col form of column 90	refuse		lane.string.cap	4	9	3	no	lane.string.cap 4:90		no
+refuse line and column words ok	refuse		lane.string.cap	4	9	3	no	lane.string.cap line 4, column 9		yes
+refuse line and col words ok	refuse		lane.string.cap	4	9	3	no	lane.string.cap line 4 col 9		yes
+refuse line and column words of column 90	refuse		lane.string.cap	4	9	3	no	lane.string.cap line 4, column 90		no

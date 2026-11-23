@@ -131,9 +131,9 @@ while read -r sha; do
   if [ "$check_id" -eq 1 ]; then
     author_ident=$(git log -1 --format='%an <%ae>' "$sha")
     committer_ident=$(git log -1 --format='%cn <%ce>' "$sha")
-    if ! printf '%s\n' "$author_ident" | grep -qE "$EXPECTED_AUTHOR_IDENTITY_REGEX"; then
+    if ! grep -qE "$EXPECTED_AUTHOR_IDENTITY_REGEX" <<<"$author_ident"; then
       id_err="author '${author_ident}' does not match ${EXPECTED_AUTHOR_IDENTITY_REGEX}"
-    elif ! printf '%s\n' "$committer_ident" | grep -qE "$COMMITTER_REGEX"; then
+    elif ! grep -qE "$COMMITTER_REGEX" <<<"$committer_ident"; then
       id_err="committer '${committer_ident}' does not match ${COMMITTER_REGEX}"
     fi
   fi

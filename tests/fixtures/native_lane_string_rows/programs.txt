@@ -1,0 +1,3904 @@
+# Programs of the string-rule acceptance rows, one record per row id.
+#   === <id> | text      body = the program, exactly, one trailing newline
+#   === <id> | hex       body = the program bytes as hex (control bytes that a text file cannot hold)
+#   === <id> | recipe    body = lines `<count> <json string>`; the program is the concatenation of
+#                       each string repeated count times (programs too large to store)
+#   === <id>@carrier | carrier   the std module the row needs in the std blob, one function per line
+# Not `.mind` files, so the front-end differential corpus under tests/fixtures does not collect
+# these deliberately refused programs.
+=== addr_use | text
+// addr_use: the address of a String bound to a name instead of
+// being the address of a load or write: a plain i64, admitted.
+fn f(s: String) -> i64 {
+    let p: i64 = s.addr;
+    return p;
+}
+fn main() -> i64 {
+    return f("A");
+}
+=== argument | text
+// argument: a parenthesised String name in a String slot: parentheses are transparent, admitted.
+fn take(s: String) -> i64 {
+    return 0;
+}
+fn f(s: String) -> i64 {
+    return take((s));
+}
+fn main() -> i64 {
+    return f("x");
+}
+=== assign | text
+// lane.string.assign: a String parameter assigned.
+fn f(s: String, t: String) -> i64 {
+    s = t;
+    return s.len;
+}
+fn main() -> i64 {
+    return f("a", "bc");
+}
+=== binding | text
+// lane.string.binding: a let annotated String.
+fn f(s: String) -> i64 {
+    let t: String = s;
+    return 0;
+}
+fn main() -> i64 {
+    return f("x");
+}
+=== cap | text
+// lane.string.cap: the capacity differs by backend (native 0, MLIR = length).
+fn f(s: String) -> i64 {
+    return s.cap;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== equality | text
+// lane.string.equality: == on two Strings (no native byte-wise compare).
+fn same(a: String, b: String) -> i64 {
+    return a == b;
+}
+fn main() -> i64 {
+    return same("a", "b");
+}
+=== equality_host | text
+// lane.string.equality: == on two Strings (no native byte-wise compare).
+fn same(a: String, b: String) -> i64 {
+    return a == b;
+}
+fn main() -> i64 {
+    return same("a", "b");
+}
+=== literal_capacity | recipe
+1 "// lane.string.literal_capacity: a function that holds a string literal has more\n// source bytes than the native compiler is sure to lower (49152). The literal below\n// makes `main` 49153 bytes long.\nfn len_of(s: String) -> i64 {\n    return s.len;\n}\nfn main() -> i64 {\n    return len_of(\""
+49110 "a"
+1 "\");\n}\n"
+=== raw_newline | text
+// lane.string.raw_newline: a literal whose source text holds a line feed (the
+// native lexer ends a literal at the end of its line, MLIR builds it).
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return len_of("a
+b");
+}
+=== read_unbounded | text
+// read_unbounded: a read through the address of a String that the
+// text does not cover (eight bytes of a shorter text): a plain i64 load, admitted.
+fn f(s: String) -> i64 {
+    return __mind_load_i64(s.addr);
+}
+fn main() -> i64 {
+    return f("abc");
+}
+=== result | text
+// lane.string.result: a function returning a String.
+fn id(s: String) -> String {
+    return s;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== store | text
+// store: a store through the address of a String: no store key, admitted (the literal is read-only: the image faults at run).
+fn f(s: String) -> i64 {
+    __mind_store_i8(s.addr, 66);
+    return s.len;
+}
+fn main() -> i64 {
+    return f("A");
+}
+=== str_forwarded | text
+fn unused(s: String) -> i64 {
+    return 1;
+}
+
+fn sink(s: String, k: i64) -> i64 {
+    return k * 3;
+}
+
+fn relay(a: String, b: String, k: i64) -> i64 {
+    return sink(b, k) + sink(a, k + 1);
+}
+
+fn main() -> i64 {
+    return relay("x", "yz", 4) + 5;
+}
+=== str_literal_args | text
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+
+fn main() -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 4 {
+        t = t + take("loop", 25);
+        i = i + 1;
+    }
+    t = t + take("", 1) + take("tab\tquote\"slash\\\n", 2) + take("été", 3);
+    return t + take("loop", 4) - 10;
+}
+=== str_len_reads | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn longer(a: String, b: String) -> i64 {
+    if a.len > b.len {
+        return a.len;
+    }
+    return b.len;
+}
+
+fn main() -> i64 {
+    return len_of("") * 100 + longer("abc", "de") * 10 + len_of("été");
+}
+=== str_addr_write | text
+fn show(s: String) -> i64 {
+    return __mind_write(1, s.addr, s.len, 0 - 1);
+}
+
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn forward(s: String) -> i64 {
+    return show(s);
+}
+
+fn main() -> i64 {
+    let a: i64 = show("addr+len\n");
+    let b: i64 = forward("");
+    let c: i64 = show("tab\tquote\"slash\\\n");
+    let d: i64 = byte_sum("ABCD");
+    let e: i64 = show("été\n");
+    if e != 6 {
+        return 1;
+    }
+    return (a + b + c + d) % 256;
+}
+=== str_same_prefix | text
+fn same(a: String, b: String) -> i64 {
+    let mut i: i64 = 0;
+    while i < a.len && i < b.len {
+        if __mind_load_i8(a.addr + i) != __mind_load_i8(b.addr + i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn main() -> i64 {
+    return same("abcd", "abxy") * 100 + same("ab", "abz") * 10 + same("", "x");
+}
+=== str_two_loops | text
+fn sums(a: String, b: String) -> i64 {
+    let mut n: i64 = 0;
+    let mut i: i64 = 0;
+    while i < a.len {
+        n = n + __mind_load_i8(a.addr + i);
+        i = i + 1;
+    }
+    i = 0;
+    while i < b.len {
+        n = n + __mind_load_i8(b.addr + i);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main() -> i64 {
+    return sums("AB", "C") % 256;
+}
+=== str_byte_sum_twice | text
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn twice(s: String) -> i64 {
+    return byte_sum(s) + byte_sum(s);
+}
+
+fn main() -> i64 {
+    return twice("ABCD") % 256;
+}
+=== str_escape_lens | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("\0") * 100 + len_of("a\0b\r\'") * 10 + len_of("\\\"\n\t");
+}
+=== str_many_args | text
+fn mix(a: String, b: i64, c: String, d: i64, e: String, f: i64, g: String, h: i64) -> i64 {
+    return a.len + b * 2 + c.len * 3 + d * 4 + e.len * 5 + f * 6 + g.len * 7 + h * 8;
+}
+
+fn main() -> i64 {
+    return mix("a", 1, "bb", 2, "ccc", 3, "dddd", 4);
+}
+=== str_nested_calls | text
+fn inner(s: String) -> i64 {
+    return s.len;
+}
+
+fn outer(n: i64, s: String, m: i64) -> i64 {
+    return n * 100 + s.len * 10 + m;
+}
+
+fn main() -> i64 {
+    return outer(inner("ab"), "cde", inner("fghi")) % 256;
+}
+=== str_forwarded_bounded | text
+fn unused(s: String) -> i64 {
+    return 1;
+}
+
+fn sink(s: String, k: i64) -> i64 {
+    return k * 3;
+}
+
+fn relay(a: String, b: String, k: i64) -> i64 {
+    return sink(b, k) + sink(a, k + 1);
+}
+
+fn main() -> i64 {
+    return relay("x", "yz", 4) + 5;
+}
+=== str_addr_write_bounded | text
+fn show(s: String) -> i64 {
+    return __mind_write(1, s.addr, s.len, 0 - 1);
+}
+
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn forward(s: String) -> i64 {
+    return show(s);
+}
+
+fn main() -> i64 {
+    let a: i64 = show("addr+len\n");
+    let b: i64 = forward("");
+    let c: i64 = show("tab\tquote\"slash\\\n");
+    let d: i64 = byte_sum("ABCD");
+    let e: i64 = show("été\n");
+    if e != 6 {
+        return 1;
+    }
+    return (a + b + c + d) % 256;
+}
+=== str_refused_store | text
+fn bump(s: String) -> i64 {
+    __mind_store_i8(s.addr, __mind_load_i8(s.addr) + 1);
+    return __mind_load_i8(s.addr);
+}
+
+fn main() -> i64 {
+    return bump("A");
+}
+=== str_refused_store_via_let | text
+fn poke(p: i64) -> i64 {
+    __mind_store_i8(p, 66);
+    return __mind_load_i8(p);
+}
+
+fn via_let(s: String) -> i64 {
+    let p: i64 = s.addr;
+    return poke(p);
+}
+
+fn main() -> i64 {
+    return via_let("A");
+}
+=== str_refused_store_via_call | text
+fn poke(p: i64) -> i64 {
+    __mind_store_i8(p, 66);
+    return __mind_load_i8(p);
+}
+
+fn via_call(s: String) -> i64 {
+    return poke(s.addr);
+}
+
+fn main() -> i64 {
+    return via_call("A");
+}
+=== str_refused_cap | text
+fn cap_of(s: String) -> i64 {
+    return s.cap;
+}
+
+fn main() -> i64 {
+    return cap_of("abc");
+}
+=== str_refused_equality | text
+fn same(a: String, b: String) -> i64 {
+    if a == b {
+        return 1;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    return same("ab", "ab");
+}
+=== str_refused_equality_host | text
+fn same(a: String, b: String) -> i64 {
+    if a == b {
+        return 1;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    return same("ab", "ab");
+}
+=== str_refused_result | text
+fn pick(s: String) -> String {
+    return s;
+}
+
+fn main() -> i64 {
+    return 0;
+}
+=== str_refused_annotated_let | text
+fn main() -> i64 {
+    let s: String = "hi";
+    return s.len;
+}
+=== str_refused_assign | text
+fn swap(a: String, b: String) -> i64 {
+    a = b;
+    return a.len;
+}
+
+fn main() -> i64 {
+    return swap("x", "yz");
+}
+=== str_refused_computed_argument | text
+fn take(s: String) -> i64 {
+    return s.len;
+}
+
+fn pick(c: i64, a: String, b: String) -> i64 {
+    return take(if c == 1 { a } else { b });
+}
+
+fn main() -> i64 {
+    return pick(1, "x", "yz");
+}
+=== str_refused_let_literal | text
+fn main() -> i64 {
+    let s = "hi";
+    return 0;
+}
+=== str_refused_literal_to_i64_parameter | text
+fn take(n: i64) -> i64 {
+    return n;
+}
+
+fn main() -> i64 {
+    return take("hi");
+}
+=== str_refused_lowercase_type | text
+fn f(s: string) -> i64 {
+    return 0;
+}
+
+fn main() -> i64 {
+    return 0;
+}
+=== str_refused_unbounded_read | text
+fn w(s: String) -> i64 {
+    return (__mind_load_i64(s.addr) >> 8) & 255;
+}
+
+fn main() -> i64 {
+    return w("x") + w("yz") * 0;
+}
+=== str_refused_unbounded_index | text
+fn same(a: String, b: String) -> i64 {
+    let mut i: i64 = 0;
+    while i < a.len {
+        if __mind_load_i8(a.addr + i) != __mind_load_i8(b.addr + i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn main() -> i64 {
+    return same("abc", "ab");
+}
+=== str_refused_empty_text_read | text
+fn first(s: String) -> i64 {
+    return __mind_load_i8(s.addr);
+}
+
+fn main() -> i64 {
+    return first("");
+}
+=== str_refused_string_sum | text
+fn both(a: String, b: String) -> i64 {
+    return a + b;
+}
+
+fn main() -> i64 {
+    return both("x", "y");
+}
+=== str_refused_raw_newline | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("a
+b");
+}
+=== adm_1 | text
+fn unused(s: String) -> i64 { return 1; } fn main() -> i64 { return 5; }
+=== adm_2 | text
+fn sink(s: String, k: i64) -> i64 { return k * 3; } fn relay(a: String, b: String, k: i64) -> i64 { return sink(b, k) + sink(a, k + 1); } fn main() -> i64 { return relay("x", "yz", 4); }
+=== adm_3 | text
+fn len_of(s: String) -> i64 { return s.len; } fn main() -> i64 { return len_of("a\nb\0"); }
+=== adm_4 | text
+fn show(s: String) -> i64 { return __mind_write(1, s.addr, s.len, 0 - 1); } fn main() -> i64 { return show("ok"); }
+=== adm_5 | text
+fn n(s: String) -> i64 { let t: i64 = 0; let i: i64 = 0; while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn main() -> i64 { let k: i64 = 0; while k < 2 { k = k + n("ab"); } return k; }
+=== proven_1 | text
+fn f(s: String) -> i64 { return __mind_write(1, (s.addr), (s.len), 0 - 1); } fn main() -> i64 { return 0; }
+=== proven_2 | text
+fn f(s: String) -> i64 { let i: i64 = 0; while i < s.len { if __mind_load_i8(i + s.addr) == 65 { return i; } i = i + 1; } return 0 - 1; } fn main() -> i64 { return 0; }
+=== proven_3 | text
+fn f(s: String) -> i64 { let i = 0; let t = 0; while (i < s.len) && t < 99 { t = t + __mind_load_i8((s.addr + i)); i = i + 1; } return t; } fn main() -> i64 { return 0; }
+=== proven_4 | text
+fn same(a: String, b: String) -> i64 { let i: i64 = 0; while i < a.len && i < b.len { if __mind_load_i8(a.addr + i) != __mind_load_i8(b.addr + i) { return 0; } i = i + 1; } return 1; } fn main() -> i64 { return 0; }
+=== proven_5 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let n: i64 = 0; while i < s.len { n = n + __mind_load_i8(s.addr + i); i = i + 1; } i = 0; while i < t.len { n = n + __mind_load_i8(t.addr + i); i = i + 1; } return n; } fn main() -> i64 { return 0; }
+=== proven_6 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let n: i64 = 0; while i < s.len { let j: i64 = 0; while j < 2 { n = n + __mind_load_i8(s.addr + i); j = j + 1; } i = i + 1; } return n; } fn main() -> i64 { return 0; }
+=== edge_01 | text
+fn f(s: String) -> i64 { return s.cap; }
+=== edge_02 | text
+fn f(s: String, t: String) -> i64 { s = t; return 0; }
+=== edge_03 | text
+fn g(s: String) -> i64 { return 0; } fn f(c: i64, s: String, t: String) -> i64 { return g(if c == 1 { s } else { t }); }
+=== edge_04 | text
+fn g(s: String) -> i64 { return 0; } fn f(s: String) -> i64 { return g((s)); }
+=== edge_05 | text
+fn f(s: String) -> String { return s; }
+=== edge_06 | text
+fn f(s: String) -> i64 { let t: String = s; return 0; }
+=== edge_07 | text
+fn f(a: String, b: String) -> i64 { return a == b; }
+=== edge_07_host | text
+fn f(a: String, b: String) -> i64 { return a == b; }
+=== edge_08 | text
+fn f(a: String, b: String) -> i64 { return a != b; }
+=== edge_08_host | text
+fn f(a: String, b: String) -> i64 { return a != b; }
+=== edge_09 | text
+fn f(a: String) -> i64 { return a == 0; }
+=== edge_10 | text
+fn f() -> i64 { let s = "hi"; return 0; }
+=== edge_11 | text
+fn g(s: String) -> i64 { return 0; } fn f() -> i64 { return g(("hi")); }
+=== edge_12 | text
+fn g(n: i64) -> i64 { return n; } fn f() -> i64 { return g("hi"); }
+=== edge_13 | text
+fn f() -> i64 { return __mind_load_i8("hi"); }
+=== edge_14 | text
+fn f(s: String) -> i64 { let t = s; return 0; }
+=== edge_15 | text
+fn f(s: string) -> i64 { return 0; }
+=== edge_16 | text
+fn f(s: Foo) -> i64 { return 0; }
+=== edge_17 | text
+fn f(s: String) -> i64 { return s; }
+=== edge_18 | text
+fn g(n: i64) -> i64 { return n; } fn f(s: String) -> i64 { return g(s); }
+=== edge_19 | text
+fn g(s: String) -> i64 { return 0; } fn f() -> i64 { return g(5); }
+=== edge_20 | text
+fn f(s: String) -> i64 { return s + 1; }
+=== edge_21 | text
+fn f(s: String) -> i64 { return __mind_load_i8(s); }
+=== edge_22 | text
+fn f(s: String) -> i64 { return s as i64; }
+=== edge_23 | text
+fn f(s: String) -> i64 { if s { return 1; } return 0; }
+=== edge_24 | text
+fn f(a: String, b: String) -> i64 { return a + b; }
+=== edge_25 | text
+fn f(a: String, b: String) -> i64 { return a < b; }
+=== edge_26 | text
+fn f(a: String) -> i64 { return -a; }
+=== edge_27 | text
+fn f(a: String) -> i64 { return !a; }
+=== edge_28 | text
+fn f(a: String) -> i64 { return a && 1; }
+=== edge_29 | text
+fn f(s: String) -> i64 { s.len = 3; return 0; }
+=== edge_29_host | text
+fn f(s: String) -> i64 { s.len = 3; return 0; }
+=== edge_30 | text
+fn f(s: String) -> i64 { let s = 5; return s.len; }
+=== edge_30_host | text
+fn f(s: String) -> i64 { let s = 5; return s.len; }
+=== edge_31 | text
+fn f(x: i64) -> i64 { return x.len; }
+=== edge_31_host | text
+fn f(x: i64) -> i64 { return x.len; }
+=== edge_32 | text
+fn f(s: String) -> i64 { return s.data; }
+=== edge_32_host | text
+fn f(s: String) -> i64 { return s.data; }
+=== store_1 | text
+fn f(s: String) -> i64 { __mind_store_i8(s.addr, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_2 | text
+fn f(s: String) -> i64 { __mind_store_i8(s.addr + 1, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_3 | text
+fn f(s: String) -> i64 { __mind_store_i8((s.addr), 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_4 | text
+fn f(s: String) -> i64 { __mind_store_i8(s.addr - 0, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_5 | text
+fn f(s: String) -> i64 { __mind_store_i16(s.addr, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_6 | text
+fn f(s: String) -> i64 { __mind_store_i32(s.addr, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_7 | text
+fn f(s: String) -> i64 { __mind_store_i64(s.addr, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_8 | text
+fn f(s: String) -> i64 { __mind_store_i64(3 + s.addr + 5, 65); return 0; } fn main() -> i64 { return f("Z"); }
+=== store_9 | text
+fn f(s: String) -> i64 { __mind_read(0, s.addr, 1, 0 - 1); return 0; } fn main() -> i64 { return f("Z"); }
+=== addr_01 | text
+fn f(s: String) -> i64 { let p: i64 = s.addr; __mind_store_i8(p, 65); return 0; }
+=== addr_02 | text
+fn f(s: String) -> i64 { let p: i64 = 0; p = s.addr + 1; __mind_store_i8(p - 1, 65); return 0; }
+=== addr_03 | text
+fn poke(p: i64) -> i64 { __mind_store_i8(p, 65); return 0; } fn f(s: String) -> i64 { return poke(s.addr); }
+=== addr_04 | text
+fn at(s: String) -> i64 { return s.addr; } fn f(s: String) -> i64 { return at(s); }
+=== addr_05 | text
+fn f(s: String) -> i64 { let c: i64 = __mind_alloc(8); __mind_store_i64(c, s.addr); return __mind_load_i64(c); }
+=== addr_06 | text
+fn f(s: String) -> i64 { return s.addr == 0; }
+=== addr_07 | text
+fn f(s: String) -> i64 { return s.addr & 7; }
+=== addr_08 | text
+fn f(s: String) -> i64 { return __mind_load_i8(s.addr / 2); }
+=== addr_09 | text
+fn f(s: String) -> i64 { return __mind_load_i16(s.addr); }
+=== addr_10 | text
+fn f(s: String) -> i64 { return __mind_free(s.addr); }
+=== addr_11 | text
+fn f(s: String) -> i64 { return __mind_realloc(s.addr, 8); }
+=== addr_12 | text
+fn f(s: String) -> i64 { return __mind_alloc(s.addr); }
+=== addr_13 | text
+fn f(s: String) -> i64 { return __mind_write(s.addr, 1, 1, 0 - 1); }
+=== addr_14 | text
+fn f(s: String) -> i64 { return __mind_write(1, 1, s.addr, 0 - 1); }
+=== addr_15 | text
+fn f(s: String) -> i64 { return __mind_load_i8(0 - s.addr); }
+=== unb_01 | text
+fn f(s: String) -> i64 { return __mind_load_i64(s.addr); }
+=== unb_02 | text
+fn f(s: String) -> i64 { return (__mind_load_i64(s.addr) >> 8) & 255; }
+=== unb_03 | text
+fn f(s: String) -> i64 { return __mind_load_i32(s.addr); }
+=== unb_04 | text
+fn f(s: String) -> i64 { return __mind_load_i8(s.addr); }
+=== unb_05 | text
+fn f(s: String) -> i64 { return __mind_load_i8(s.addr + 0); }
+=== unb_06 | text
+fn f(s: String) -> i64 { return __mind_load_i8(s.addr + 1); }
+=== unb_07 | text
+fn f(s: String, i: i64) -> i64 { return __mind_load_i8(s.addr + i); }
+=== unb_08 | text
+fn f(s: String) -> i64 { let i: i64 = 0; if i < s.len { return __mind_load_i8(s.addr + i); } return 0; }
+=== unb_09 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < t.len { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_10 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i <= s.len { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_11 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while s.len > i { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_12 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len || c { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_13 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len - 1 { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_14 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i != s.len { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_15 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while c { c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_16 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i + 1); i = i + 1; } return 0; }
+=== unb_17 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + (i + 1)); i = i + 1; } return 0; }
+=== unb_18 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i * 2); i = i + 1; } return 0; }
+=== unb_19 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr - i); i = i + 1; } return 0; }
+=== unb_20 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(t.addr + i); i = i + 1; } return 0; }
+=== unb_21 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i64(s.addr + i); i = i + 1; } return 0; }
+=== unb_22 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i + s.addr); i = i + 1; } return 0; }
+=== unb_23 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + (s.addr == 0)); i = i + 1; } return 0; }
+=== unb_24 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + (s.addr & 7)); i = i + 1; } return 0; }
+=== unb_25 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while __mind_load_i8(s.addr + i) != 0 { i = i + 1; } return 0; }
+=== unb_26 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { i = i + 1; c = __mind_load_i8(s.addr + i); } return 0; }
+=== unb_27 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; i = i + 1; } return 0; }
+=== unb_28 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; c = 0; } return 0; }
+=== unb_29 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { if c == 1 { i = 0; } c = __mind_load_i8(s.addr + i); i = i + 1; } return 0; }
+=== unb_30 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i); i = 0; } return 0; }
+=== unb_31 | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { let j: i64 = 0; while j < 2 { i = i + 1; j = j + 1; } c = __mind_load_i8(s.addr + i); i = i + 1; } return 0; }
+=== unb_32 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; i = 0 - 3; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_33 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { c = c + __mind_load_i8(s.addr + i); i = i + 1; } i = 0 - 1; k = k + 1; } return c; }
+=== unb_34 | text
+fn f(s: String, n: i64) -> i64 { let i: i64 = 0; let c: i64 = 0; i = n; while i < s.len { c = c + __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_35 | text
+fn f(s: String, i: i64) -> i64 { let c: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_36 | text
+fn f(s: String) -> i64 { let i: i64 = 5; let c: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_37 | text
+fn f(s: String) -> i64 { let i: i64 = 0 - 1; let c: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_38 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 2; } return c; }
+=== unb_39 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = i - 1; } return c; }
+=== unb_40 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = g(i); } return c; } fn g(n: i64) -> i64 { return n + 1; }
+=== unb_41 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; let i: i64 = 0; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_42 | text
+fn f(s: String) -> i64 { let i: i64 = 0; let c: i64 = 0; for i in 0..2 { c = c + 1; } while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return c; }
+=== unb_43 | text
+fn f(s: String) -> i64 { return __mind_write(1, s.addr + 1, s.len, 0 - 1); }
+=== unb_44 | text
+fn f(s: String) -> i64 { return __mind_write(1, s.addr, s.len - 1, 0 - 1); }
+=== unb_45 | text
+fn f(s: String) -> i64 { return __mind_write(1, s.addr, s.len + 0, 0 - 1); }
+=== unb_46 | text
+fn f(s: String) -> i64 { return __mind_write(1, s.addr, 4, 0 - 1); }
+=== unb_47 | text
+fn f(s: String, t: String) -> i64 { return __mind_write(1, s.addr, t.len, 0 - 1); }
+=== unb_48 | text
+fn f(s: String) -> i64 { let n: i64 = 0; while n < s.len { n = n + __mind_write(1, s.addr + n, s.len - n, 0 - 1); } return n; }
+=== unb_control | text
+fn f(s: String, t: String) -> i64 { let i: i64 = 0; let c: i64 = 1; while i < s.len { c = __mind_load_i8(s.addr + i); i = i + 1; } return 0; } fn main() -> i64 { return 0; }
+=== rawlf_raw | text
+fn take(s: String) -> i64 { return s.len; } fn main() -> i64 { return take("a
+b"); }
+=== rawlf_escape | text
+fn take(s: String) -> i64 { return s.len; } fn main() -> i64 { return take("a\nb"); }
+=== rawlf_let | text
+fn f() -> i64 { let s = "a
+b"; return 0; }
+=== len_1 | text
+fn f(s: String) -> i64 { return s.len * 2 + 1; } fn main() -> i64 { return f("Z"); }
+=== len_2 | text
+fn f(s: String) -> i64 { if s.len > 3 { return s.len; } return 0; } fn main() -> i64 { return f("Z"); }
+=== len_3 | text
+fn f(s: String) -> i64 { let n: i64 = s.len; return n; } fn main() -> i64 { return f("Z"); }
+=== len_4 | text
+fn f(s: String) -> i64 { return __mind_write(1, 0, s.len, 0 - 1); } fn main() -> i64 { return f("Z"); }
+=== seed_result | text
+fn f(s: i64) -> String { return s; }
+=== seed_param | text
+fn f(s: String) -> i64 { return s.len; }
+=== seed_binding_std | text
+fn f(n: i64) -> i64 { let s: String = n; return 0; }
+=== mv_paren_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_paren_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_neg_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = -(if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_neg_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = -(if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_not_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = !(if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_not_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = !(if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_bit_not_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = ~(if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_bit_not_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = ~(if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_as_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { i = i + 1; 1 } else { 2 }) as i64; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_as_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { c = c + 1; 1 } else { 2 }) as i64; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_binary_left_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { i = i + 1; 1 } else { 2 }) + 1; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_binary_left_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { c = c + 1; 1 } else { 2 }) + 1; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_binary_right_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = 1 + (if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_binary_right_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = 1 + (if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_bitwise_left_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { i = i + 1; 1 } else { 2 }) & 1; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_bitwise_left_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { c = c + 1; 1 } else { 2 }) & 1; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_bitwise_right_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = 1 | (if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_bitwise_right_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = 1 | (if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_logical_left_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { i = i + 1; 1 } else { 2 }) && 1; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_logical_left_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = (if c > 0 { c = c + 1; 1 } else { 2 }) && 1; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_logical_right_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = 1 || (if c > 0 { i = i + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_logical_right_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = 1 || (if c > 0 { c = c + 1; 1 } else { 2 }); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_return_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 99 { return (if c > 0 { i = i + 1; 1 } else { 2 }); } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_return_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 99 { return (if c > 0 { c = c + 1; 1 } else { 2 }); } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_call_argument_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = g((if c > 0 { i = i + 1; 1 } else { 2 })); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_call_argument_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = g((if c > 0 { c = c + 1; 1 } else { 2 })); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_let_value_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { let u: i64 = if c > 0 { i = i + 1; 1 } else { 2 }; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_let_value_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { let u: i64 = if c > 0 { c = c + 1; 1 } else { 2 }; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_assign_value_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = if c > 0 { i = i + 1; 1 } else { 2 }; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_assign_value_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = if c > 0 { c = c + 1; 1 } else { 2 }; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_condition_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if (if c > 0 { i = i + 1; 1 } else { 2 }) { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_condition_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if (if c > 0 { c = c + 1; 1 } else { 2 }) { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_then_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { i = i + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_then_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_else_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c - 1; } else { i = i + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_else_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c - 1; } else { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_else_nested_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c - 1; } else { if c > 1 { i = i + 1; } } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_if_else_nested_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c - 1; } else { if c > 1 { c = c + 1; } } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_while_condition_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { while (if c > 0 { i = i + 1; 1 } else { 2 }) { c = c - 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_while_condition_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { while (if c > 0 { c = c + 1; 1 } else { 2 }) { c = c - 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_while_body_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { while c > 5 { i = i + 1; c = c - 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_while_body_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { while c > 5 { c = c + 1; c = c - 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_start_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in (if c > 0 { i = i + 1; 1 } else { 2 })..2 { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_start_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in (if c > 0 { c = c + 1; 1 } else { 2 })..2 { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_end_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..(if c > 0 { i = i + 1; 1 } else { 2 }) { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_end_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..(if c > 0 { c = c + 1; 1 } else { 2 }) { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_body_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..2 { i = i + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_body_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..2 { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_body_nested_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..2 { if c > 0 { i = i + 1; } } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_for_body_nested_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..2 { if c > 0 { c = c + 1; } } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_index_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { let arr = [1, 2]; t = arr[(if c > 0 { i = i + 1; 1 } else { 2 })]; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_index_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { let arr = [1, 2]; t = arr[(if c > 0 { c = c + 1; 1 } else { 2 })]; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_paren_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_paren_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_neg_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = -(if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_neg_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = -(if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_not_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = !(if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_not_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = !(if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_bit_not_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = ~(if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_bit_not_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = ~(if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_as_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }) as i64; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_as_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }) as i64; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_binary_left_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }) + 1; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_binary_left_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }) + 1; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_binary_right_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = 1 + (if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_binary_right_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = 1 + (if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_bitwise_left_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }) & 1; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_bitwise_left_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }) & 1; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_bitwise_right_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = 1 | (if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_bitwise_right_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = 1 | (if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_logical_left_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }) && 1; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_logical_left_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }) && 1; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_logical_right_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = 1 || (if c > 0 { i = 0 - 5; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_logical_right_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = 1 || (if c > 0 { c = c + 1; 1 } else { 2 }); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_return_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 99 { return (if c > 0 { i = 0 - 5; 1 } else { 2 }); } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_return_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 99 { return (if c > 0 { c = c + 1; 1 } else { 2 }); } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_call_argument_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = g((if c > 0 { i = 0 - 5; 1 } else { 2 })); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_call_argument_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = g((if c > 0 { c = c + 1; 1 } else { 2 })); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_let_value_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let u: i64 = if c > 0 { i = 0 - 5; 1 } else { 2 }; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_let_value_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let u: i64 = if c > 0 { c = c + 1; 1 } else { 2 }; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_assign_value_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = if c > 0 { i = 0 - 5; 1 } else { 2 }; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_assign_value_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = if c > 0 { c = c + 1; 1 } else { 2 }; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_condition_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if (if c > 0 { i = 0 - 5; 1 } else { 2 }) { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_condition_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if (if c > 0 { c = c + 1; 1 } else { 2 }) { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_then_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 0 { i = 0 - 5; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_then_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 0 { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_else_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 0 { c = c - 1; } else { i = 0 - 5; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_else_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 0 { c = c - 1; } else { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_else_nested_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 0 { c = c - 1; } else { if c > 1 { i = 0 - 5; } } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_if_else_nested_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 0 { c = c - 1; } else { if c > 1 { c = c + 1; } } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_while_condition_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } while (if c > 0 { i = 0 - 5; 1 } else { 2 }) { c = c - 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_while_condition_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } while (if c > 0 { c = c + 1; 1 } else { 2 }) { c = c - 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_while_body_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } while c > 5 { i = 0 - 5; c = c - 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_while_body_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } while c > 5 { c = c + 1; c = c - 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_start_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in (if c > 0 { i = 0 - 5; 1 } else { 2 })..2 { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_start_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in (if c > 0 { c = c + 1; 1 } else { 2 })..2 { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_end_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in 0..(if c > 0 { i = 0 - 5; 1 } else { 2 }) { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_end_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in 0..(if c > 0 { c = c + 1; 1 } else { 2 }) { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_body_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in 0..2 { i = 0 - 5; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_body_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in 0..2 { c = c + 1; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_body_nested_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in 0..2 { if c > 0 { i = 0 - 5; } } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_for_body_nested_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } for j in 0..2 { if c > 0 { c = c + 1; } } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_index_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let arr = [1, 2]; t = arr[(if c > 0 { i = 0 - 5; 1 } else { 2 })]; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_index_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let arr = [1, 2]; t = arr[(if c > 0 { c = c + 1; 1 } else { 2 })]; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_break | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 99 { break; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_break | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 99 { break; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_continue | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 98 { continue; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_continue | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } if c > 98 { continue; } k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== mv_array_literal | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { let arr = [1, 2]; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_array_literal | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let arr = [1, 2]; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_field_receiver_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }).len; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_field_receiver_moved_host | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { i = 0 - 5; 1 } else { 2 }).len; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_field_receiver_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }).len; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_field_receiver_kept_host | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } t = (if c > 0 { c = c + 1; 1 } else { 2 }).len; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_array_element_moved | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let arr = [(if c > 0 { i = 0 - 5; 1 } else { 2 }), 2]; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== rs_array_element_kept | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } let arr = [(if c > 0 { c = c + 1; 1 } else { 2 }), 2]; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== print_moved_0 | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { print((if c > 0 { i = i + 1; 1 } else { 2 })); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== print_kept_1 | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { print((if c > 0 { c = c + 1; 1 } else { 2 })); t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== print_reset_2 | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } print((if c > 0 { i = 0 - 5; 1 } else { 2 })); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== print_kept_3 | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } print((if c > 0 { c = c + 1; 1 } else { 2 })); k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== else_move | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c - 1; } else { i = i + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== else_move_control | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { if c > 0 { c = c - 1; } else { c = c + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== for_move | text
+fn f(s: String) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..2 { i = i + 1; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== for_move_control | text
+fn f(s: String) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { for j in 0..2 { t = t + j; } t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== looptest_move | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len && (if c > 0 { i = i + 1; 1 } else { 2 }) == 1 { t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== looptest_stay | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len && (if c > 0 { c = c + 1; 1 } else { 2 }) == 1 { t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== blind_assert | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = t + __mind_load_i8(s.addr + i); assert(c == 1); i = i + 1; } return t; }
+=== blind_after | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } assert(c == 1); return t; }
+=== blind_seen | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; }
+=== block_in_loop_text | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; while i < s.len { c = c + 777; t = t + __mind_load_i8(s.addr + i); i = i + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== block_after_text | text
+fn f(s: String, c: i64) -> i64 { let i: i64 = 0; let t: i64 = 0; let k: i64 = 0; while k < 2 { while i < s.len { t = t + __mind_load_i8(s.addr + i); i = i + 1; } c = c + 777; k = k + 1; } return t; } fn g(n: i64) -> i64 { return n; }
+=== constlet_1 | text
+const i: i64 = 0 - 100; fn f(s: String) -> i64 { while i < s.len { return __mind_load_i8(s.addr + i); } let i: i64 = 0; return i; }
+=== constlet_2 | text
+const i: i64 = 0 - 100; fn f(s: String, c: i64) -> i64 { if c > 0 { let i: i64 = 0; c = i; } while i < s.len { return __mind_load_i8(s.addr + i); } return 0; }
+=== constlet_3 | text
+const i: i64 = 0 - 100; fn f(s: String) -> i64 { let i: i64 = 0; while i < s.len { return __mind_load_i8(s.addr + i); } return i; }
+=== constlet_4 | text
+const i: i64 = 0 - 100; fn f(s: String, c: i64) -> i64 { if c > 0 { let i: i64 = 0; while i < s.len { return __mind_load_i8(s.addr + i); } } return 0; }
+=== cap_at_bound | recipe
+1 "fn len_of(s: String) -> i64 { return s.len; } fn main() -> i64 { return len_of(\""
+49113 "A"
+1 "\"); }\n"
+=== cap_over_bound | recipe
+1 "fn len_of(s: String) -> i64 { return s.len; } fn main() -> i64 { return len_of(\""
+49114 "A"
+1 "\"); }\n"
+=== cap_uncalled_over | recipe
+1 "fn len_of(s: String) -> i64 { return s.len; } fn unused() -> i64 { return len_of(\""
+49114 "A"
+1 "\"); } fn main() -> i64 { return 0; }\n"
+=== cap_big_no_literal | recipe
+1 "fn big() -> i64 { let a: i64 = 0; "
+6144 "a = a + 1; "
+1 "return a; } fn main() -> i64 { return big(); }\n"
+=== lim_lit_under | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let k: i64 = 0;
+    let t: i64 = 0;
+    while k < 33554431 {
+        t = t + len_of("x");
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}
+=== lim_lit_over | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let k: i64 = 0;
+    let t: i64 = 0;
+    while k < 33554432 {
+        t = t + len_of("x");
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}
+=== lim_alloc_under | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let k: i64 = 0;
+    let t: i64 = 0;
+    while k < 33554431 {
+        let p: i64 = __mind_alloc(24); t = t + 1;
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}
+=== lim_alloc_over | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let k: i64 = 0;
+    let t: i64 = 0;
+    while k < 33554432 {
+        let p: i64 = __mind_alloc(24); t = t + 1;
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}
+=== nul_in_write | text
+fn show(s: String) -> i64 {
+    return __mind_write(1, s.addr, s.len, 0 - 1);
+}
+fn main() -> i64 {
+    return show("a\0b") + show("\0\0");
+}
+=== partial_write | text
+fn tail(s: String) -> i64 {
+    return __mind_write(1, s.addr + 1, s.len - 1, 0 - 1);
+}
+fn last(s: String) -> i64 {
+    return __mind_load_i8(s.addr + s.len - 1);
+}
+fn main() -> i64 {
+    return tail("hello\n") + last("xyz");
+}
+=== value_if_len | text
+fn f(s: String) -> i64 {
+    let n: i64 = if s.len > 2 { s.len } else { 7 };
+    return n;
+}
+fn main() -> i64 {
+    return f("ab") * 10 + f("abcd");
+}
+=== recursion_1000 | text
+fn count(s: String, n: i64) -> i64 {
+    if n == 0 {
+        return s.len;
+    }
+    return count(s, n - 1) + 1;
+}
+fn main() -> i64 {
+    return count("abc", 1000) % 256;
+}
+=== loop_1m | text
+fn take(s: String, k: i64) -> i64 {
+    return s.len + k;
+}
+fn main() -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return t % 251;
+}
+=== loop_50m | text
+fn take(s: String, k: i64) -> i64 {
+    return s.len + k;
+}
+fn main() -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 50000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return t % 251;
+}
+=== branchy_param | text
+fn pick(c: i64, a: String, b: String) -> i64 {
+    if c == 1 {
+        return a.len;
+    }
+    if c == 2 {
+        return b.len;
+    }
+    return a.len + b.len;
+}
+fn main() -> i64 {
+    return pick(1, "x", "yz") * 100 + pick(2, "x", "yz") * 10 + pick(3, "x", "yz");
+}
+=== read_through_len | text
+fn sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i) * (i + 1);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return sum("hello world") % 256;
+}
+=== arena_argc_literal_loop | text
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+fn main(argc: i64, argv: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < argc * 1000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return (t / 1000000) % 256;
+}
+=== arena_argc_alloc_loop | text
+fn main(argc: i64, argv: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < argc * 1000000 {
+        let p: i64 = __mind_alloc(24);
+        t = t + 1;
+        i = i + 1;
+    }
+    return (t / 1000000) % 256;
+}
+=== oob_load_i64 | text
+fn w(s: String) -> i64 {
+    return (__mind_load_i64(s.addr) >> 8) & 255;
+}
+fn main() -> i64 {
+    return w("x") + w("yz") * 0;
+}
+=== vowels | text
+fn count(s: String) -> i64 {
+    let mut n: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        let c: i64 = __mind_load_i8(s.addr + i);
+        if c == 97 || c == 101 || c == 105 || c == 111 || c == 117 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+fn main() -> i64 {
+    return count("education") * 10 + count("rhythm") + count("");
+}
+=== prefix_both | text
+fn common(a: String, b: String) -> i64 {
+    let mut i: i64 = 0;
+    while i < a.len && i < b.len {
+        if __mind_load_i8(a.addr + i) != __mind_load_i8(b.addr + i) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+fn main() -> i64 {
+    return common("abcdef", "abcxyz") * 10 + common("ab", "abcdef") + common("", "q") + common("longer", "long");
+}
+=== reuse_counter | text
+fn f(a: String, b: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut n: i64 = 0;
+    while i < a.len {
+        n = n + __mind_load_i8(a.addr + i);
+        i = i + 1;
+    }
+    i = 0;
+    while i < b.len {
+        n = n + __mind_load_i8(b.addr + i) * 2;
+        i = i + 1;
+    }
+    return n % 251;
+}
+fn main() -> i64 {
+    return f("hello", "world");
+}
+=== break_in_loop | text
+fn find(s: String, ch: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut at: i64 = 0 - 1;
+    while i < s.len {
+        if __mind_load_i8(s.addr + i) == ch {
+            at = i;
+            break;
+        }
+        i = i + 1;
+    }
+    return at;
+}
+fn main() -> i64 {
+    return find("find the x here", 120) + find("none", 122) + 1;
+}
+=== loop_reached_helper | text
+fn weight(s: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut n: i64 = 0;
+    while i < s.len {
+        n = n + __mind_load_i8(s.addr + i) % 7;
+        i = i + 1;
+    }
+    return n;
+}
+fn main() -> i64 {
+    let mut k: i64 = 0;
+    let mut t: i64 = 0;
+    while k < 5 {
+        t = t + weight("abcdef");
+        k = k + 1;
+    }
+    return t % 256;
+}
+=== recursion_loops | text
+fn sum(s: String, d: i64) -> i64 {
+    if d == 0 {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    let mut n: i64 = 0;
+    while i < s.len {
+        n = n + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return n % 13 + sum(s, d - 1);
+}
+fn main() -> i64 {
+    return sum("recursion", 50);
+}
+=== write_orders | text
+fn say(s: String) -> i64 {
+    return __mind_write(1, s.addr, s.len, 0 - 1);
+}
+fn twice(s: String) -> i64 {
+    return say(s) + say(s);
+}
+fn main() -> i64 {
+    let a: i64 = twice("ab\n");
+    let b: i64 = say("");
+    let c: i64 = say("tab\there\r\n");
+    return a + b + c;
+}
+=== many_literals_loop | text
+fn tag(s: String, k: i64) -> i64 {
+    return s.len + k;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < 2000000 {
+        t = t + tag("literal in a loop", 1) % 7;
+        i = i + 1;
+    }
+    return t % 256;
+}
+=== le_guard | text
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut c: i64 = 0;
+    while i <= s.len {
+        c = __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return c;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== read_after_loop | text
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    while i < s.len {
+        i = i + 1;
+    }
+    return __mind_load_i8(s.addr + i);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== step_first | text
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut c: i64 = 0;
+    while i < s.len {
+        i = i + 1;
+        c = __mind_load_i8(s.addr + i);
+    }
+    return c;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== helper_index | text
+fn at(s: String, i: i64) -> i64 {
+    return __mind_load_i8(s.addr + i);
+}
+fn main() -> i64 {
+    return at("ab", 5);
+}
+=== alias_index | text
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut c: i64 = 0;
+    while i < s.len {
+        let j: i64 = i + 3;
+        c = __mind_load_i8(s.addr + j);
+        i = i + 1;
+    }
+    return c;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== put_loop | text
+fn say(fd: i64, s: String) -> i64 {
+    let mut put: i64 = 0;
+    while put < s.len {
+        let w: i64 = __mind_write(fd, s.addr + put, s.len - put, 0 - 1);
+        if w <= 0 {
+            return 0 - 1;
+        }
+        put = put + w;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return say(1, "partial\n");
+}
+=== other_string_guard | text
+fn f(a: String, b: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut c: i64 = 0;
+    while i < a.len {
+        c = c + __mind_load_i8(b.addr + i);
+        i = i + 1;
+    }
+    return c % 256;
+}
+fn main() -> i64 {
+    return f("long text", "x");
+}
+=== if_guard | text
+fn f(s: String, i: i64) -> i64 {
+    if i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab", 1);
+}
+=== bare_empty | text
+fn f(s: String) -> i64 {
+    return __mind_load_i8(s.addr);
+}
+fn main() -> i64 {
+    return f("");
+}
+=== string_plus_string | text
+fn f(a: String, b: String) -> i64 {
+    return a + b;
+}
+fn main() -> i64 {
+    return f("x", "y");
+}
+=== h_const_shadow | text
+const i: i64 = 0 - 100;
+fn f(s: String) -> i64 {
+    while i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    let i: i64 = 0;
+    return i;
+}
+fn main() -> i64 {
+    return f("Q");
+}
+=== h_second_var | text
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    let j: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        j = i + 1;
+        t = t + __mind_load_i8(s.addr + j);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== h_compound_before | text
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        i += 1;
+        t = t + __mind_load_i8(s.addr + i);
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== h_compound_last | text
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i += 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("QR") % 200;
+}
+=== h_call_counter | text
+fn bump(n: i64) -> i64 {
+    return n + 1;
+}
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        i = bump(i);
+        t = t + __mind_load_i8(s.addr + i);
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== h_after_loop | text
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    while i < s.len {
+        i = i + 1;
+    }
+    return __mind_load_i8(s.addr + i);
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== h_negative_start | text
+fn f(s: String) -> i64 {
+    let i: i64 = 0 - 1;
+    let t: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== len_of_x | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return len_of("x");
+}
+=== c2_shadow_no_let | text
+const i: i64 = 0 - 100;
+fn f(s: String) -> i64 {
+    while i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("Q");
+}
+=== c3_let_first | text
+const i: i64 = 0 - 100;
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    while i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    return i;
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== c4_const_read | text
+const i: i64 = 0 - 100;
+fn f(s: String) -> i64 {
+    return i;
+}
+fn main() -> i64 {
+    return f("Q") + 200;
+}
+=== c5_sibling_scope | text
+const i: i64 = 0 - 100;
+fn f(s: String, c: i64) -> i64 {
+    if c > 0 {
+        let i: i64 = 0;
+        c = i;
+    }
+    while i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("Q", 1);
+}
+=== h_else_move | text
+fn f(s: String, c: i64) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        if c > 0 {
+            c = c - 1;
+        } else {
+            i = i + 1;
+        }
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q", 0) % 200;
+}
+=== h_for_move | text
+fn f(s: String) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        for j in 0..2 {
+            i = i + 1;
+        }
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q") % 200;
+}
+=== h_value_if_move | text
+fn f(s: String, c: i64) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        t = t + (if c > 0 { i = i + 1; 1 } else { 2 });
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("Q", 1) % 200;
+}
+=== h_high_bytes | text
+fn sum(s: String) -> i64 {
+    let i: i64 = 0;
+    let t: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return (sum("é\0ÿ") + 1000) % 200;
+}
+=== h_two_strings | text
+fn same(a: String, b: String) -> i64 {
+    let i: i64 = 0;
+    while i < a.len && i < b.len {
+        if __mind_load_i8(a.addr + i) != __mind_load_i8(b.addr + i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1 + a.len * 10 + b.len * 100;
+}
+fn main() -> i64 {
+    return (same("abc", "abd") + same("abc", "abcd") + same("", "x")) % 200;
+}
+=== h_reset_between | text
+fn f(s: String, t: String) -> i64 {
+    let i: i64 = 0;
+    let n: i64 = 0;
+    while i < s.len {
+        n = n + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    i = 0;
+    while i < t.len {
+        n = n + __mind_load_i8(t.addr + i) * 2;
+        i = i + 1;
+    }
+    return n;
+}
+fn main() -> i64 {
+    return f("ab", "xyz") % 200;
+}
+=== me_else_move | text
+fn f(s: String, c: i64) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        if c > 0 {
+            t = t + 1;
+        } else {
+            i = i + 1;
+        }
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn pad(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    let a: i64 = f("Q", 0);
+    let b: i64 = pad("ZZZZ");
+    return a % 256;
+}
+=== const_shadow | text
+const i: i64 = 0 - 8;
+
+fn peek(s: String) -> i64 {
+    while i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    let i: i64 = 0;
+    return 0;
+}
+
+fn pad(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    let a: i64 = pad("ABCDEFGHIJKLMNOP");
+    return a + peek("xy");
+}
+=== const_shadow_block | text
+const i: i64 = 0 - 8;
+
+fn peek(s: String, c: i64) -> i64 {
+    while i < s.len {
+        return __mind_load_i8(s.addr + i);
+    }
+    if c > 100 {
+        let i: i64 = 0;
+        return i;
+    }
+    return 0;
+}
+
+fn pad(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    let a: i64 = pad("ABCDEFGHIJKLMNOP");
+    return a + peek("xy", 1);
+}
+=== high_bytes | text
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn main() -> i64 {
+    let v: i64 = byte_sum("é");
+    print(v);
+    let w: i64 = byte_sum("ÿ€");
+    print(w);
+    return 3;
+}
+=== comment_marks | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn show(s: String) -> i64 {
+    return __mind_write(1, s.addr, s.len, 0 - 1);
+}
+
+fn main() -> i64 {
+    let a: i64 = show("x//y/*z*/w\n");
+    return len_of("a//b") * 10 + len_of("/*") + a;
+}
+=== dead_fn | text
+fn unused(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t + __mind_write(1, s.addr, s.len, 0 - 1);
+}
+
+fn main() -> i64 {
+    return 7;
+}
+=== recursion_5 | text
+fn r(s: String, n: i64) -> i64 {
+    if n == 0 {
+        return s.len;
+    }
+    return r(s, n - 1) + 1;
+}
+
+fn main() -> i64 {
+    return r("abc", 5);
+}
+=== else_move_alt | text
+fn f(s: String, c: i64) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        if c > 0 {
+            t = t + 1;
+        } else {
+            i = i + 1;
+        }
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn main() -> i64 {
+    return f("ab", 0) % 256;
+}
+=== nested_loop_move | text
+fn f(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    let mut k: i64 = 0;
+    while i < s.len {
+        while k < 1 {
+            k = k + 1;
+            i = i + 1;
+        }
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn main() -> i64 {
+    return f("ab") % 256;
+}
+=== for_shadow_counter | text
+fn f(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    for j in 0..3 {
+        t = t + j;
+    }
+    return t;
+}
+
+fn main() -> i64 {
+    return f("AB") % 256;
+}
+=== unicode_escape | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("\u{41}");
+}
+=== hex_escape | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("\x41");
+}
+=== lit_field | text
+fn main() -> i64 {
+    return "abc".len;
+}
+=== str_index | text
+fn f(s: String) -> i64 {
+    return s[0];
+}
+
+fn main() -> i64 {
+    return f("abc");
+}
+=== str_cast | text
+fn f(s: String) -> i64 {
+    return s as i64;
+}
+
+fn main() -> i64 {
+    return f("abc") % 2;
+}
+=== str_to_free | text
+fn f(s: String) -> i64 {
+    __mind_free(s);
+    return 1;
+}
+
+fn main() -> i64 {
+    return f("abc");
+}
+=== ptr_cast_len | text
+fn f(s: String) -> i64 {
+    let p = s.len as *const u8;
+    return s.len;
+}
+
+fn main() -> i64 {
+    return f("abc");
+}
+=== user_collide | text
+fn string_len(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return string_len("abcd");
+}
+=== method_len | text
+fn f(s: String) -> i64 {
+    return s.len();
+}
+
+fn main() -> i64 {
+    return f("abcd");
+}
+=== loop_template_1m | text
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < 1000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return t % 256;
+}
+=== loop_44000000 | text
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < 44000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return t % 256;
+}
+=== loop_45000000 | text
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < 45000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return t % 256;
+}
+=== loop_50000000 | text
+fn take(s: String, k: i64) -> i64 {
+    return k;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < 50000000 {
+        t = t + take("abcdefgh", 1);
+        i = i + 1;
+    }
+    return t % 256;
+}
+=== g0_lit_loop | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let k: i64 = 0;
+    let t: i64 = 0;
+    while k < 33554432 {
+        t = t + len_of("x");
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}
+=== g0_alloc_loop | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let k: i64 = 0;
+    let t: i64 = 0;
+    while k < 33554432 {
+        let p: i64 = __mind_alloc(24); t = t + 1;
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}
+=== raw_cr | hex
+666e206c656e5f6f6628733a20537472696e6729202d3e20693634207b0a2020
+202072657475726e20732e6c656e3b0a7d0a0a666e206d61696e2829202d3e20
+693634207b0a2020202072657475726e206c656e5f6f662822610d622229202a
+203130202b20313b0a7d0a
+=== raw_tab | hex
+666e206c656e5f6f6628733a20537472696e6729202d3e20693634207b0a2020
+202072657475726e20732e6c656e3b0a7d0a0a666e206d61696e2829202d3e20
+693634207b0a2020202072657475726e206c656e5f6f6628226109622229202a
+203130202b20313b0a7d0a
+=== raw_ctl | hex
+666e206c656e5f6f6628733a20537472696e6729202d3e20693634207b0a2020
+202072657475726e20732e6c656e3b0a7d0a0a666e206d61696e2829202d3e20
+693634207b0a2020202072657475726e206c656e5f6f6628226101622229202a
+203130202b20313b0a7d0a
+=== raw_nul | hex
+666e206c656e5f6f6628733a20537472696e6729202d3e20693634207b0a2020
+202072657475726e20732e6c656e3b0a7d0a0a666e206d61696e2829202d3e20
+693634207b0a2020202072657475726e206c656e5f6f6628226100622229202a
+203130202b20313b0a7d0a
+=== raw_crlf_file | hex
+666e206c656e5f6f6628733a20537472696e6729202d3e20693634207b0d0a20
+20202072657475726e20732e6c656e3b0d0a7d0d0a0d0a666e206d61696e2829
+202d3e20693634207b0d0a2020202072657475726e206c656e5f6f6628226162
+632229202a203130202b20313b0d0a7d0d0a
+=== size_1 | text
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    return len_of("a") % 256;
+}
+=== size_65536 | recipe
+1 "fn len_of(s: String) -> i64 {\n    return s.len;\n}\n\nfn main() -> i64 {\n    return len_of(\""
+65536 "a"
+1 "\") % 256;\n}\n"
+=== s2_int_literal | text
+// s2_int_literal: an integer literal in a String slot
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return take(42);
+}
+=== s2_i64_param | text
+// s2_i64_param: a name bound to an i64 parameter
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn f(n: i64) -> i64 {
+    return take(n);
+}
+fn main() -> i64 {
+    return f(3);
+}
+=== s2_shadow_let | text
+// s2_shadow_let: a top-level let re-declares s as i64: resolved binding is the let, not the String parameter
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn f(s: String) -> i64 {
+    let s: i64 = 5;
+    return take(s);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s2_call_result | text
+// s2_call_result: a call result in the slot
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn g() -> i64 {
+    return 1;
+}
+fn main() -> i64 {
+    return take(g());
+}
+=== s2_len_value | text
+// s2_len_value: s.len is an i64 value (S3), not a String
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn f(s: String) -> i64 {
+    return take(s.len);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s2_addr_value | text
+// s2_addr_value: s.addr is an i64 value
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn f(s: String) -> i64 {
+    return take(s.addr);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s2_spelling_not_binding | text
+// s2_spelling_not_binding: same spelling s, but in f it is bound to an i64 parameter: resolved binding, not spelling
+// expected: REFUSE lane.string.argument
+fn other(s: String) -> i64 {
+    return s.len;
+}
+fn f(s: i64) -> i64 {
+    return other(s);
+}
+fn main() -> i64 {
+    return f(1);
+}
+=== s2_literal_slot | text
+// s2_literal_slot: a literal in the slot
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return take("ab");
+}
+=== s2_param_slot | text
+// s2_param_slot: a parameter name in the slot
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn outer(s: String) -> i64 {
+    return take(s);
+}
+fn main() -> i64 {
+    return outer("abc");
+}
+=== s2_two_level | text
+// s2_two_level: pass-down through two levels
+// expected: ADMIT
+fn c(s: String) -> i64 {
+    return s.len;
+}
+fn b(s: String) -> i64 {
+    return c(s);
+}
+fn a(s: String) -> i64 {
+    return b(s) + 1;
+}
+fn main() -> i64 {
+    return a("abcd");
+}
+=== s2_mixed_slots | text
+// s2_mixed_slots: literal, i64 and a parameter name in one call: 100+70+2 = 172
+// expected: ADMIT
+fn mix(a: String, n: i64, b: String) -> i64 {
+    return a.len * 100 + n * 10 + b.len;
+}
+fn f(s: String) -> i64 {
+    return mix("x", 7, s);
+}
+fn main() -> i64 {
+    return f("yz") % 256;
+}
+=== s3_addr_return | text
+// s3_addr_return: .addr returned as an i64; the address of a literal is not 0
+// expected: ADMIT
+fn at(s: String) -> i64 {
+    return s.addr;
+}
+fn main() -> i64 {
+    if at("x") == 0 {
+        return 1;
+    }
+    return 0;
+}
+=== s3_addr_let | text
+// s3_addr_let: .addr stored in a let and loaded
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    let p: i64 = s.addr;
+    return __mind_load_i8(p);
+}
+fn main() -> i64 {
+    return f("A");
+}
+=== s3_addr_call | text
+// s3_addr_call: .addr passed to a function as an i64
+// expected: ADMIT
+fn first(p: i64) -> i64 {
+    return __mind_load_i8(p);
+}
+fn f(s: String) -> i64 {
+    return first(s.addr);
+}
+fn main() -> i64 {
+    return f("Z");
+}
+=== s3_load_loop | text
+// s3_load_loop: load loop bounded by .len: 65+66+67
+// expected: ADMIT
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return byte_sum("ABC");
+}
+=== s3_extern_cast | text
+// s3_extern_cast: .addr with the pointer cast as an extern argument; the \0 is written in the literal (S4)
+// expected: ADMIT
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open(s.addr as *const u8, 0, 0);
+}
+fn main() -> i64 {
+    return f("/nonexistent\0") + 2;
+}
+=== s3_addr_plus_i | text
+// s3_addr_plus_i: .addr + constant
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    return __mind_load_i8(s.addr + 1);
+}
+fn main() -> i64 {
+    return f("AB");
+}
+=== s3_addr_compare | text
+// s3_addr_compare: == on i64 values of .addr is i64 equality, not String equality
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    if s.addr == 0 {
+        return 1;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("A");
+}
+=== s3_addr_mem | text
+// s3_addr_mem: .addr stored to memory and read back
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    let c: i64 = __mind_alloc(8);
+    __mind_store_i64(c, s.addr);
+    if __mind_load_i64(c) == s.addr {
+        return 1;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("A");
+}
+=== s3_copy_to_buffer | text
+// s3_copy_to_buffer: copy of the literal bytes into a buffer: store through a buffer address, load through .addr
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    let buf: i64 = __mind_alloc(8);
+    let mut i: i64 = 0;
+    while i < s.len {
+        __mind_store_i8(buf + i, __mind_load_i8(s.addr + i));
+        i = i + 1;
+    }
+    return __mind_load_i8(buf + 1);
+}
+fn main() -> i64 {
+    return f("AB");
+}
+=== s3_len_arith | text
+// s3_len_arith: .len in arithmetic
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    return s.len * 2 + 1;
+}
+fn main() -> i64 {
+    return f("abc");
+}
+=== s3_nonstring_addr | text
+// s3_nonstring_addr: .addr on an i64 receiver
+// expected: REFUSE lane.source.struct
+fn f(x: i64) -> i64 {
+    return x.addr;
+}
+fn main() -> i64 {
+    return f(1);
+}
+=== s3_nonstring_addr_host | text
+// s3_nonstring_addr: .addr on an i64 receiver
+// expected: REFUSE lane.source.struct
+fn f(x: i64) -> i64 {
+    return x.addr;
+}
+fn main() -> i64 {
+    return f(1);
+}
+=== s3_shadow_addr | text
+// s3_shadow_addr: receiver name is shadowed by a top-level let: not the String parameter
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    let s: i64 = 5;
+    return s.addr;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s3_shadow_addr_host | text
+// s3_shadow_addr: receiver name is shadowed by a top-level let: not the String parameter
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    let s: i64 = 5;
+    return s.addr;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s3_call_receiver | text
+// s3_call_receiver: field read on a call result
+// expected: REFUSE lane.source.struct
+fn g() -> i64 {
+    return 1;
+}
+fn main() -> i64 {
+    return g().len;
+}
+=== s3_call_receiver_host | text
+// s3_call_receiver: field read on a call result
+// expected: REFUSE lane.source.struct
+fn g() -> i64 {
+    return 1;
+}
+fn main() -> i64 {
+    return g().len;
+}
+=== s4_nul_end | text
+// s4_nul_end: the \0 written in the literal counts: len 4; no hidden terminator
+// expected: ADMIT
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return len_of("abc\0");
+}
+=== s4_nul_value | text
+// s4_nul_value: the written \0 is the last defined byte
+// expected: ADMIT
+fn last(s: String) -> i64 {
+    return __mind_load_i8(s.addr + s.len - 1);
+}
+fn main() -> i64 {
+    return last("A\0") + 7;
+}
+=== s4_empty | text
+// s4_empty: the empty literal has len 0
+// expected: ADMIT
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return len_of("") + 3;
+}
+=== s4_each_escape | text
+// s4_each_escape: each escape of string_escape_value (n t r 0 backslash quote dquote) is one byte
+// expected: ADMIT
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return len_of("\n") + len_of("\t") + len_of("\r") + len_of("\0")
+        + len_of("\\") + len_of("\'") + len_of("\"");
+}
+=== s4_store_literal | text
+// s4_store_literal: read-only bytes: compiled, faults at run
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    __mind_store_i8(s.addr, 66);
+    return 0;
+}
+fn main() -> i64 {
+    return f("A");
+}
+=== s4_past_end | text
+// s4_past_end: no hidden terminator: byte len is not defined (program error), compiler admits
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    return __mind_load_i8(s.addr + s.len);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_result | text
+// s5_result: String as result type
+// expected: REFUSE lane.string.result
+fn f(s: String) -> String {
+    return s;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== s5_binding | text
+// s5_binding: let typed String (annotation precedes the literal)
+// expected: REFUSE lane.string.binding
+fn f(s: String) -> i64 {
+    let t: String = "x";
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_const | text
+// s5_const: const of type String
+// expected: REFUSE lane.string.const
+const K: String = "ab";
+fn main() -> i64 {
+    return 0;
+}
+=== s5_const_used | text
+// s5_const_used: const of type String, also used as an argument: the declaration is first in source order
+// expected: REFUSE lane.string.const
+const K: String = "ab";
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return take(K);
+}
+=== s5_assign_name | text
+// s5_assign_name: assignment to the name (target precedes the literal)
+// expected: REFUSE lane.string.assign
+fn f(s: String) -> i64 {
+    s = "x";
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_assign_len | text
+// s5_assign_len: assignment to a field (len)
+// expected: REFUSE lane.string.assign
+fn f(s: String) -> i64 {
+    s.len = 3;
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_assign_len_host | text
+// s5_assign_len: assignment to a field (len)
+// expected: REFUSE lane.string.assign
+fn f(s: String) -> i64 {
+    s.len = 3;
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_assign_addr | text
+// s5_assign_addr: assignment to a field (addr)
+// expected: REFUSE lane.string.assign
+fn f(s: String) -> i64 {
+    s.addr = 0;
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_assign_addr_host | text
+// s5_assign_addr: assignment to a field (addr)
+// expected: REFUSE lane.string.assign
+fn f(s: String) -> i64 {
+    s.addr = 0;
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_eq | text
+// s5_eq: == of a String with itself
+// expected: REFUSE lane.string.equality
+fn f(a: String) -> i64 {
+    if a == a {
+        return 1;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_eq_host | text
+// s5_eq: == of a String with itself
+// expected: REFUSE lane.string.equality
+fn f(a: String) -> i64 {
+    if a == a {
+        return 1;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_neq | text
+// s5_neq: !=
+// expected: REFUSE lane.string.equality
+fn f(a: String, b: String) -> i64 {
+    return a != b;
+}
+fn main() -> i64 {
+    return f("a", "b");
+}
+=== s5_neq_host | text
+// s5_neq: !=
+// expected: REFUSE lane.string.equality
+fn f(a: String, b: String) -> i64 {
+    return a != b;
+}
+fn main() -> i64 {
+    return f("a", "b");
+}
+=== s5_arith_add | text
+// s5_arith_add: other operator on String operands (lane.binop.non_scalar)
+// expected: REFUSE lane.binop.non_scalar
+fn f(a: String, b: String) -> i64 {
+    return a + b;
+}
+fn main() -> i64 {
+    return f("a", "b");
+}
+=== s5_neg | text
+// s5_neg: unary minus
+// expected: REFUSE lane.source.neg_type
+fn f(s: String) -> i64 {
+    return -s;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_cast_i64 | text
+// s5_cast_i64: cast of the String value
+// expected: REFUSE lane.source.cast
+fn f(s: String) -> i64 {
+    return s as i64;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_cast_ptr | text
+// s5_cast_ptr: cast of the String itself to a pointer (not .addr)
+// expected: REFUSE lane.source.cast
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open(s as *const u8, 0, 0);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_cond_if | text
+// s5_cond_if: String as a condition
+// expected: REFUSE lane.type.mismatch
+fn f(s: String) -> i64 {
+    if s {
+        return 1;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_logic_and | text
+// s5_logic_and: logical use
+// expected: REFUSE lane.type.mismatch
+fn f(s: String) -> i64 {
+    return s && 1;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_print | text
+// s5_print: print of a String value
+// expected: REFUSE lane.source.print_argument
+fn f(s: String) -> i64 {
+    print(s);
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_cap | text
+// s5_cap: .cap
+// expected: REFUSE lane.string.cap
+fn f(s: String) -> i64 {
+    return s.cap;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_field_unknown | text
+// s5_field_unknown: unknown field
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    return s.data;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_field_unknown_host | text
+// s5_field_unknown: unknown field
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    return s.data;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_extern_arg | text
+// s5_extern_arg: String value as an extern argument
+// expected: REFUSE lane.string.use
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open(s, 0, 0);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_extern_arg_host | text
+// s5_extern_arg: String value as an extern argument
+// expected: REFUSE lane.string.use
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open(s, 0, 0);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_extern_arg_host_bounded | text
+// s5_extern_arg: String value as an extern argument
+// expected: REFUSE scope.bounded_extern (the bounded profile, in the host check)
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open(s, 0, 0);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_return_value | text
+// s5_return_value: String value as a return value
+// expected: REFUSE lane.string.use
+fn f(s: String) -> i64 {
+    return s;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_call_i64_slot | text
+// s5_call_i64_slot: String into an i64 slot is a mix with i64
+// expected: REFUSE lane.type.mismatch
+fn g(n: i64) -> i64 {
+    return n;
+}
+fn f(s: String) -> i64 {
+    return g(s);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_literal_return | text
+// s5_literal_return: literal outside S2(a) and print
+// expected: REFUSE lane.source.string
+fn f() -> i64 {
+    return "x";
+}
+fn main() -> i64 {
+    return f();
+}
+=== s5_print_literal | text
+// s5_print_literal: a literal as a print argument is the S5 exception
+// expected: ADMIT
+fn main() -> i64 {
+    print("hi");
+    return 0;
+}
+=== s6_result | text
+// s6_result: same rule inside a function only a std-like helper calls: result
+// expected: REFUSE lane.string.result
+fn deep(s: String) -> String {
+    return s;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + 0;
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_binding | text
+// s6_binding: same rule inside a function only a std-like helper calls: let typed String
+// expected: REFUSE lane.string.binding
+fn deep(s: String) -> i64 {
+    let t: String = s;
+    return 0;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_assign | text
+// s6_assign: same rule inside a function only a std-like helper calls: assign
+// expected: REFUSE lane.string.assign
+fn deep(s: String, t: String) -> i64 {
+    s = t;
+    return 0;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("a", "b");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_equality | text
+// s6_equality: same rule inside a function only a std-like helper calls: equality
+// expected: REFUSE lane.string.equality
+fn deep(a: String, b: String) -> i64 {
+    return a == b;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("a", "b");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_equality_host | text
+// s6_equality: same rule inside a function only a std-like helper calls: equality
+// expected: REFUSE lane.string.equality
+fn deep(a: String, b: String) -> i64 {
+    return a == b;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("a", "b");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_arith | text
+// s6_arith: same rule inside a function only a std-like helper calls: other operator
+// expected: REFUSE lane.binop.non_scalar
+fn deep(a: String, b: String) -> i64 {
+    return a + b;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab", "cd");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_cond | text
+// s6_cond: same rule inside a function only a std-like helper calls: condition
+// expected: REFUSE lane.type.mismatch
+fn deep(s: String) -> i64 {
+    if s {
+        return 1;
+    }
+    return 0;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_print | text
+// s6_print: same rule inside a function only a std-like helper calls: print of a String
+// expected: REFUSE lane.source.print_argument
+fn deep(s: String) -> i64 {
+    print(s);
+    return 0;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_extern_arg | text
+// s6_extern_arg: same rule inside a function only a std-like helper calls: String as extern argument
+// expected: REFUSE lane.string.use
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn deep(s: String) -> i64 {
+    return open(s, 0, 0);
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_extern_arg_host | text
+// s6_extern_arg: same rule inside a function only a std-like helper calls: String as extern argument
+// expected: REFUSE lane.string.use
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn deep(s: String) -> i64 {
+    return open(s, 0, 0);
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_extern_arg_host_bounded | text
+// s6_extern_arg: same rule inside a function only a std-like helper calls: String as extern argument
+// expected: REFUSE scope.bounded_extern (the bounded profile, in the host check)
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn deep(s: String) -> i64 {
+    return open(s, 0, 0);
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_return_value | text
+// s6_return_value: same rule inside a function only a std-like helper calls: String as return value
+// expected: REFUSE lane.string.use
+fn deep(s: String) -> i64 {
+    return s;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("ab");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_argument | text
+// s6_argument: same rule inside a function only a std-like helper calls: S2 slot check
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn deep(n: i64) -> i64 {
+    return take(n);
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep(3);
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_receiver | text
+// s6_receiver: same rule inside a function only a std-like helper calls: receiver check
+// expected: REFUSE lane.source.struct
+fn deep(x: i64) -> i64 {
+    return x.len;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep(3);
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_receiver_host | text
+// s6_receiver: same rule inside a function only a std-like helper calls: receiver check
+// expected: REFUSE lane.source.struct
+fn deep(x: i64) -> i64 {
+    return x.len;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep(3);
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_admit_reads | text
+// s6_admit_reads: admitted shapes stay admitted in a helper-only function: 1 + 65 + 66
+// expected: ADMIT
+fn deep(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+fn std_like_helper(n: i64) -> i64 {
+    return n + deep("AB");
+}
+fn main() -> i64 {
+    return std_like_helper(1);
+}
+=== s6_dead_refused | text
+// s6_dead_refused: a function nothing calls is walked: String result refused
+// expected: REFUSE lane.string.result
+fn dead(s: String) -> String {
+    return s;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== s6_dead_admitted_shape | text
+// s6_dead_admitted_shape: refused shape in a function nothing calls: user functions are walked, called or not
+// expected: REFUSE lane.string.cap
+fn dead(s: String) -> i64 {
+    return s.cap;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== s5_unannotated_let | text
+// s5_unannotated_let: let without annotation bound to a String value: lane.string.binding
+// expected: REFUSE lane.string.binding
+fn f(s: String) -> i64 {
+    let t = s;
+    return t.len;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_literal_left_equality | text
+// s5_literal_left_equality: literal as left operand of ==: lane.source.string (first in source order)
+// expected: REFUSE lane.source.string
+fn f(a: String) -> i64 {
+    return "x" == a;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s5_literal_left_equality_host | text
+// s5_literal_left_equality: literal as left operand of ==: lane.source.string (first in source order)
+// expected: REFUSE lane.source.string
+fn f(a: String) -> i64 {
+    return "x" == a;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== s2_paren_name | text
+// s2_paren_name: parenthesised name in a String slot
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn f(s: String) -> i64 {
+    return take((s));
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== paren_literal | text
+// paren_literal: take(("hi")) is judged as take("hi")
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return take(("hi"));
+}
+=== paren_name_double | text
+// paren_name_double: take(((s))) is judged as take(s)
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn f(s: String) -> i64 {
+    return take(((s)));
+}
+fn main() -> i64 {
+    return f("abc");
+}
+=== paren_int_refused | text
+// paren_int_refused: take((5)) is judged as take(5): parentheses do not hide a non-literal-non-name
+// expected: REFUSE lane.string.argument
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return take((5));
+}
+=== let_infer_mut | text
+// let_infer_mut: let mut t = s; (no annotation, String value)
+// expected: REFUSE lane.string.binding
+fn f(s: String) -> i64 {
+    let mut t = s;
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== let_infer_in_loop | text
+// let_infer_in_loop: let t = s; inside a loop body
+// expected: REFUSE lane.string.binding
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    while i < 2 {
+        let t = s;
+        i = i + 1;
+    }
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== return_paren | text
+// return_paren: return (s); is judged as return s;
+// expected: REFUSE lane.string.use
+fn f(s: String) -> i64 {
+    return (s);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== i64_slot_second | text
+// i64_slot_second: String name in the second (i64) parameter slot
+// expected: REFUSE lane.type.mismatch
+fn g(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+fn f(s: String) -> i64 {
+    return g(1, s);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== intrinsic_store | text
+// intrinsic_store: String value as the address argument of a store intrinsic
+// expected: REFUSE lane.type.mismatch
+fn f(s: String) -> i64 {
+    __mind_store_i8(s, 1);
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== index_var | text
+// index_var: String value as an index base with a variable index
+// expected: REFUSE lane.source.index
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    let mut t: i64 = 0;
+    while i < s.len {
+        t = t + s[i];
+        i = i + 1;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== method_addr | text
+// method_addr: String value as a method receiver (s.addr())
+// expected: REFUSE lane.source.method_call
+fn f(s: String) -> i64 {
+    return s.addr();
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== escape_unknown | text
+// escape_unknown: unknown escape \q in a literal passed to a String slot
+// expected: REFUSE lane.string.escape
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return take("a\qb");
+}
+=== tie_first_cap_then_eq | text
+// tie_first_cap_then_eq: two refused constructs: the smaller source position (.cap) wins
+// expected: REFUSE lane.string.cap
+fn f(s: String) -> i64 {
+    let a: i64 = s.cap;
+    let b: i64 = s == s;
+    return a + b;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_first_cap_then_eq_host | text
+// tie_first_cap_then_eq: two refused constructs: the smaller source position (.cap) wins
+// expected: REFUSE lane.string.cap
+fn f(s: String) -> i64 {
+    let a: i64 = s.cap;
+    let b: i64 = s == s;
+    return a + b;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_first_eq_then_cap | text
+// tie_first_eq_then_cap: two refused constructs: the smaller source position (==) wins
+// expected: REFUSE lane.string.equality
+fn f(s: String) -> i64 {
+    let b: i64 = s == s;
+    let a: i64 = s.cap;
+    return a + b;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_first_eq_then_cap_host | text
+// tie_first_eq_then_cap: two refused constructs: the smaller source position (==) wins
+// expected: REFUSE lane.string.equality
+fn f(s: String) -> i64 {
+    let b: i64 = s == s;
+    let a: i64 = s.cap;
+    return a + b;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_literal_neq_left | text
+// tie_literal_neq_left: "x" != a: literal left operand is lane.source.string
+// expected: REFUSE lane.source.string
+fn f(a: String) -> i64 {
+    return "x" != a;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_literal_neq_left_host | text
+// tie_literal_neq_left: "x" != a: literal left operand is lane.source.string
+// expected: REFUSE lane.source.string
+fn f(a: String) -> i64 {
+    return "x" != a;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_literal_receiver_arg | text
+// tie_literal_receiver_arg: "abc".len as an argument of an i64 slot: literal receiver
+// expected: REFUSE lane.source.string
+fn g(n: i64) -> i64 {
+    return n;
+}
+fn main() -> i64 {
+    return g("abc".len);
+}
+=== addr_cast_admit | text
+// addr_cast_admit: open(s.addr as *const u8, ..): .addr is a plain i64, the cast is the admitted po
+// expected: ADMIT
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open(s.addr as *const u8, 0, 0);
+}
+fn main() -> i64 {
+    return f("ab\0");
+}
+=== cast_paren | text
+// cast_paren: open((s) as *const u8, ..): parentheses transparent, cast of the String value
+// expected: REFUSE lane.source.cast
+extern "C" { fn open(path: *const u8, flags: i64, mode: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return open((s) as *const u8, 0, 0);
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== fcast_addr_read | text
+// fcast_addr_read: .addr of a String parameter through the pointer cast; the byte is read back through the pointer
+// expected: ADMIT, exit 66 (the byte B)
+fn at(s: String, i: i64) -> i64 {
+    let p: i64 = (s.addr as *const u8) as i64;
+    return __mind_load_i8(p + i);
+}
+fn main() -> i64 {
+    return at("AB", 1);
+}
+=== fcast_len_ptr | text
+// fcast_len_ptr: .len of a String parameter in a pointer cast is the plain length
+// expected: ADMIT, exit 42 (5 + 37)
+fn n(s: String) -> i64 {
+    return (s.len as *mut u8) as i64;
+}
+fn main() -> i64 {
+    return n("abcde") + 37;
+}
+=== fcast_addr_arith | text
+// fcast_addr_arith: arithmetic on .addr and .len, then the pointer cast; the last byte is read back
+// expected: ADMIT, exit 122 (the byte z)
+fn last(s: String) -> i64 {
+    return __mind_load_i8(((s.addr + s.len - 1) as *const u8) as i64);
+}
+fn main() -> i64 {
+    return last("xyz");
+}
+=== fcast_addr_extern | text
+// fcast_addr_extern: .addr of a String parameter cast to the pointer argument of the readlink extern row
+// expected: ADMIT, exit 42 (the link of /proc/self/exe starts with /, a missing path gives -1)
+extern "C" {
+    unsafe fn readlink(path: *const u8, buf: *mut u8, cap: i64) -> i64;
+}
+fn link_len(p: String, buf: i64) -> i64 {
+    return readlink(p.addr as *const u8, buf as *mut u8, 4095);
+}
+fn main() -> i64 {
+    let buf: i64 = __mind_alloc(4096);
+    if link_len("/proc/self/exe\0", buf) <= 0 {
+        return 1;
+    }
+    if __mind_load_i8(buf) != 47 {
+        return 2;
+    }
+    if link_len("/proc/nodir_mind/f\0", buf) != 0 - 1 {
+        return 3;
+    }
+    return 42;
+}
+=== fcast_cap | text
+// fcast_cap: .cap of a String parameter in the same pointer cast keeps the key of the walk
+// expected: REFUSE lane.string.cap
+fn f(s: String) -> i64 {
+    return (s.cap as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== fcast_i64_recv | text
+// fcast_i64_recv: .addr of an i64 parameter in the same pointer cast keeps the key of the walk
+// expected: REFUSE lane.source.struct
+fn f(n: i64) -> i64 {
+    return (n.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f(7);
+}
+=== fcast_i64_recv_host | text
+// fcast_i64_recv: .addr of an i64 parameter in the same pointer cast keeps the key of the walk
+// expected: REFUSE lane.source.struct
+fn f(n: i64) -> i64 {
+    return (n.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f(7);
+}
+=== fcast_shadow | text
+// fcast_shadow: a let shadows the String parameter with an i64; .addr of it in the pointer cast keeps the key of the walk
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    let s: i64 = 7;
+    return (s.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== fcast_shadow_host | text
+// fcast_shadow: a let shadows the String parameter with an i64; .addr of it in the pointer cast keeps the key of the walk
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    let s: i64 = 7;
+    return (s.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== fcast_struct_recv | text
+// fcast_struct_recv: .addr of a parameter of another struct in the same pointer cast
+struct Buf {
+    addr: i64,
+    len: i64,
+}
+fn f(b: Buf) -> i64 {
+    return (b.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f(Buf { addr: 42, len: 1 });
+}
+=== fcast_shadow_struct | text
+// fcast_shadow_struct: a let of another struct (with a field addr) shadows the String parameter in the same pointer cast
+struct Buf {
+    addr: i64,
+    len: i64,
+}
+fn f(s: String) -> i64 {
+    let s: Buf = Buf { addr: 42, len: 1 };
+    return (s.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== fcast_shadow_struct_host | text
+// fcast_shadow_struct: a let of another struct (with a field addr) shadows the String parameter in the same pointer cast
+struct Buf {
+    addr: i64,
+    len: i64,
+}
+fn f(s: String) -> i64 {
+    let s: Buf = Buf { addr: 42, len: 1 };
+    return (s.addr as *const u8) as i64;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== shadow_struct_read | text
+// shadow_struct_read: a let of another struct (with a field addr) shadows the String parameter; the plain field read
+// expected: REFUSE lane.source.struct
+struct Buf {
+    addr: i64,
+    len: i64,
+}
+fn f(s: String) -> i64 {
+    let s: Buf = Buf { addr: 42, len: 1 };
+    return s.addr;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== shadow_struct_read_host | text
+// shadow_struct_read: a let of another struct (with a field addr) shadows the String parameter; the plain field read
+// expected: REFUSE lane.source.struct
+struct Buf {
+    addr: i64,
+    len: i64,
+}
+fn f(s: String) -> i64 {
+    let s: Buf = Buf { addr: 42, len: 1 };
+    return s.addr;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== shadow_loop_read | text
+// shadow_loop_read: a loop binder shadows the String parameter; a field read of the binder
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    let mut t: i64 = 0;
+    for s in 0..3 {
+        t = t + s.len;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== shadow_loop_read_host | text
+// shadow_loop_read: a loop binder shadows the String parameter; a field read of the binder
+// expected: REFUSE lane.source.struct
+fn f(s: String) -> i64 {
+    let mut t: i64 = 0;
+    for s in 0..3 {
+        t = t + s.len;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== dead_user_eq | text
+// dead_user_eq: an uncalled USER function with == on Strings is refused
+// expected: REFUSE lane.string.equality
+fn dead(a: String, b: String) -> i64 {
+    return a == b;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== dead_user_eq_host | text
+// dead_user_eq: an uncalled USER function with == on Strings is refused
+// expected: REFUSE lane.string.equality
+fn dead(a: String, b: String) -> i64 {
+    return a == b;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== s6_std_unreached_module | text
+// s6_std_unreached_module: refused shape (.cap) inside a std function of a module the program does not reac
+// expected: ADMIT
+fn main() -> i64 {
+    return 0;
+}
+=== s6_std_unreached_module@carrier | carrier
+# std module zz_str_unreached: in the std blob; not imported and not reached by main
+fn zz_unreached_cap(s: String) -> i64 { return s.cap; }
+=== s6_std_unreached_fn | text
+// s6_std_unreached_fn: refused shape (==) in a std function the program does not reach inside a module 
+// expected: ADMIT
+fn main() -> i64 {
+    return zz_reached_len("ab");
+}
+=== s6_std_unreached_fn@carrier | carrier
+# std module zz_str_mixed: in the std blob; main reaches the module but calls only zz_reached_len
+fn zz_reached_len(s: String) -> i64 { return s.len; }
+fn zz_unreached_eq(a: String, b: String) -> i64 { return a == b; }
+=== s6_std_reached_cap | text
+// s6_std_reached_cap: refused shape (.cap) inside a std function the image emits: refused, site in the
+// expected: REFUSE lane.string.cap
+fn main() -> i64 {
+    return zz_reached_cap("ab");
+}
+=== s6_std_reached_cap@carrier | carrier
+# std module zz_str_reached: in the std blob; main calls zz_reached_cap
+fn zz_reached_cap(s: String) -> i64 { return s.cap; }
+=== s6_std_reached_eq | text
+// s6_std_reached_eq: refused shape (==) inside a std function the image emits: refused, site in the s
+// expected: REFUSE lane.string.equality
+fn main() -> i64 {
+    return zz_reached_eq("a", "b");
+}
+=== s6_std_reached_eq@carrier | carrier
+# std module zz_str_reached: in the std blob; main calls zz_reached_eq
+fn zz_reached_eq(a: String, b: String) -> i64 { return a == b; }
+=== tie_str_then_bad_literal | text
+// tie_str_then_bad_literal: a refused String construct (.cap) at an earlier position and a literal the lexer refuses at a later one: the earlier position wins
+// expected: REFUSE lane.string.cap
+fn f(s: String) -> i64 {
+    return s.cap;
+}
+fn main() -> i64 {
+    return f("a\qb");
+}
+=== tie_bad_literal_then_str | text
+// tie_bad_literal_then_str: the mirror: the literal the lexer refuses comes first, the String refusal (.cap) later: the earlier position wins
+// expected: REFUSE lane.string.escape
+fn main() -> i64 {
+    return f("a\qb");
+}
+fn f(s: String) -> i64 {
+    return s.cap;
+}
+=== order_extern_then_string | text
+// order_extern_then_string: an extern the lane refuses (unknown symbol) at an earlier position and a string refusal (.cap) at a later one: the string family comes first, whatever the positions
+// expected: REFUSE lane.string.cap
+extern "C" { fn zz_no_such_symbol(x: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return s.cap;
+}
+fn main() -> i64 {
+    return zz_no_such_symbol(1) + f("a");
+}
+=== order_extern_alone | text
+// order_extern_alone: the extern program of order_extern_then_string without its string refusal: the extern family names it
+// expected: REFUSE lane.extern.unknown_symbol
+extern "C" { fn zz_no_such_symbol(x: i64) -> i64; }
+fn f(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return zz_no_such_symbol(1) + f("a");
+}
+=== user_print | text
+// user_print: a user function named print with a String parameter is that function
+// expected: ADMIT
+fn print(s: String) -> i64 {
+    return s.len;
+}
+fn g(t: String) -> i64 {
+    return print(t);
+}
+fn main() -> i64 {
+    return g("abc");
+}
+=== user_print_lit | text
+// user_print_lit: the same user function called with a literal
+// expected: ADMIT
+fn print(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    return print("abc");
+}
+=== user_print_two | text
+// user_print_two: a user print of a String and an i64 is that function
+// expected: ADMIT
+fn print(s: String, n: i64) -> i64 {
+    return s.len + n;
+}
+fn g(t: String) -> i64 {
+    return print(t, 1);
+}
+fn main() -> i64 {
+    return g("abc");
+}
+=== paren_recv_len | text
+// paren_recv_len: parentheses around a String receiver of .len are transparent
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    return (s).len;
+}
+fn main() -> i64 {
+    return f("abc");
+}
+=== paren_recv_cast | text
+// paren_recv_cast: (s).len as i64 is a plain i64
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    let n: i64 = (s).len as i64;
+    return n;
+}
+fn main() -> i64 {
+    return f("abc");
+}
+=== paren_recv_ptr | text
+// paren_recv_ptr: parentheses around a String receiver of .len are transparent in a pointer cast
+// expected: ADMIT, exit 42 (5 + 37)
+fn n(s: String) -> i64 {
+    return ((s).len as *mut u8) as i64;
+}
+fn main() -> i64 {
+    return n("abcde") + 37;
+}
+=== paren_recv_ptr_nest | text
+// paren_recv_ptr_nest: two parentheses around a String receiver of .len are transparent in a pointer cast
+// expected: ADMIT, exit 42 (5 + 37)
+fn n(s: String) -> i64 {
+    return (((s)).len as *mut u8) as i64;
+}
+fn main() -> i64 {
+    return n("abcde") + 37;
+}
+=== paren_recv_ptr_nest3 | text
+// paren_recv_ptr_nest3: three parentheses around a String receiver of .len are transparent in a pointer cast
+// expected: ADMIT, exit 42 (5 + 37)
+fn n(s: String) -> i64 {
+    return ((((s))).len as *mut u8) as i64;
+}
+fn main() -> i64 {
+    return n("abcde") + 37;
+}
+=== paren_recv_ptr_deep | text
+// paren_recv_ptr_deep: sixteen parentheses around a String receiver of .len are transparent in a pointer cast
+// expected: ADMIT, exit 42 (5 + 37)
+fn n(s: String) -> i64 {
+    return (((((((((((((((((s)))))))))))))))).len as *mut u8) as i64;
+}
+fn main() -> i64 {
+    return n("abcde") + 37;
+}
+=== paren_recv_ptr_ceiling | recipe
+1 "// paren_recv_ptr_ceiling: a String receiver of .len under one parenthesis less than the nesting ceiling is transparent in a pointer cast.\n// With the outer parenthesis this is the deepest receiver of this program that the running compiler admits (README).\n// expected: ADMIT, exit 42 (5 + 37)\nfn n(s: String) -> i64 {\n    return ("
+ceiling-1 "("
+1 "s"
+ceiling-1 ")"
+1 ".len as *mut u8) as i64;\n}\nfn main() -> i64 {\n    return n(\"abcde\") + 37;\n}\n"
+=== paren_recv_ptr_ceiling_bare | recipe
+1 "// paren_recv_ptr_ceiling_bare: a String receiver of .len at the nesting ceiling is transparent in a pointer cast.\n// The ceiling is the one of the running compiler: 18022 on the bounded profile, 208076 on the default profile (README).\n// expected: ADMIT, exit 42 (5 + 37)\nfn n(s: String) -> i64 {\n    return "
+ceiling "("
+1 "s"
+ceiling ")"
+1 ".len as *mut u8 as i64;\n}\nfn main() -> i64 {\n    return n(\"abcde\") + 37;\n}\n"
+=== paren_recv_ptr_ceiling_bare@beyond | recipe
+1 "// paren_recv_ptr_ceiling_bare, one level past the nesting ceiling. expected: REFUSE, exit status 3, the stack budget.\nfn n(s: String) -> i64 {\n    return "
+ceiling+1 "("
+1 "s"
+ceiling+1 ")"
+1 ".len as *mut u8 as i64;\n}\nfn main() -> i64 {\n    return n(\"abcde\") + 37;\n}\n"
+=== const_i64_lit | text
+// const_i64_lit: a string literal in a const whose type is i64
+// expected: REFUSE lane.source.string
+const K: i64 = "ab";
+fn main() -> i64 {
+    return 0;
+}
+=== const_noann_lit | text
+// const_noann_lit: a string literal in a const with no type
+// expected: REFUSE lane.source.string
+const K = "ab";
+fn main() -> i64 {
+    return 0;
+}
+=== else_cap | text
+// else_cap: .cap only in the else branch
+// expected: REFUSE lane.string.cap
+fn f(s: String, c: i64) -> i64 {
+    if c == 1 {
+        return 0;
+    } else {
+        return s.cap;
+    }
+}
+fn main() -> i64 {
+    return f("ab", 0);
+}
+=== else_eq | text
+// else_eq: == of Strings only in the else branch
+// expected: REFUSE lane.string.equality
+fn f(s: String, t: String, c: i64) -> i64 {
+    if c == 1 {
+        return 0;
+    } else {
+        return s == t;
+    }
+}
+fn main() -> i64 {
+    return f("a", "b", 0);
+}
+=== while_cap | text
+// while_cap: .cap only in a while condition
+// expected: REFUSE lane.string.cap
+fn f(s: String) -> i64 {
+    let mut i: i64 = 0;
+    while s.cap > i {
+        i = i + 1;
+    }
+    return i;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== while_eq | text
+// while_eq: == of Strings only in a while condition
+// expected: REFUSE lane.string.equality
+fn f(s: String, t: String) -> i64 {
+    while s == t {
+        return 0;
+    }
+    return 1;
+}
+fn main() -> i64 {
+    return f("a", "b");
+}
+=== while_bare | text
+// while_bare: a bare String name as a while condition
+// expected: REFUSE lane.type.mismatch
+fn f(s: String) -> i64 {
+    while s {
+        return 0;
+    }
+    return 1;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== let_shadow_init | text
+// let_shadow_init: the initializer is judged before the let's own binding
+// expected: REFUSE lane.type.mismatch
+fn f(s: String) -> i64 {
+    let s: i64 = s;
+    return s;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== for_shadow_range | text
+// for_shadow_range: the range is read before the loop binder shadows the parameter
+// expected: ADMIT
+fn f(s: String) -> i64 {
+    let mut t: i64 = 0;
+    for s in s.len..5 {
+        t = t + s;
+    }
+    return t;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== lex_comment_quote | text
+// lex_comment_quote: a quote inside a line comment is not a literal
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    // a comment with one quote " before the literal
+    let n: i64 = take("abc");
+    // a comment with one quote " after the literal
+    return n;
+}
+=== lex_char_dquote | text
+// lex_char_dquote: the char literal '"' is not a string literal
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let c: i64 = '"' as i64;
+    return take("ab") + c;
+}
+=== lex_char_squote | text
+// lex_char_squote: a single-quote char and an escaped double-quote char before a string
+// expected: ADMIT
+fn take(s: String) -> i64 {
+    return s.len;
+}
+fn main() -> i64 {
+    let c: i64 = '\'' as i64;
+    let d: i64 = '\"' as i64;
+    return take("ab") + c + d;
+}
+=== tie_add_assign_i64 | text
+// tie_add_assign_i64: at one site the inner node wins (mix with i64, not the assignment)
+// expected: REFUSE lane.type.mismatch
+fn f(s: String) -> i64 {
+    s += 1;
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== tie_add_assign_str | text
+// tie_add_assign_str: at one site the inner node wins (two Strings, not the assignment)
+// expected: REFUSE lane.binop.non_scalar
+fn f(s: String) -> i64 {
+    s += "a";
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== ret_trailing_comma | text
+// ret_trailing_comma: a trailing comma before the result type
+// expected: REFUSE lane.string.result
+fn f(x: i64,) -> String {
+    return 0;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== ret_head_comment | text
+// ret_head_comment: comments between the parameter list, -> and String
+// expected: REFUSE lane.string.result
+fn f(x: i64) // c
+    -> // d
+    String {
+    return 0;
+}
+fn main() -> i64 {
+    return 0;
+}
+=== list_array | text
+// list_array: a String name inside an array literal
+// expected: REFUSE lane.string.use
+fn f(s: String) -> i64 {
+    let a: [i64; 2] = [s, 1];
+    return a[0];
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== list_enum | text
+// list_enum: a String name as an enum constructor payload
+// expected: REFUSE lane.string.use
+enum O {
+    Some(i64),
+    None,
+}
+fn f(s: String) -> i64 {
+    let o: O = O::Some(s);
+    return 0;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== list_struct | text
+// list_struct: a String name as a struct-literal field
+// expected: REFUSE lane.string.use
+struct Buf {
+    a: i64,
+}
+fn f(s: String) -> i64 {
+    let b: Buf = Buf { a: s };
+    return b.a;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== list_addr | text
+// list_addr: the operand of & is walked
+// expected: REFUSE lane.string.use
+fn f(s: String) -> i64 {
+    let p: i64 = &s;
+    return p;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== list_deref | text
+// list_deref: the operand of * is walked
+// expected: REFUSE lane.string.use
+fn f(s: String) -> i64 {
+    return *s;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== list_deref_assign | text
+// list_deref_assign: the value stored through *p is walked
+// expected: REFUSE lane.string.use
+fn f(s: String) -> i64 {
+    let mut n: i64 = 0;
+    let p: i64 = &n;
+    *p = s;
+    return n;
+}
+fn main() -> i64 {
+    return f("ab");
+}
+=== ty_stringbuf_let | text
+// ty_stringbuf_let: a let whose type name is longer than String
+// expected: ADMIT
+struct StringBuf {
+    a: i64,
+}
+fn f(x: i64) -> i64 {
+    let b: StringBuf = StringBuf { a: x };
+    return b.a;
+}
+fn main() -> i64 {
+    return f(5);
+}
+=== ty_stringbuf_result | text
+// ty_stringbuf_result: a result type named StringBuf is not String
+// expected: ADMIT
+struct StringBuf {
+    a: i64,
+}
+fn f(x: i64) -> StringBuf {
+    return StringBuf { a: x };
+}
+fn main() -> i64 {
+    let b: StringBuf = f(5);
+    return b.a;
+}
+=== ty_stringx_result | text
+// ty_stringx_result: a result type named StringX is not String
+// expected: ADMIT
+fn f(x: i64) -> StringX {
+    return 0;
+}
+fn main() -> i64 {
+    return f(1);
+}
+=== ty_stringbuf_param | text
+// ty_stringbuf_param: a parameter whose type name is not exactly String
+// expected: ADMIT
+struct StringBuf {
+    a: i64,
+}
+fn f(s: StringBuf) -> i64 {
+    return s.a;
+}
+fn main() -> i64 {
+    return f(StringBuf { a: 5 });
+}
+=== a8_str_const | text
+// A8 refusal (deferred): string consts `const NAME: str|&str|String = "..."`,
+// with and without `;`, used as a let init, a call argument, a handle-word read
+// and a write buffer. mindc-Rust inlines the literal at every use as a heap
+// String {addr, len, cap = len}; native stage1 has no string-literal lowering in
+// its mic@3 twin yet, so every use fails closed. MLIR: exit 22, "hello hi\n".
+fn str_len(s: i64) -> i64 {
+    __mind_load_i64(s + 8)
+}
+
+fn put(s: i64) -> i64 {
+    __mind_write(1, __mind_load_i64(s), __mind_load_i64(s + 8), 0 - 1)
+}
+
+fn main() -> i64 {
+    let s = MSG;
+    let n: i64 = str_len(s);
+    let b: i64 = __mind_load_i64(__mind_load_i64(TAG)) & 255;
+    let c: i64 = __mind_load_i64(NAME + 8);
+    let w1: i64 = put(MSG);
+    let w2: i64 = put(SEP);
+    let w3: i64 = put(TAG);
+    let nl: i64 = __mind_alloc(8);
+    __mind_store_i8(nl, 10);
+    let w4: i64 = __mind_write(1, nl, 1, 0 - 1);
+    // n=5, c=3, b='h'=104, writes 5+1+2+1=9:
+    // (5*100 + 3*10 + 104 - 100 + 9 - 9) & 255 = 534 & 255 = 22
+    (n * 100 + c * 10 + b - 100 + w1 + w2 + w3 + w4 - 9) & 255
+}
+
+const MSG: str = "hello"
+const TAG: &str = "hi";
+const NAME: String = "abc"
+const SEP: str = " ";
+=== a8_str_i64type | text
+// A8 refusal: a string initializer under an `i64` declared type. mindc-Rust
+// inlines the literal anyway (exit 3 = its length); the native int-const inline
+// requires an int-literal initializer, so this fails closed.
+fn main() -> i64 {
+    __mind_load_i64(BAD + 8)
+}
+
+const BAD: i64 = "abc";
+=== std_const_lit_unread | text
+// std_const_lit_unread: a std const of type i64 holds a string literal and nothing reads it
+// expected: ADMIT exit 5
+fn main() -> i64 {
+    return 5;
+}
+=== std_const_lit_unread@carrier | carrier
+# std module zz_const_lit: a const that holds a string literal, in the std blob
+const ZZ_PROBE_S: i64 = "ab";
+=== std_const_string_unread | text
+// std_const_string_unread: a std const of type String that nothing reads
+// expected: ADMIT exit 5
+fn main() -> i64 {
+    return 5;
+}
+=== std_const_string_unread@carrier | carrier
+# std module zz_const_string: a const of type String, in the std blob
+const ZZ_PROBE_T: String = "ab";

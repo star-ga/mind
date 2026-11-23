@@ -11,6 +11,14 @@ name: Installers
 # The first job resolves the latest tag with the job token and every leg installs
 # exactly that tag, so a leg fails on an installer fault and not on that quota.
 #
+# The last steps of each leg then pack that installed binary into the archive layout
+# the next release ships (the binary, std/, the std manifest and SHA256SUMS, written by
+# .github/actions/package-release) and run the same installer on that archive, with the
+# download replaced by a copy from a local directory. They prove the installer finds and
+# installs the binary in the new layout and installs nothing else: std/ is unpacked in
+# the installer's temporary directory, which the installer removes. The Windows leg
+# also checks the SHA256SUMS of the zip that Git Bash's sha256sum packed.
+#
 # This workflow is not in .github/required-ci-jobs.tsv. It tests a release that is
 # already published, so no release can require it.
 
@@ -20,11 +28,13 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/install.ps1'
+      - '.github/actions/package-release/**'
       - '.github/workflows/installers.yml'
   pull_request:
     paths:
       - 'scripts/install.sh'
       - 'scripts/install.ps1'
+      - '.github/actions/package-release/**'
       - '.github/workflows/installers.yml'
   workflow_dispatch:
 
@@ -159,6 +169,72 @@ jobs:
           if (Test-Path -LiteralPath $dir) { throw "the install directory $dir was created" }
           Write-Host "PASS: a wrong checksum stops the install, installs nothing and leaves no temporary directory"
 
+      - name: Pack the installed mindc.exe in the release layout
+        uses: ./.github/actions/package-release
+        with:
+          binary: ${{ runner.temp }}\mindc-bin\mindc.exe
+          archive: ${{ runner.temp }}\layout\mindc-windows-x64.zip
+
+      - name: SHA256SUMS of the packed zip is in the two-space form and verifies
+        # Git Bash sha256sum packed this zip. In binary mode it writes `<hash> *<path>`,
+        # which the packer must convert to `<hash>  <path>`. This is the SHA256SUMS part
+        # of the member gates (G-b) that release.yml runs on this runner at a tag; here it
+        # runs before any tag. The other gates need a binary built from this tree.
+        id: sums
+        shell: bash
+        env:
+          ZIP: ${{ runner.temp }}\layout\mindc-windows-x64.zip
+        run: |
+          set -euo pipefail
+          if command -v cygpath >/dev/null 2>&1; then
+            PATH="/usr/bin:$PATH"; wpath() { cygpath -w "$1"; }; upath() { cygpath -u "$1"; }
+          else
+            wpath() { printf '%s\n' "$1"; }; upath() { printf '%s\n' "$1"; }
+          fi
+          out=$(mktemp -d "$(upath "$RUNNER_TEMP")/layout-members.XXXXXX")
+          7z x -y "-o$(wpath "$out")" "$ZIP" >/dev/null
+          cd "$out"
+          have=$(ls -A | LC_ALL=C sort | tr '\n' ' ')
+          test "$have" = 'SHA256SUMS mindc.exe std stdlib_manifest.txt ' || { echo "FAIL: the zip holds: $have"; exit 1; }
+          files=$(find std stdlib_manifest.txt -type f | LC_ALL=C sort)
+          n=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
+          test "$n" -gt 1 || { echo "FAIL: the zip holds no std file"; exit 1; }
+          test "$(grep -Ec '^[0-9a-f]{64}  [^ *]' SHA256SUMS)" = "$n" || { echo "FAIL: SHA256SUMS is not $n lines of '<hash>  <path>'"; head -n 2 SHA256SUMS; exit 1; }
+          test "$(sed 's/^[0-9a-f]\{64\}  //' SHA256SUMS | LC_ALL=C sort)" = "$files" || { echo "FAIL: SHA256SUMS does not list the files of the zip"; exit 1; }
+          res=$(sha256sum -c SHA256SUMS 2>&1) || { printf '%s\n' "$res" | grep -v ': OK$' || true; echo "FAIL: sha256sum -c SHA256SUMS"; exit 1; }
+          test "$(printf '%s\n' "$res" | grep -c ': OK$' || true)" = "$n" || { echo "FAIL: fewer than $n files verified"; exit 1; }
+          echo "PASS: SHA256SUMS of the zip lists and verifies all $n files, in the form '<hash>  <path>'"
+
+      - name: The installer installs mindc.exe from the release layout and nothing else
+        # The positive control is the step "Install the latest release" above. Here the
+        # archive and its checksum file come from a local directory: a stand-in for
+        # Invoke-WebRequest copies the file the URL names. The script is dot-sourced, and
+        # 6>&1 puts its Write-Host lines into the captured output.
+        run: |
+          $layout = Join-Path $env:RUNNER_TEMP 'layout'
+          $zip = Join-Path $layout 'mindc-windows-x64.zip'
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$zip.sha256" -Value "$hash  mindc-windows-x64.zip"
+          $dir = Join-Path $env:RUNNER_TEMP 'mindc-layout-bin'
+          $global:LayoutDir = $layout
+          . .\scripts\install.ps1
+          function Invoke-WebRequest {
+            [CmdletBinding()]
+            param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
+            Copy-Item -LiteralPath (Join-Path $global:LayoutDir (Split-Path -Leaf $Uri)) -Destination $OutFile -ErrorAction Stop
+          }
+          $out = Install-Mindc -Version $env:TAG -InstallDir $dir 6>&1 | Out-String
+          Remove-Item -Path Function:\Invoke-WebRequest
+          Write-Host $out
+          if ($out -notmatch 'Checksum OK\.') { throw "install.ps1 did not report a verified checksum" }
+          $names = @(Get-ChildItem -LiteralPath $dir -Force | ForEach-Object { $_.Name })
+          if (($names -join ',') -ne 'mindc.exe') { throw "the install directory holds '$($names -join ',')', expected only mindc.exe" }
+          $lines = @(& (Join-Path $dir 'mindc.exe') --version)
+          if ($LASTEXITCODE -ne 0) { throw "the installed mindc.exe --version exited with $LASTEXITCODE" }
+          $want = 'mind ' + $env:TAG.Substring(1)
+          if (([string]$lines[0]).Trim() -ne $want) { throw "mindc.exe printed '$($lines[0])', expected '$want'" }
+          Write-Host "PASS: install.ps1 installed only mindc.exe from the release layout; it printed '$want'"
+
   unix:
     name: install.sh (${{ matrix.os }})
     needs: latest
@@ -193,17 +269,74 @@ jobs:
           fi
           printf '%s\n' "$out"
           # The release publishes mindc-<os>-<arch>.tar.gz.sha256, so the check must have run.
-          printf '%s\n' "$out" | grep -q 'SHA-256 verified' || { echo "FAIL: install.sh did not report a verified checksum"; exit 1; }
+          grep -q 'SHA-256 verified' <<<"$out" || { echo "FAIL: install.sh did not report a verified checksum"; exit 1; }
 
       - name: The installed mindc reports the release version
         run: |
           bin="$RUNNER_TEMP/mindc-bin/mindc"
           test -x "$bin" || { echo "FAIL: $bin was not installed"; exit 1; }
           version_out=$("$bin" --version)
-          first=$(printf '%s\n' "$version_out" | head -n 1 | tr -d '\r')
+          first=$(head -n 1 <<<"$version_out" | tr -d '\r')
           want="mind ${TAG#v}"
           if [ "$first" != "$want" ]; then
             echo "FAIL: '$bin --version' printed '$first', expected '$want' (release tag $TAG)"
             exit 1
           fi
           echo "PASS: '$first' matches the release tag $TAG"
+
+      - name: Name the release asset of this runner
+        id: asset
+        run: |
+          asset=$(MIND_DRY_RUN=1 MIND_VERSION="$TAG" sh scripts/install.sh | sed -n 's|.*Would download: .*/||p')
+          case "$asset" in
+            mindc-*.tar.gz) ;;
+            *) echo "FAIL: the dry run named no asset ('$asset')"; exit 1 ;;
+          esac
+          echo "name=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Pack the installed mindc in the release layout
+        uses: ./.github/actions/package-release
+        with:
+          binary: ${{ runner.temp }}/mindc-bin/mindc
+          archive: ${{ runner.temp }}/layout/${{ steps.asset.outputs.name }}
+
+      - name: The installer installs mindc from the release layout and nothing else
+        # The positive control is the step "Install the latest release" above. Here a
+        # curl placed first on PATH copies the asset and its checksum file from a local
+        # directory, so install.sh runs its real download, checksum and unpack code.
+        env:
+          ASSET: ${{ steps.asset.outputs.name }}
+        run: |
+          set -euo pipefail
+          layout="$RUNNER_TEMP/layout"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$layout" && sha256sum "$ASSET" > "$ASSET.sha256")
+          else
+            (cd "$layout" && shasum -a 256 "$ASSET" > "$ASSET.sha256")
+          fi
+          stub="$RUNNER_TEMP/stub-bin"
+          mkdir -p "$stub"
+          cat > "$stub/curl" <<'STUB'
+          #!/bin/sh
+          out=""; url=""
+          while [ "$#" -gt 0 ]; do
+            case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+          done
+          test -n "$out" && test -n "$url" || exit 2
+          cp "$LAYOUT_DIR/$(basename "$url")" "$out"
+          STUB
+          chmod +x "$stub/curl"
+          dir="$RUNNER_TEMP/mindc-layout-bin"
+          if ! out=$(PATH="$stub:$PATH" LAYOUT_DIR="$layout" MIND_VERSION="$TAG" MIND_INSTALL_DIR="$dir" sh scripts/install.sh 2>&1); then
+            printf '%s\n' "$out"
+            echo "FAIL: install.sh exited with an error on the release layout"
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          grep -q 'SHA-256 verified' <<<"$out" || { echo "FAIL: install.sh did not report a verified checksum"; exit 1; }
+          test "$(ls -A "$dir")" = mindc || { echo "FAIL: the install directory holds '$(ls -A "$dir" | tr '\n' ' ')', expected only mindc"; exit 1; }
+          version_out=$("$dir/mindc" --version)
+          first=$(head -n 1 <<<"$version_out" | tr -d '\r')
+          want="mind ${TAG#v}"
+          test "$first" = "$want" || { echo "FAIL: the installed mindc printed '$first', expected '$want'"; exit 1; }
+          echo "PASS: install.sh installed only mindc from the release layout; it printed '$first'"

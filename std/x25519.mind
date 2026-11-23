@@ -32,6 +32,14 @@
 // (`sel25519`), never branching on secret bits.  Pure integer arithmetic —
 // no floats, no clocks, no external calls (deterministic).
 //
+// Work buffers: every buffer a call allocates is released before the call
+// returns (`__mind_free`), on every path (there is no early return). A buffer that
+// held limbs derived from the secret scalar is zeroed first (`gf_zero16`,
+// `gf_zero31`, `x25519_zero32`), the way std/https.mind zeroes its entropy and
+// state before it releases them. Two buffers are released without zeroing because
+// they never held a secret: the decoded peer u-coordinate `x` and the constant
+// 121665 buffer in `fmul_121665`. Before this, a call kept about 1.2 MB.
+//
 // Public API:
 //   pub fn x25519(scalar_addr, u_addr, out_addr) -> i64
 //     scalar_addr, u_addr: 32-byte little-endian input buffers.
@@ -158,6 +166,26 @@ fn gf_zero31(t: i64) -> i64 {
     0
 }
 
+// gf_zero16 — zero a 16-limb field-element buffer (128 bytes) before it is released.
+fn gf_zero16(g: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i64(g + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// x25519_zero32 — zero a 32-byte buffer (the clamped scalar copy) before it is released.
+fn x25519_zero32(p: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(p + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
 // gf_mac — schoolbook multiply-accumulate: t[i+j] += a[i]*b[j] for all i,j<16.
 fn gf_mac(t: i64, a: i64, b: i64) -> i64 {
     let mut i: i64 = 0;
@@ -209,6 +237,11 @@ fn fmul(o: i64, a: i64, b: i64) -> i64 {
     car25519(r);
     car25519(r);
     gf_copy16(o, r);
+    // t and r hold products of limbs that derive from the secret scalar: zero, release.
+    gf_zero31(t);
+    gf_zero16(r);
+    __mind_free(t);
+    __mind_free(r);
     0
 }
 
@@ -230,6 +263,8 @@ fn fmul_121665(o: i64, a: i64) -> i64 {
     __mind_store_i64(k + 0, 56129);
     __mind_store_i64(k + 8, 1);
     fmul(o, a, k);
+    // k is the public constant 121665: released without zeroing.
+    __mind_free(k);
     0
 }
 
@@ -251,6 +286,9 @@ fn finverse(o: i64, inp: i64) -> i64 {
         a = a - 1;
     }
     gf_copy16(o, c);
+    // c holds powers of the secret-derived input: zero, release.
+    gf_zero16(c);
+    __mind_free(c);
     0
 }
 
@@ -316,6 +354,12 @@ fn pack25519(out: i64, n: i64) -> i64 {
         __mind_store_i8(out + 2 * k + 1, (tk >> 8) & 255);
         k = k + 1;
     }
+    // t holds the canonical result (a shared secret when u is a peer key) and m a
+    // borrow-propagated copy of it: zero both, release.
+    gf_zero16(t);
+    gf_zero16(m);
+    __mind_free(t);
+    __mind_free(m);
     0
 }
 
@@ -397,5 +441,24 @@ pub fn x25519(scalar_addr: i64, u_addr: i64, out_addr: i64) -> i64 {
     finverse(c, c);
     fmul(a, a, c);
     pack25519(out_addr, a);
+
+    // Release every buffer of this call. z is the clamped secret scalar and a..f
+    // hold the ladder state derived from it: zero, release. x is the decoded
+    // u-coordinate (public): released without zeroing.
+    x25519_zero32(z);
+    __mind_free(z);
+    __mind_free(x);
+    gf_zero16(a);
+    gf_zero16(b);
+    gf_zero16(c);
+    gf_zero16(d);
+    gf_zero16(e);
+    gf_zero16(f);
+    __mind_free(a);
+    __mind_free(b);
+    __mind_free(c);
+    __mind_free(d);
+    __mind_free(e);
+    __mind_free(f);
     0
 }

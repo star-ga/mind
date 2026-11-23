@@ -43,6 +43,7 @@ use libmind::project::{
 use libmind::test::{ReporterKind as TestReporterKind, TestOptions as MindTestOptions, run_tests};
 use libmind::workspace::{WorkspaceOpts, resolve_workspace_members, toposort_members};
 use libmind::{ConformanceOptions, ConformanceProfile, conformance};
+use mic3_output::json_escape;
 use std::fs;
 #[cfg(any(feature = "mlir-build", feature = "cross-module-imports"))]
 use std::path::Path;
@@ -323,7 +324,7 @@ enum Command {
     },
     /// Verify the evidence chain embedded in a mic@3 artifact (RFC 0021 §4.2).
     ///
-    /// Reads an artifact written by `mindc build --emit-evidence` (or
+    /// Reads an artifact written by `mindc <file> --emit-evidence <path>` (or
     /// `--emit-mic3` plus a MAP epilogue), peels the `evidence_chain.*` MAP,
     /// recomputes the canonical mic@3 `trace_hash` (RFC 0016 §3.2) over the
     /// parsed IR body, and confirms it matches the stored hash.  This is the
@@ -1999,29 +2000,6 @@ fn collect_trusted_pubkeys(flags: &[String]) -> Result<Vec<Vec<u8>>, String> {
     Ok(out)
 }
 
-/// Escape a string for embedding inside a hand-built JSON string literal.
-///
-/// `--json` output is assembled by interpolation rather than via serde, so any
-/// free-form field (the artifact path, or the `substrate` / `toolchain` values
-/// which a crafted artifact controls verbatim) must be escaped or it could
-/// inject structure into the object — e.g. spoofing `trace_hash_valid` for a
-/// consumer that parses the JSON instead of checking the exit code.
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// `mindc verify <artifact>` — consumer-side static + evidence verification.
 ///
 /// Two independent properties are reported (RFC 0017):
@@ -2232,6 +2210,11 @@ fn run_verify(
         SignatureStatus::Absent | SignatureStatus::Valid(_)
     );
 
+    let scope = if body_calls_outside {
+        "partial"
+    } else {
+        "whole_program"
+    };
     match mic3_evidence_report(&bytes) {
         Ok(report) => {
             // Risk-2: REPORT the determinism RE-DERIVED from the hashed body — the
@@ -2305,7 +2288,7 @@ fn run_verify(
                     None => "null".to_string(),
                 };
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field},\"signature_mldsa87_pubkey\":{sig_mldsa87_pubkey_field},\"signature_slhdsa_pubkey\":{sig_slhdsa_pubkey_field},\"provenance_authenticated\":{provenance_authenticated}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field},\"signature_mldsa87_pubkey\":{sig_mldsa87_pubkey_field},\"signature_slhdsa_pubkey\":{sig_slhdsa_pubkey_field},\"provenance_authenticated\":{provenance_authenticated},\"scope\":\"{scope}\"}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
@@ -2613,7 +2596,7 @@ fn run_verify(
             // reported separately as absent.
             if json {
                 println!(
-                    "{{\"artifact\":\"{}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":null,\"attested\":false}}",
+                    "{{\"artifact\":\"{}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":null,\"attested\":false,\"scope\":\"{scope}\"}}",
                     json_escape(artifact)
                 );
             } else {

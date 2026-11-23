@@ -2,12 +2,14 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Builds native executables with the frozen pure-MIND x86-64 compiler.
+//! Builds native executables with the pure-MIND x86-64 compiler.
 //!
-//! Project sources are captured in resolver order and checked under their owning
-//! modules before composition. Admission examines the complete user image;
-//! reachability does not exempt retained bodies from the frozen construct profile.
-//! The single-source wire layout and pinned executable bytes are preserved.
+//! The compiler runs only when its bytes carry the native-lane-v1 mark
+//! `nblane02`. A compiler with another mark, or with none, is refused before
+//! admission. Project sources are captured in resolver order and checked under
+//! their owning modules before composition. Admission examines the complete
+//! user image; reachability does not exempt a retained body. The single-source
+//! wire layout and pinned executable bytes are preserved.
 
 #[cfg(feature = "std-surface")]
 use std::collections::BTreeSet;
@@ -282,25 +284,33 @@ fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: 
     // bytes did not move" a mechanical check instead of an argument.
     let std_blob = crate::build::native_image::compose_std_blob(&std_sources);
     // Layout and feature admission are independent: a memory limit is not a
-    // compiler capability. Only the selected compiler's distinct lane marker
-    // chooses the candidate profile; unmarked seeds retain the old contract.
+    // compiler capability. The compiler runs only when it carries `nblane02`.
     let lane_v1 = seed::compiler_supports_native_lane_v1(layout.is_some());
+    // A missing override keeps the resolver's own error. Every other compiler
+    // without `nblane02` is refused here, before any profile judges the program.
+    if !lane_v1 {
+        if let Err(e) = seed::compiler_elf(layout.is_some()) {
+            eprintln!("error[backend-native]: {e}");
+            process::exit(2);
+        }
+        refuse_native(
+            "the selected native compiler does not carry the native-lane-v1 mark \
+             `nblane02`. A compiler with another mark, or with none, is refused. \
+             No artifact written. (native.compiler_mark)",
+        );
+    }
     let extern_fixed = seed::compiler_supports_extern_fixed(layout.is_some());
     let print = seed::compiler_supports_native_print(layout.is_some());
     // Admission and the image both see a dynamic alloc or realloc size through its guard.
     let mut user_sources = alloc_guard::route_dynamic_sizes(user_sources, lane_v1);
 
     // Admission and emission use the same captured, composed user region.
-    // The exhaustive frozen-profile allowlist checks every retained user body,
-    // including uncalled functions. Only native-lane-v1 admits calls into the
-    // seed standard library, walking each reached seed body (`LaneSeed`); the
-    // historical profile refuses unresolved edges. Seed-name collisions refuse
-    // (a user function that is an exact private copy of a private seed helper
-    // is not a collision; see `namespace::identical_private_seed_copies`).
-    // The seed compiler's own refusal is a second fence, with no backend fallback.
-    if lane_v1 {
-        open_host::host_open_errors(&mut user_sources);
-    }
+    // The lane check walks every retained user body, including uncalled
+    // functions, and each reached seed body (`LaneSeed`). Seed-name collisions
+    // refuse (a user function that is an exact private copy of a private seed
+    // helper is not a collision; see `namespace::identical_private_seed_copies`).
+    // The compiler's own refusal is a second fence, with no backend fallback.
+    open_host::host_open_errors(&mut user_sources);
     let fence_source = crate::build::native_image::compose_user_region(&user_sources);
 
     // ADMISSION over the merged program. The fence must reason about the same
@@ -359,12 +369,11 @@ fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: 
     let seed = crate::ir::native_lane_profile::LaneSeed::new(&std_modules, &std_sources)
         .binding_seed_externs(seed::compiler_binds_seed_externs(layout.is_some()))
         .with_print(print);
-    let (merged_ast, merged_ir, omit_seed) = match admit_merged_program(
+    let (merged_ast, omit_seed) = match admit_merged_program(
         &paths[0],
         &fence_source,
         &reserved,
         &seed,
-        lane_v1,
         extern_fixed,
         layout.is_some(),
     ) {
@@ -405,32 +414,6 @@ fn run_native_backend_bridge_profile(paths: &[String], out_path: &str, profile: 
     {
         refuse_native(&msg);
     }
-    // Whole-module admission over that single lowering. The image is not pruned,
-    // so an uncalled out-of-profile body still becomes bytes in the
-    // artifact; reachability informs diagnostics, it does not narrow admission.
-    // enforced-by: RI-D1-PROFILE
-    // The source check covers what the IR cannot carry (a declared f32 width).
-    // The candidate path already checked its complete typed profile before
-    // namespace selection. Never apply its additions to an unmarked compiler.
-    if !lane_v1 {
-        match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
-            .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
-        {
-            Ok(()) => {}
-            Err(rejection) => {
-                refuse_native(&format!(
-                    "`{}` is not in the frozen native profile \
-                 (out-of-profile construct: {}).\n  \
-                 The native backend is proven byte-identical only on the frozen \
-                 construct allowlist. Rerun with `--backend mlir` for the full \
-                 surface. This is a refusal, not a fallback: silently compiling an \
-                 unproven construct is the failure this fence exists to prevent.",
-                    paths[0], rejection.construct
-                ));
-            }
-        }
-    }
-
     // Compose only after namespace and type admission. A closed private-helper
     // collision omits the WHOLE unused seed, never renames a user symbol or
     // drops a user body. The ordinary path keeps the exact historical bytes.
@@ -616,21 +599,20 @@ fn unterminated_import_refusal(path: &str, items: &[String]) -> String {
 }
 
 #[cfg(feature = "std-surface")]
-/// Admit the merged program: ambiguity first, then the entry-rooted closure.
+/// Admit the merged program under the lane check: ambiguity first, then the
+/// entry-rooted closure.
 ///
-/// Order is load-bearing. `reachable_from` walks the FIRST definition of a
-/// duplicated name while the frozen compiler executes the LAST, so ambiguity has
-/// to be refused before reachability is computed -- which is why this goes
-/// through `admit_native_closure` rather than calling the pieces directly.
+/// Order is load-bearing. Reachability walks the FIRST definition of a
+/// duplicated name while the compiler executes the LAST, so ambiguity has
+/// to be refused before reachability is computed.
 fn admit_merged_program(
     path: &str,
     merged: &[u8],
     reserved: &BTreeSet<String>,
     seed: &crate::ir::native_lane_profile::LaneSeed,
-    lane_v1: bool,
     extern_fixed: bool,
     bounded: bool,
-) -> Result<(crate::ast::Module, crate::ir::IRModule, bool), String> {
+) -> Result<(crate::ast::Module, bool), String> {
     let (std_modules, std_sources) = (seed.modules(), seed.sources());
     let text = std::str::from_utf8(merged)
         .map_err(|e| format!("`{path}`: source is not valid UTF-8: {e}"))?;
@@ -676,121 +658,54 @@ fn admit_merged_program(
             admission::lane_rejection_site(&r, text, seed_text)
         )
     };
-    let ir = if lane_v1 {
-        // Specific guards own their pinned kinds. The lane fence still runs
-        // on a program those guards accept, and it still refuses first for
-        // every other construct. `lane_guards_before_fence` names a whole-array
-        // binop `binop.array_operand` before the source fence below.
-        let lowering =
-            admission::lane_guards_before_fence(path, &ast, text, merged, std_sources, reserved)?;
-        crate::build::native_scope::refuse_non_seed_std_imports(&ast, text, path, std_modules)?;
-        crate::ir::native_lane_profile::profile_lane_admits_source_seeded(&ast, seed, extern_fixed)
-            .map_err(lane_error)?;
-        match lowering {
-            admission::LaneLowering::Ready(ir) => *ir,
-            admission::LaneLowering::FenceMayOwn(lower_error) => return Err(lower_error),
-        }
-    } else {
-        admission::lower_without_panicking(&ast, path)?
-    };
-    if lane_v1 {
-        let edges = crate::ir::native_lane_profile::profile_lane_admits_seeded(
-            &ast,
-            &ir,
-            seed,
-            extern_fixed,
-        )
+    // Specific guards own their pinned kinds. The lane fence still runs
+    // on a program those guards accept, and it still refuses first for
+    // every other construct. `lane_guards_before_fence` names a whole-array
+    // binop `binop.array_operand` before the source fence below.
+    let lowering =
+        admission::lane_guards_before_fence(path, &ast, text, merged, std_sources, reserved)?;
+    crate::build::native_scope::refuse_non_seed_std_imports(&ast, text, path, std_modules)?;
+    // enforced-by: RI-D1-PROFILE
+    crate::ir::native_lane_profile::profile_lane_admits_source_seeded(&ast, seed, extern_fixed)
         .map_err(lane_error)?;
-        // A dynamic image's file-backed RW load counts against
-        // `rw_load_segments`; refuse the bounded profile until that check
-        // filters BSS loads (report concern 6).
-        if bounded && !(edges.externs.is_empty() && edges.seed_externs.is_empty()) {
-            return Err(format!(
-                "`{path}`: a user `extern \"C\"` block cannot be combined with the \
-                 bounded native profile (scope.bounded_extern). No artifact written."
-            ));
-        }
-        // Extern names are terminal edges of the closure, exactly like
-        // intrinsics: they have no body in this image and must not be read as
-        // a missing user definition.
-        let mut bindings = namespace::intrinsic_bindings(&ir);
-        bindings.extend(edges.externs);
-        bindings.extend(edges.print);
-        // Omission sees the intrinsic and extern bindings only: a seed call
-        // keeps the seed.
-        let omit_seed =
-            namespace::omit_private_seed_in(&ast, std_modules, std_sources, reserved, &bindings)
-                .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
-        let empty = BTreeSet::new();
-        // Admitted seed functions are terminal edges, like intrinsics.
-        let terminal: std::collections::BTreeMap<_, _> =
-            bindings.into_iter().chain(edges.seed).collect();
-        crate::ir::native_closure::admit_native_lane_closure(
-            &ast,
-            &ir,
-            "main",
-            if omit_seed { &empty } else { reserved },
-            &terminal,
-        )
-        .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
-        return Ok((ast, ir, omit_seed));
+    let ir = match lowering {
+        admission::LaneLowering::Ready(ir) => *ir,
+        admission::LaneLowering::FenceMayOwn(lower_error) => return Err(lower_error),
+    };
+    let edges =
+        crate::ir::native_lane_profile::profile_lane_admits_seeded(&ast, &ir, seed, extern_fixed)
+            .map_err(lane_error)?;
+    // A dynamic image's file-backed RW load counts against
+    // `rw_load_segments`; refuse the bounded profile until that check
+    // filters BSS loads (report concern 6).
+    if bounded && !(edges.externs.is_empty() && edges.seed_externs.is_empty()) {
+        return Err(format!(
+            "`{path}`: a user `extern \"C\"` block cannot be combined with the \
+             bounded native profile (scope.bounded_extern). No artifact written."
+        ));
     }
-    // Closure admission runs for its ownership, ambiguity and unresolved-edge
-    // refusals, which the construct fence cannot express. Its restricted module is
-    // deliberately DISCARDED: admission is whole-module, so the fence must see the
-    // full lowering, not a reachability-narrowed subset.
-    //
-    // A seed-name collision is an ambiguity only when the two definitions
-    // differ. Names whose user definition is an exact private copy of the
-    // seed's private definition leave the reserved set; every other collision
-    // keeps its refusal. The image itself is unchanged.
-    let copies = namespace::identical_private_seed_copies(&ast, text, std_sources, reserved);
-    let reserved: BTreeSet<String> = reserved.difference(&copies).cloned().collect();
-    crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", &reserved)
-        .map_err(|r| historical_closure_refusal(&r))?;
-    let _ = path;
-    Ok((ast, ir, false))
-}
-
-#[cfg(feature = "std-surface")]
-/// The historical closure refusal, naming the compiler selection when the
-/// unresolved callee is a compiler intrinsic.
-///
-/// Only a compiler carrying the native-lane-v1 mark binds intrinsics. An
-/// unmarked compiler gets the historical frozen profile, which binds none: the
-/// closure refuses the edge here, and the frozen fence would refuse the same
-/// call as `call.undefined_or_builtin`. That strictness is deliberate and this
-/// adds an explanation, never a binding. The unmarked seeds' intrinsic
-/// lowering is not proven in every value position. Measured on the d2a716ff
-/// embedded bounded seed (sha256 `e9de4480…`): a store whose result is the tail
-/// value of a helper (`deep_dirty_then_tail` in
-/// `native_lane_value_shapes_smoke.py`) exits 19 natively against 17 on MLIR,
-/// because the seed reads a stale stack slot. Binding intrinsics here would
-/// turn this refusal into that silent wrong result.
-///
-/// Without the note the refusal read as a forgotten user definition, and a
-/// qualification round filed it against this closure rather than against the
-/// compiler selection. The kind label, the first line and the refused set are
-/// unchanged. A callee outside the lane's exact intrinsic table gets no note.
-fn historical_closure_refusal(r: &crate::ir::native_closure::ClosureRejection) -> String {
-    let refusal = format!("{} ({})", r.detail, r.kind);
-    // `reachable_from` words an unresolved edge "`caller` calls `callee`, ...";
-    // identifiers carry no backtick, so the split is unambiguous.
-    let intrinsic = (r.kind == "closure.unresolved_edge")
-        .then(|| r.detail.split_once(" calls `"))
-        .flatten()
-        .and_then(|(_, rest)| rest.split_once('`'))
-        .map(|(callee, _)| callee)
-        .filter(|callee| crate::ir::native_lane_profile::intrinsic_arity(callee).is_some());
-    match intrinsic {
-        None => refusal,
-        Some(callee) => format!(
-            "{refusal}\n  `{callee}` is a compiler intrinsic. The selected native compiler does \
-             not carry the native-lane-v1 compatibility mark, so the historical frozen \
-             profile applies, and it binds no compiler intrinsic. Only native-lane-v1 admits \
-             intrinsic calls (docs/native-closure-lane.md). This is a refusal, not a missing \
-             definition: use a native compiler that carries the mark, or `--backend mlir`. \
-             No artifact written."
-        ),
-    }
+    // Extern names are terminal edges of the closure, exactly like
+    // intrinsics: they have no body in this image and must not be read as
+    // a missing user definition.
+    let mut bindings = namespace::intrinsic_bindings(&ir);
+    bindings.extend(edges.externs);
+    bindings.extend(edges.print);
+    // Omission sees the intrinsic and extern bindings only: a seed call
+    // keeps the seed.
+    let omit_seed =
+        namespace::omit_private_seed_in(&ast, std_modules, std_sources, reserved, &bindings)
+            .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+    let empty = BTreeSet::new();
+    // Admitted seed functions are terminal edges, like intrinsics.
+    let terminal: std::collections::BTreeMap<_, _> =
+        bindings.into_iter().chain(edges.seed).collect();
+    crate::ir::native_closure::admit_native_lane_closure(
+        &ast,
+        &ir,
+        "main",
+        if omit_seed { &empty } else { reserved },
+        &terminal,
+    )
+    .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
+    Ok((ast, omit_seed))
 }

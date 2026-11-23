@@ -1,0 +1,98 @@
+# Rows 89..98 of the native extern table (nbx_libc_rows.mind, mark nblibc03), one Python literal
+# (ast.literal_eval) that native_lane_value_shapes_smoke.py appends to NATIVE_ONLY_CASES: a list of
+# row dicts with the keys that list documents. Built by the stdin protocol only (the front door's
+# Rust admission does not carry these names).
+# (a committed seed carries the mark nblibc03: every row runs in the default run)
+# `--mint-stage1 OUT` builds a stage1 from this tree with the frozen seed; `--only libc_rows`,
+# `--only libc_rows_mlir` and `--only parts` run against it. The seed advance drops the key.
+# `libc_rows_mlir` (`front_door: "mlir"`) builds the same six programs with `--backend mlir`:
+# a cross-check, never the reference.
+# Controls: every refused_* program CALLS its extern under a declaration that differs from the row: an
+# unknown neighbour (accept), a wrong arity (bind), a wrong parameter width (listen fd i64,
+# sendto length i32) and a wrong result (getenv *mut u8, close *const u8). Its twin_* partner is
+# the same call under the declaration that equals the row (`accept` has no row: its twin is the
+# neighbour getsockname); the twin builds and returns 42, so the refusal of the refused_* program
+# comes from the declaration.
+# udp_rows: sendto passes rdi rsi rdx rcx r8 r9 as movsxd rdi, mov rsi, mov rdx, movsxd rcx, mov r8,
+# movsxd r9 (the i32 addrlen); recvfrom's last two are pointers (mov r8, mov r9); an i32 result
+# is movsxd rax,eax.
+[
+ {"id": "libc3_readlink", "family": "libc_rows", "fixture": "testdata/native_libc_rows/readlink_probe.mind",
+  "mark": "nblibc03", "direct_feed": True, "expect_exit": 42,
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_getenv", "family": "libc_rows", "fixture": "testdata/native_libc_rows/getenv_probe.mind",
+  "mark": "nblibc03", "direct_feed": True, "expect_exit": 42,
+  "env": {"MIND_LIBC3_PROBE": "value-ok", "MIND_LIBC3_EMPTY": ""},
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_creat", "family": "libc_rows", "fixture": "testdata/native_libc_rows/creat_probe.mind",
+  "mark": "nblibc03", "direct_feed": True, "expect_exit": 42,
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_tcp", "family": "libc_rows", "fixture": "testdata/native_libc_rows/tcp_rows.mind", "mark": "nblibc03",
+  "direct_feed": True, "expect_exit": 42,
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_udp", "family": "libc_rows", "fixture": "testdata/native_libc_rows/udp_rows.mind", "mark": "nblibc03",
+  "direct_feed": True, "expect_exit": 42,
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"],
+  "objdump_required": ["48 63 bd", "48 8b b5", "48 8b 95", "48 63 8d", "4c 8b 85", "4c 63 8d", "4c 8b 8d", "48 63 c0"]},
+ {"id": "libc3_older_seven", "family": "libc_rows", "fixture": "testdata/native_libc_rows/older_seven.mind",
+  "mark": "nblibc03", "direct_feed": True, "expect_exit": 42,
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_declared_unused", "family": "libc_rows", "fixture": "testdata/native_libc_rows/declared_unused.mind",
+  "mark": "nblibc03", "direct_feed": True, "expect_exit": 7,
+  "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_refused_unknown_accept", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/refused_unknown_accept.mind", "direct_feed": True,
+  "refusal": ("error[native-lane]: the program is outside candidate native-lane-v1 (lane.extern.unknown_symbol)"
+              " at line 2, column 15 of the composed user image. Symbol `accept`. No artifact written.\n")},
+ {"id": "libc3_refused_bind_two_args", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/refused_bind_two_args.mind", "direct_feed": True,
+  "refusal": ("error[native-lane]: the program is outside candidate native-lane-v1 (lane.extern.arity)"
+              " at line 2, column 15 of the composed user image. Symbol `bind`. No artifact written.\n")},
+ {"id": "libc3_refused_listen_i64_fd", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/refused_listen_i64_fd.mind", "direct_feed": True,
+  "refusal": ("error[native-lane]: the program is outside candidate native-lane-v1 (lane.extern.signature_mismatch)"
+              " at line 2, column 15 of the composed user image. Symbol `listen`. No artifact written.\n")},
+ {"id": "libc3_refused_getenv_mut_result", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/refused_getenv_mut_result.mind", "direct_feed": True,
+  "refusal": ("error[native-lane]: the program is outside candidate native-lane-v1 (lane.extern.signature_mismatch)"
+              " at line 2, column 15 of the composed user image. Symbol `getenv`. No artifact written.\n")},
+ {"id": "libc3_refused_sendto_i32_len", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/refused_sendto_i32_len.mind", "direct_feed": True,
+  "refusal": ("error[native-lane]: the program is outside candidate native-lane-v1 (lane.extern.signature_mismatch)"
+              " at line 2, column 15 of the composed user image. Symbol `sendto`. No artifact written.\n")},
+ {"id": "libc3_refused_close_const_result", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/refused_close_const_result.mind", "direct_feed": True,
+  "refusal": ("error[native-lane]: the program is outside candidate native-lane-v1 (lane.extern.signature_mismatch)"
+              " at line 2, column 15 of the composed user image. Symbol `close`. No artifact written.\n")},
+ {"id": "libc3_twin_unknown_accept", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/twin_unknown_accept.mind", "mark": "nblibc03", 
+  "direct_feed": True, "expect_exit": 42, "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_twin_bind_two_args", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/twin_bind_two_args.mind", "mark": "nblibc03", 
+  "direct_feed": True, "expect_exit": 42, "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_twin_listen_i64_fd", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/twin_listen_i64_fd.mind", "mark": "nblibc03", 
+  "direct_feed": True, "expect_exit": 42, "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_twin_getenv_mut_result", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/twin_getenv_mut_result.mind", "mark": "nblibc03", 
+  "direct_feed": True, "expect_exit": 42, "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_twin_sendto_i32_len", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/twin_sendto_i32_len.mind", "mark": "nblibc03", 
+  "direct_feed": True, "expect_exit": 42, "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_twin_close_const_result", "family": "libc_rows",
+  "fixture": "testdata/native_libc_rows/twin_close_const_result.mind", "mark": "nblibc03", 
+  "direct_feed": True, "expect_exit": 42, "readelf_required": ["Shared library: [libc.so.6]", "VERNEED"]},
+ {"id": "libc3_readlink_mlir", "family": "libc_rows_mlir", "fixture": "testdata/native_libc_rows/readlink_probe.mind",
+  "front_door": "mlir", "expect_exit": 42},
+ {"id": "libc3_getenv_mlir", "family": "libc_rows_mlir", "fixture": "testdata/native_libc_rows/getenv_probe.mind",
+  "front_door": "mlir", "expect_exit": 42,
+  "env": {"MIND_LIBC3_PROBE": "value-ok", "MIND_LIBC3_EMPTY": ""}},
+ {"id": "libc3_creat_mlir", "family": "libc_rows_mlir", "fixture": "testdata/native_libc_rows/creat_probe.mind",
+  "front_door": "mlir", "expect_exit": 42},
+ {"id": "libc3_tcp_mlir", "family": "libc_rows_mlir", "fixture": "testdata/native_libc_rows/tcp_rows.mind",
+  "front_door": "mlir", "expect_exit": 42},
+ {"id": "libc3_udp_mlir", "family": "libc_rows_mlir", "fixture": "testdata/native_libc_rows/udp_rows.mind",
+  "front_door": "mlir", "expect_exit": 42},
+ {"id": "libc3_older_seven_mlir", "family": "libc_rows_mlir", "fixture": "testdata/native_libc_rows/older_seven.mind",
+  "front_door": "mlir", "expect_exit": 42},
+]

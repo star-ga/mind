@@ -1,0 +1,51 @@
+// getenv on the C ABI path: the result is the full 64-bit pointer of the
+// environment string (above 2^32 on this stack layout), the text matches, an
+// empty value gives a pointer to a NUL byte, and an unset name gives 0.
+// The harness sets MIND_LIBC3_PROBE=value-ok and MIND_LIBC3_EMPTY= (empty).
+extern "C" {
+    unsafe fn getenv(name: *const u8) -> *const u8;
+}
+
+fn main() -> i64 {
+    let probe: i64 = __mind_alloc(24);
+    // "MIND_LIBC3_PROBE"
+    __mind_store_i64(probe, 4776432851854707021);
+    __mind_store_i64(probe + 8, 4990638552034259779);
+    __mind_store_i64(probe + 16, 0);
+    let text: i64 = getenv(probe as *const u8) as i64;
+    if text == 0 {
+        return 1;
+    }
+    if text < 4294967296 {
+        return 2;
+    }
+    // "value-ok"
+    if __mind_load_i64(text) != 7741456198258155894 {
+        return 3;
+    }
+    if __mind_load_i8(text + 8) != 0 {
+        return 4;
+    }
+    let empty: i64 = __mind_alloc(24);
+    // "MIND_LIBC3_EMPTY"
+    __mind_store_i64(empty, 4776432851854707021);
+    __mind_store_i64(empty + 8, 6436858060225852227);
+    __mind_store_i64(empty + 16, 0);
+    let blank: i64 = getenv(empty as *const u8) as i64;
+    if blank == 0 {
+        return 5;
+    }
+    if __mind_load_i8(blank) != 0 {
+        return 6;
+    }
+    let unset: i64 = __mind_alloc(24);
+    // "MIND_LIBC3_UNSET"
+    __mind_store_i64(unset, 4776432851854707021);
+    __mind_store_i64(unset + 8, 6072351268483838787);
+    __mind_store_i64(unset + 16, 0);
+    let none: i64 = getenv(unset as *const u8) as i64;
+    if none != 0 {
+        return 7;
+    }
+    return 42;
+}

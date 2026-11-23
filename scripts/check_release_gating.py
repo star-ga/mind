@@ -71,6 +71,16 @@ WHAT IS CHECKED
       glibc-floor smoke action: the v0.10.2 Linux asset was built on the
       runner's own glibc 2.39 and did not start on older distributions.
 
+  R9  Every release archive carries the std members and the gates that prove
+      them: release.yml's build job, ci.yml's release_profile job and
+      installers.yml all pack with ./.github/actions/package-release (no hand-built
+      `tar -czf` or `7z a`), that action names the std/, stdlib_manifest.txt and
+      SHA256SUMS members on both its tar and 7z lines, the smoke action still holds
+      the gates G-a, G-b, G-c and G-d, and installers.yml re-runs when the packing
+      action changes. SHA256SUMS keeps one `<hash>  <path>` form (Git Bash writes
+      `*` in binary mode), G-b accepts the `*` form, G-a writes its count as bytes
+      (Windows text mode adds a CR), and installers.yml checks the Windows zip.
+
 A second mode resolves dependency graphs and so needs cargo:
   --keystone-pqc-free  every feature selection (`--no-default-features`,
       `--all-features`, every `--features`/`-F`) the keystone
@@ -130,6 +140,10 @@ ACTIONS_DIR = ROOT / ".github" / "actions"
 RELEASE_PROFILE_JOB = "release_profile"
 SMOKE_ACTION = "./.github/actions/release-artifact-smoke"
 FLOOR_ACTION = "./.github/actions/glibc-floor-smoke"
+PACK_ACTION = "./.github/actions/package-release"
+INSTALLERS_YML = WORKFLOW_DIR / "installers.yml"
+ARCHIVE_MEMBERS = ("std", "stdlib_manifest.txt", "SHA256SUMS")
+MEMBER_GATES = ("G-a", "G-b", "G-c", "G-d")
 # Per-target Linux build environment both matrices must carry, value for value.
 FLOOR_KEYS = ("image", "glibc_floor", "floor_image")
 DIGEST_PIN_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
@@ -177,6 +191,7 @@ RULES: dict[str, str] = {
     "R6": "verify_ci_green.py present and reading that manifest",
     "R7": "Cargo.lock committed; every resolving workflow/action cargo call is --locked",
     "R8": "release_profile runs release.yml's Linux build verbatim + the signing smoke",
+    "R9": "every archive is packed by package-release and checked by the std member gates",
 }
 
 
@@ -644,6 +659,34 @@ def check_release_profile(errors: list[str], ran: set[str]) -> None:
     check_floor_environment(errors, matrix_rows(rel_build), matrix_rows(ci))
 
 
+def check_archive_members(errors: list[str], ran: set[str]) -> None:
+    _ran(ran, "R9")
+    bodies = {"release.yml build": release_build()[0],
+              "ci.yml release_profile": workflow_jobs(CI_YML).get(RELEASE_PROFILE_JOB, ""),
+              "installers.yml": INSTALLERS_YML.read_text(encoding="utf-8")}
+    for label, body in bodies.items():
+        if not re.search(rf"uses:\s*{re.escape(PACK_ACTION)}\s*$", code(body), re.M):
+            _fail(errors, "R9", f"{label} does not pack its archive with {PACK_ACTION}.")
+        if re.search(r"\b(?:tar\s+-\w*c\w*|7z\s+a)\b", code(body)):
+            _fail(errors, "R9", f"{label} builds an archive by hand; it must go through {PACK_ACTION}.")
+    if f".github/actions/{PACK_ACTION.rsplit('/', 1)[1]}/**" not in INSTALLERS_YML.read_text(encoding="utf-8"):
+        _fail(errors, "R9", "installers.yml does not re-run when the packing action changes.")
+    pack = code((ACTIONS_DIR / "package-release" / "action.yml").read_text(encoding="utf-8"))
+    for tool in ("tar -czf", "7z a"):
+        lines = [ln for ln in pack.splitlines() if tool in ln]
+        if not lines or any(m not in re.split(r"[\s();&|\"']+", ln) for ln in lines for m in ARCHIVE_MEMBERS):
+            _fail(errors, "R9", f"{PACK_ACTION} has no `{tool}` line naming {ARCHIVE_MEMBERS}.")
+    smoke = code((ACTIONS_DIR / "release-artifact-smoke" / "action.yml").read_text(encoding="utf-8"))
+    for gate in MEMBER_GATES:
+        if f"PASS: {gate}:" not in smoke:
+            _fail(errors, "R9", f"{SMOKE_ACTION} no longer holds gate {gate}.")
+    inst = code(INSTALLERS_YML.read_text(encoding="utf-8"))
+    for text, token in ((pack, "\\([0-9a-f]\\{64\\}\\) \\*/\\1  /"), (smoke, "{64\\} [ *]//"), (smoke, "sys.stdout.buffer.write"),
+                        (inst, "SHA256SUMS of the zip lists and verifies")):
+        if token not in text:
+            _fail(errors, "R9", f"the Windows forms (binary-mode `*` lines, a CR-free G-a count) are no longer handled: `{token}` is missing.")
+
+
 def check_floor_environment(errors: list[str], rel_rows: list[dict[str, str]],
                             ci_rows: list[dict[str, str]]) -> None:
     """Each Linux target builds in the same digest-pinned image, against the same
@@ -720,6 +763,7 @@ def main(argv: list[str]) -> int:
     check_manifest_matches_workflows(errors, show, ran)
     check_lockfile(errors, ran)
     check_release_profile(errors, ran)
+    check_archive_members(errors, ran)
 
     # A rule whose body was never reached asserted nothing, and a gate that
     # asserts nothing must not report a contract as upheld.

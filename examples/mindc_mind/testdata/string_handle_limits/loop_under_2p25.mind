@@ -1,0 +1,13 @@
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn main() -> i64 {
+    let mut k: i64 = 0;
+    let mut t: i64 = 0;
+    while k < 33554431 {
+        t = t + len_of("x");
+        k = k + 1;
+    }
+    return (t / 1000) % 100;
+}

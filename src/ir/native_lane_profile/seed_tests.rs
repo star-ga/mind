@@ -52,6 +52,47 @@ fn a_seed_call_is_admitted_with_exactly_its_transitive_closure() {
     assert_eq!(err.construct, "lane.call.unknown");
 }
 
+/// `std.sha256` frees its scratch in `sha256_checked`: the host check does not
+/// refuse a seed body that frees, whether the user image calls it from a loop
+/// or not.
+#[test]
+fn a_seed_free_reached_from_a_loop_is_admitted() {
+    let looped = SHA.replacen(
+        "let rc: i64 = sha256(m, 0, out);",
+        "let mut rc: i64 = 0;\n    let mut i: i64 = 0;\n    while i < 3 {\n        \
+         rc = rc + sha256(m, 0, out);\n        i = i + 1;\n    }",
+        1,
+    );
+    assert!(looped.contains("while i < 3"), "{looped}");
+    for source in [SHA, looped.as_str()] {
+        let reached = admit(source).unwrap();
+        assert_eq!(reached.get("sha256_checked"), Some(&3), "{reached:?}");
+    }
+}
+
+/// Every reached seed body is walked at loop depth 0, whoever calls it: a
+/// `break` outside the body's own loops refuses `lane.source.loop_exit_scope`
+/// in its module, also when the user image calls the function from a loop.
+#[test]
+fn a_seed_body_is_walked_at_loop_depth_zero_also_when_called_in_a_loop() {
+    let bare = vec![b"pub fn f() -> i64 { break; return 1; }\n".to_vec()];
+    let own = vec![
+        b"pub fn f() -> i64 { let mut i: i64 = 0; while i < 2 { i = i + 1; break; } return i; }\n"
+            .to_vec(),
+    ];
+    let looped = "import std.m;\nfn main() -> i64 {\n    let mut i: i64 = 0;\n    \
+        while i < 2 {\n        f();\n        i = i + 1;\n    }\n    return 0;\n}\n";
+    let plain = "import std.m;\nfn main() -> i64 { return f(); }\n";
+    for source in [looped, plain] {
+        let err = admit_with(source, &["m"], &bare).unwrap_err();
+        assert_eq!(err.construct, "lane.source.loop_exit_scope", "{source}");
+        assert_eq!(err.seed_module.as_deref(), Some("std/m.mind"), "{source}");
+        assert_eq!(err.function.as_deref(), Some("f"), "{source}");
+        // Control: a `break` inside the body's own loop is admitted.
+        assert!(admit_with(source, &["m"], &own).is_ok(), "{source}");
+    }
+}
+
 #[test]
 fn a_cross_module_seed_call_reaches_the_other_module() {
     let src = "import std.io_canon;\nfn main() -> i64 {\n    let h: i64 = canon_new(4);\n    \
@@ -247,11 +288,9 @@ fn a_reached_seed_body_binds_exactly_the_seed_declarations_it_calls() {
     assert_eq!(bound("two()"), Vec::<String>::new());
     assert_eq!(bound("uid()"), ["getuid"]);
     assert_eq!(bound("uid() + shut(0 - 1)"), ["close", "getuid"]);
-    // A called declaration outside the table refuses in its seed module.
-    let err = seed_edges(&main("bad()"), &sources, true).unwrap_err();
-    assert_eq!(err.construct, "lane.extern.unknown_symbol");
-    assert_eq!(err.seed_module.as_deref(), Some("std/m.mind"));
-    assert_eq!(err.function.as_deref(), Some("open"));
+    // The host binds any typable declaration a reached body calls; whether the
+    // symbol has a row is the compiler's decision.
+    assert_eq!(bound("bad()"), ["open"]);
     // RED control: without the mark the seed body's call binds nothing.
     let err = seed_edges(&main("uid()"), &sources, false).unwrap_err();
     assert_eq!(err.construct, "lane.call.unknown");
@@ -269,14 +308,6 @@ fn a_reached_seed_body_binds_exactly_the_seed_declarations_it_calls() {
     let same = format!("extern \"C\" {{ fn getuid() -> i32; }}\n{}", main("uid()"));
     let got = seed_edges(&same, &sources, true).unwrap();
     assert_eq!(got.seed_externs.keys().collect::<Vec<_>>(), ["getuid"]);
-    // Each seed declaration of a called name must match the table.
-    let wrong = vec![
-        m.to_vec(),
-        b"extern \"C\" { fn getuid() -> i64; }\n".to_vec(),
-    ];
-    let err = seed_edges(&main("uid()"), &wrong, true).unwrap_err();
-    assert_eq!(err.construct, "lane.extern.signature_mismatch");
-    assert_eq!(err.seed_module.as_deref(), Some("std/n.mind"));
 }
 
 #[test]

@@ -1,0 +1,8 @@
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    while i < 50000000 {
+        print("");
+        i = i + 1;
+    }
+    return 7;
+}

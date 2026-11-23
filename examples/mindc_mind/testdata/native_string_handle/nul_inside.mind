@@ -1,0 +1,11 @@
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn at(s: String, i: i64) -> i64 {
+    return __mind_load_i8(s.addr + i);
+}
+
+fn main() -> i64 {
+    return at("a\0b", 2) * 2 + at("a\0b", 1) + len_of("a\0b");
+}

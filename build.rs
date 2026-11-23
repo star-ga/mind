@@ -62,7 +62,7 @@ const NATIVE_SEEDS: [&str; 2] = [
 /// compares this list (written to OUT_DIR) with its own and rescans on a difference.
 const SEED_MARKS: [&[u8]; 5] = [
     b"\x48\xb8nbscope1",
-    b"\x48\xb8nblane01",
+    b"\x48\xb8nblane02",
     b"\x48\xb8nbextc01",
     b"\x48\xb8nbsext01",
     b"\x48\xb8nbprint1",

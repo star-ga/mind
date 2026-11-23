@@ -31,7 +31,11 @@ use std::sync::OnceLock;
 
 pub const MINDC: &str = env!("CARGO_BIN_EXE_mindc");
 pub const EXTERN_MARK: &[u8] = b"\x48\xb8nbextc01";
-pub const LANE_MARK: &[u8] = b"\x48\xb8nblane01";
+pub const LANE_MARK: &[u8] = b"\x48\xb8nblane02";
+/// The self-mode magic: the stdin image of the compiler source goes behind it
+/// when the compiler that reads it carries these bytes (the rule of
+/// `_selfhost_sources.self_mode_image`).
+const SELF_MAGIC: &[u8] = b"MINDSLF\x01";
 const SEED: &str = "examples/mindc_mind/testdata/selfhost_loop/stage1.elf";
 const BOUNDED_SEED: &str = "examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf";
 
@@ -91,7 +95,7 @@ pub fn compiler_components() -> Vec<String> {
 /// `[8B user_lo][8B len][std seed blob ++ library \n selfhost_driver]`, the std
 /// seed modules in `stdlib_manifest.txt` order, each followed by `\n`
 /// (`_selfhost_sources.py`, `src/build/native_image.rs`).
-fn stage1_image(library: &str) -> Vec<u8> {
+fn stage1_image(library: &str, compiler: &[u8]) -> Vec<u8> {
     let manifest =
         std::fs::read_to_string(repo().join("examples/mindc_mind/testdata/stdlib_manifest.txt"))
             .unwrap();
@@ -110,7 +114,11 @@ fn stage1_image(library: &str) -> Vec<u8> {
     source.extend_from_slice(library.as_bytes());
     source.push(b'\n');
     source.extend(std::fs::read(repo().join("examples/mindc_mind/selfhost_driver.mind")).unwrap());
-    let mut image = user_lo.to_le_bytes().to_vec();
+    let mut image = Vec::new();
+    if compiler.windows(SELF_MAGIC.len()).any(|w| w == SELF_MAGIC) {
+        image.extend_from_slice(SELF_MAGIC);
+    }
+    image.extend_from_slice(&user_lo.to_le_bytes());
     image.extend_from_slice(&(source.len() as i64).to_le_bytes());
     image.extend_from_slice(&source);
     image
@@ -127,7 +135,7 @@ pub fn mint_stage1(main_source: &str) -> PathBuf {
 /// `mint_stage1` of a whole compiler library (`compiler_library`, edited).
 pub fn mint_library(library: &str) -> PathBuf {
     let seed = std::fs::read(repo().join(SEED)).unwrap();
-    let image = stage1_image(library);
+    let image = stage1_image(library, &seed);
     let key: String = Sha256::new()
         .chain_update(&seed)
         .chain_update(&image)
@@ -191,7 +199,7 @@ pub struct Case {
 
 impl Case {
     /// `marked`: the fresh compiler. Unmarked: a shim that carries the lane
-    /// mark (nblane01) but not nbextc01, so Rust-side lane admission runs and
+    /// mark (nblane02) but not nbextc01, so Rust-side lane admission runs and
     /// refuses the extern block by name before the shim runs. The mark rides
     /// in a shell comment so the shell ignores it and compiler_has_mark finds it.
     pub fn new(marked: bool) -> Self {
@@ -715,4 +723,37 @@ pub fn call_cleanups(image: &[u8], imm: u32) -> usize {
     let add = [&[0x48, 0x81, 0xc4][..], &imm.to_le_bytes()].concat();
     let call_then_add = |w: &&[u8]| w[..2] == [0xff, 0x15] && w[6..] == add[..];
     image.windows(13).filter(call_then_add).count()
+}
+
+/// The compiler names the key, the column of the declaration name and the symbol.
+pub fn decl_key(kind: &str, name: &str) -> String {
+    decl_key_at(kind, 17, name)
+}
+
+pub fn decl_key_at(kind: &str, column: usize, name: &str) -> String {
+    format!(
+        "(lane.extern.{kind}) at line 1, column {column} of the composed user image. Symbol `{name}`."
+    )
+}
+
+/// The host passes every use of an extern result through: an f64 result used
+/// as i64 reaches the compiler, which names key 66 at the declaration, and an
+/// i32 result bound to a name builds and runs (close of a bad descriptor is -1).
+pub fn extern_results_pass_through(case: &Case) {
+    for body in ["return getuid();", "let y: i64 = getuid(); return y;"] {
+        let source =
+            format!("extern \"C\" {{ fn getuid() -> f64; }}\nfn main() -> i64 {{ {body} }}\n");
+        let key = decl_key_at("signature_mismatch", 17, "getuid");
+        case.refuses_named(&source, body, &key);
+    }
+    let bound = "extern \"C\" { fn close(fd: i32) -> i32; }\n\
+                 fn main() -> i64 { let r = close(9999); if r < 0 { return 3; } return 4; }\n";
+    let run = Command::new(case.builds(bound)).output().unwrap();
+    assert_eq!(run.status.code(), Some(3), "{bound}\n{run:?}");
+}
+
+/// The declared name of `fn NAME(...)`.
+pub fn name_of(decl: &str) -> &str {
+    let rest = decl.trim_start_matches("fn ");
+    &rest[..rest.find('(').unwrap()]
 }

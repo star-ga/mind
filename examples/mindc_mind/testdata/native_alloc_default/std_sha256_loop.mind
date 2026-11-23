@@ -1,0 +1,15 @@
+import std.sha256;
+
+// std.sha256's sha256 frees its scratch. 1,600,000 calls x 712 B (more than 1 GiB) from a user loop: the image must reclaim. The digest of the empty message starts with the byte 227. Exit status 33.
+fn main() -> i64 {
+    let msg: i64 = __mind_alloc(8);
+    let out: i64 = __mind_alloc(32);
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1600000 {
+        let rc: i64 = sha256(msg, 0, out);
+        acc = acc + rc + __mind_load_i8(out) - 227;
+        i = i + 1;
+    }
+    return acc + 33;
+}

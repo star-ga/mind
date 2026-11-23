@@ -3,7 +3,7 @@
 # GitHub Releases page, verifies its SHA-256, and installs it on PATH.
 #
 #   curl -sSL https://mindlang.dev/install.sh | sh
-#   curl -sSL https://mindlang.dev/install.sh | MIND_VERSION=v0.10.3 sh
+#   curl -sSL https://mindlang.dev/install.sh | MIND_VERSION=v0.10.4 sh
 #
 # Set an override on sh (right of the pipe). On curl it never reaches this script.
 #

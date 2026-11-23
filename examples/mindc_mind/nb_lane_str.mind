@@ -1,0 +1,359 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The string rule of the native lane, part 1 of 3: the key table, the walk
+// record, the work stack, the first-refusal note, the binding rule and the call
+// table. The byte scans are in nb_lane_scan.mind; part 3 (nb_lane_str2.mind)
+// has the node handlers and the entry nb_lane_str_walk.
+//
+// THE RULE and the walk are described in examples/mindc_mind/PARTS.md (the
+// string rule of the native lane). The key table of the reason word is the
+// fixed interface of the native-lane rule families (nb_lane_keys.mind).
+// main.mind fns this walk reads: none. The caller passes the data (source
+// buffer, item array, user_lo, kept fn array). Part 1 calls nb_ast, nb_lastdef
+// (span_bytes_equal) and nb_lane_scan; nb_lane_str2 also calls nb_lane_keys
+// (nb_lane_pack).
+//
+// Walk record w (words): 0 src, 8 best site, 16 best key, 24 best depth,
+// 32 stack base, 40 stack capacity (items), 48 stack count, 56 kept fns,
+// 64 kept count, 72 table of kept fns with a String param, 80 table count,
+// 88 current fn, 96 user_lo, 104 current call table fn, 112 current call arg
+// context, 120 current call site.
+// Contexts (what a String value means where a parent put it): 0 plain,
+// 1 arg of a known fn, 2 arg of an extern, 3 arg of an intrinsic, 4 print arg,
+// 5 ==/!=, 6 other operator on two Strings, 7 other operator with an i64,
+// 8 unary minus, 9 !, 10 cast, 11 condition, 12 index base, 13 method
+// receiver, 14 unannotated let init, 15 init of a let with a non-String type.
+
+import nb_ast;
+import nb_lane_scan;
+import nb_lastdef;
+
+// The key of a String NAME in context c: byte c of the two packed words
+// (contexts 0 to 7, then 8 to 15): 39 17 39 17 21 37 18 17 | 19 17 20 17 23 24 34 17.
+pub fn nbls_ident_key(c: i64) -> i64 {
+    if c < 8 {
+        return (1230086420637880615 >> (c * 8)) & 255;
+    }
+    (1234575735202779411 >> ((c - 8) * 8)) & 255
+}
+
+// ---- walk record, work stack, first refusal ----
+
+// Note a refusal: it replaces the best one when its site is smaller, or equal
+// and deeper (the inner node). The site 4294967296 means none yet.
+pub fn nbls_note(w: i64, key: i64, site: i64, depth: i64) -> i64 {
+    let best: i64 = __mind_load_i64(w + 8);
+    if site > best {
+        return 0;
+    }
+    if site == best {
+        if depth < __mind_load_i64(w + 24) {
+            return 0;
+        }
+    }
+    __mind_store_i64(w + 8, site);
+    __mind_store_i64(w + 16, key);
+    __mind_store_i64(w + 24, depth);
+    0
+}
+
+// Double the work stack.
+pub fn nbls_grow(w: i64) -> i64 {
+    let cap: i64 = __mind_load_i64(w + 40);
+    let old: i64 = __mind_load_i64(w + 32);
+    let fresh: i64 = __mind_alloc(cap * 64);
+    let mut i: i64 = 0;
+    while i < cap * 4 {
+        __mind_store_i64(fresh + i * 8, __mind_load_i64(old + i * 8));
+        i = i + 1;
+    }
+    __mind_store_i64(w + 32, fresh);
+    __mind_store_i64(w + 40, cap * 2);
+    0
+}
+
+// Push one item (a zero node is no item).
+pub fn nbls_push(w: i64, node: i64, ctx: i64, env: i64, depth: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let sp: i64 = __mind_load_i64(w + 48);
+    if sp >= __mind_load_i64(w + 40) {
+        let _g: i64 = nbls_grow(w);
+    }
+    let at: i64 = __mind_load_i64(w + 32) + sp * 32;
+    __mind_store_i64(at, node);
+    __mind_store_i64(at + 8, ctx);
+    __mind_store_i64(at + 16, env);
+    __mind_store_i64(at + 24, depth);
+    __mind_store_i64(w + 48, sp + 1);
+    0
+}
+
+// Push two items with one context each.
+pub fn nbls_push2(w: i64, a: i64, ca: i64, b: i64, cb: i64, env: i64, depth: i64) -> i64 {
+    let _a: i64 = nbls_push(w, a, ca, env, depth);
+    nbls_push(w, b, cb, env, depth)
+}
+
+// Pop the top item: its address (the words stay valid until the next push).
+pub fn nbls_pop(w: i64) -> i64 {
+    let sp: i64 = __mind_load_i64(w + 48) - 1;
+    __mind_store_i64(w + 48, sp);
+    __mind_load_i64(w + 32) + sp * 32
+}
+
+// ---- binding rule ----
+// A shadow list is a chain of 4-word records (name lo, name hi, class, next
+// record): the lets of one fn that are in scope, newest first. The class is 1
+// when the let value is a scalar, else 0.
+
+// The class of the newest let named [lo, hi) in the list, or -1 when none.
+pub fn nbls_env_pick(src: i64, e: i64, lo: i64, hi: i64, r: i64) -> i64 {
+    if r >= 0 {
+        return r;
+    }
+    if span_bytes_equal(src, lo, hi, __mind_load_i64(e), __mind_load_i64(e + 8)) == 0 {
+        return r;
+    }
+    __mind_load_i64(e + 16)
+}
+
+pub fn nbls_env_class(src: i64, env: i64, lo: i64, hi: i64) -> i64 {
+    let mut e: i64 = env;
+    let mut r: i64 = 0 - 1;
+    while e != 0 {
+        r = nbls_env_pick(src, e, lo, hi, r);
+        e = __mind_load_i64(e + 24);
+    }
+    r
+}
+
+// The type code of param p when its name is [lo, hi), else the previous answer r.
+pub fn nbls_param_step(src: i64, p: i64, lo: i64, hi: i64, r: i64) -> i64 {
+    let nm: i64 = ast_child0(p);
+    if span_bytes_equal(src, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 0 {
+        return r;
+    }
+    nbls_ty_code(src, ast_child1(p))
+}
+
+// The type code of the param named [lo, hi) of the current fn (the last one):
+// 1 String, 2 a scalar, 0 another type or no such param.
+pub fn nbls_param_ty(w: i64, lo: i64, hi: i64) -> i64 {
+    let f: i64 = __mind_load_i64(w + 88);
+    let pa: i64 = ast_child1(f);
+    let n: i64 = ast_aux(f) / 2;
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    while i < n {
+        r = nbls_param_step(__mind_load_i64(w), __mind_load_i64(pa + i * 8), lo, hi, r);
+        i = i + 1;
+    }
+    r
+}
+
+// 1 iff node is a name that resolves to a String param under shadow list env.
+pub fn nbls_ident_is_str(w: i64, node: i64, env: i64) -> i64 {
+    if ast_kind(node) != ast_ident() {
+        return 0;
+    }
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    if nbls_param_ty(w, lo, hi) != 1 {
+        return 0;
+    }
+    if nbls_env_class(__mind_load_i64(w), env, lo, hi) >= 0 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff node is the name of a String param that a let of any type (a loop
+// binder too) shadows under env: the name is then not a String param.
+pub fn nbls_ident_shadows_str(w: i64, node: i64, env: i64) -> i64 {
+    if ast_kind(node) != ast_ident() {
+        return 0;
+    }
+    if nbls_param_ty(w, ast_span_lo(node), ast_span_hi(node)) != 1 {
+        return 0;
+    }
+    if nbls_env_class(__mind_load_i64(w), env, ast_span_lo(node), ast_span_hi(node)) < 0 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff a name is bound to a scalar: the newest let of the name, else the param.
+pub fn nbls_ident_scalar(w: i64, node: i64, env: i64) -> i64 {
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    let c: i64 = nbls_env_class(__mind_load_i64(w), env, lo, hi);
+    if c >= 0 {
+        return c;
+    }
+    if nbls_param_ty(w, lo, hi) == 2 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff a call has a scalar result: the callee is a kept fn with a scalar
+// result type, or no kept fn (an extern or an intrinsic).
+pub fn nbls_call_scalar(w: i64, call: i64) -> i64 {
+    let lo: i64 = ast_span_lo(ast_child0(call));
+    let f: i64 = nbls_find(w, 56, lo, ast_span_hi(ast_child0(call)));
+    if f == 0 {
+        return 1;
+    }
+    nbls_ret_scalar(__mind_load_i64(w), f)
+}
+
+// 1 iff expression e is known to be a scalar value: a number, a cast, an
+// operator result, an if-expression (the lane has no record-valued if), a
+// scalar name, a call with a scalar result. A field, an index or any other
+// expression is not known to be one.
+pub fn nbls_expr_scalar(w: i64, e0: i64, env: i64) -> i64 {
+    let e: i64 = nbls_unwrap(e0);
+    let k: i64 = ast_kind(e);
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_float_lit() {
+        return 1;
+    }
+    if k == ast_binop() {
+        return 1;
+    }
+    if k == ast_neg() {
+        return 1;
+    }
+    if k == ast_not() {
+        return 1;
+    }
+    if k == ast_cast() {
+        return 1;
+    }
+    if k == ast_if() {
+        return 1;
+    }
+    if k == ast_ident() {
+        return nbls_ident_scalar(w, e, env);
+    }
+    if k == ast_call() {
+        return nbls_call_scalar(w, e);
+    }
+    0
+}
+
+// The class of the value a let binds: a type annotation decides, else the init.
+pub fn nbls_let_class(w: i64, st: i64, env: i64) -> i64 {
+    let ty: i64 = ast_child1(st);
+    if ty != 0 {
+        if nbls_ty_code(__mind_load_i64(w), ty) == 2 {
+            return 1;
+        }
+        return 0;
+    }
+    nbls_expr_scalar(w, ast_child2(st), env)
+}
+
+// The shadow list after statement st: a let adds a record.
+pub fn nbls_env_after(w: i64, st: i64, env: i64) -> i64 {
+    if ast_kind(st) != ast_let() {
+        return env;
+    }
+    let rec: i64 = __mind_alloc(32);
+    __mind_store_i64(rec, ast_span_lo(ast_child0(st)));
+    __mind_store_i64(rec + 8, ast_span_hi(ast_child0(st)));
+    __mind_store_i64(rec + 16, nbls_let_class(w, st, env));
+    __mind_store_i64(rec + 24, env);
+    rec
+}
+
+// The node under any parentheses.
+pub fn nbls_unwrap(node: i64) -> i64 {
+    let mut x: i64 = node;
+    while ast_kind(x) == ast_paren() {
+        x = ast_child0(x);
+    }
+    x
+}
+
+// 1 iff node (under parentheses) is a string literal or a String name.
+pub fn nbls_is_strval(w: i64, node: i64, env: i64) -> i64 {
+    let u: i64 = nbls_unwrap(node);
+    if ast_kind(u) == ast_str_lit() {
+        return 1;
+    }
+    nbls_ident_is_str(w, u, env)
+}
+
+// ---- call table ----
+
+// 1 iff fn f has a param of type String.
+pub fn nbls_fn_has_str(src: i64, f: i64) -> i64 {
+    let pa: i64 = ast_child1(f);
+    let n: i64 = ast_aux(f) / 2;
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    while i < n {
+        r = r | nbls_ty_is_string(src, ast_child1(__mind_load_i64(pa + i * 8)));
+        i = i + 1;
+    }
+    r
+}
+
+// Add f to the table when it has a String param; the new count.
+pub fn nbls_tab_add(src: i64, tab: i64, m: i64, f: i64) -> i64 {
+    if nbls_fn_has_str(src, f) == 0 {
+        return m;
+    }
+    __mind_store_i64(tab + m * 8, f);
+    m + 1
+}
+
+pub fn nbls_tab_fill(w: i64) -> i64 {
+    let fns: i64 = __mind_load_i64(w + 56);
+    let mut i: i64 = 0;
+    let mut m: i64 = 0;
+    while i < __mind_load_i64(w + 64) {
+        m = nbls_tab_add(__mind_load_i64(w), __mind_load_i64(w + 72), m, __mind_load_i64(fns + i * 8));
+        i = i + 1;
+    }
+    __mind_store_i64(w + 80, m);
+    m
+}
+
+// f when fn f is named [lo, hi), else the previous pick r.
+pub fn nbls_name_pick(src: i64, f: i64, lo: i64, hi: i64, r: i64) -> i64 {
+    let nm: i64 = ast_child0(f);
+    if span_bytes_equal(src, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+        return f;
+    }
+    r
+}
+
+// The fn named [lo, hi) in the array whose base is word off of w and whose
+// count is word off + 8 (56: the kept fns, 72: the String-param table), or 0.
+pub fn nbls_find(w: i64, off: i64, lo: i64, hi: i64) -> i64 {
+    let tab: i64 = __mind_load_i64(w + off);
+    let n: i64 = __mind_load_i64(w + off + 8);
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    while i < n {
+        r = nbls_name_pick(__mind_load_i64(w), __mind_load_i64(tab + i * 8), lo, hi, r);
+        i = i + 1;
+    }
+    r
+}
+
+// 1 iff param i of fn f exists and has type String.
+pub fn nbls_slot_is_str(src: i64, f: i64, i: i64) -> i64 {
+    if i >= ast_aux(f) / 2 {
+        return 0;
+    }
+    nbls_ty_is_string(src, ast_child1(__mind_load_i64(ast_child1(f) + i * 8)))
+}

@@ -327,7 +327,7 @@ fn green_group(prefix: &str) -> usize {
 #[test]
 fn wave2_programs_match_mlir_on_the_lane() {
     let ran = green_group("native-wave2");
-    assert!(ran == 0 || ran == 25, "wave2 GREEN records ran: {ran}");
+    assert!(ran == 0 || ran == 26, "wave2 GREEN records ran: {ran}");
 }
 
 #[test]
@@ -460,7 +460,7 @@ fn ported_refusals_are_named_and_write_nothing() {
         assert_refused(&case, &native_build(&p, &case, &Compiler::Lane), text);
         ran += 1;
     }
-    assert_eq!(ran, 122, "refusal records checked");
+    assert_eq!(ran, 121, "refusal records checked");
 }
 
 #[test]
@@ -471,9 +471,9 @@ fn the_corpus_is_complete_and_well_formed() {
     ids.dedup();
     assert_eq!(ids.len(), cases.len(), "duplicate record id");
     let count = |f: &dyn Fn(&Case) -> bool| cases.iter().filter(|c| f(c)).count();
-    assert_eq!(count(&|c| matches!(c.expect, Expect::Exit(_))), 52);
+    assert_eq!(count(&|c| matches!(c.expect, Expect::Exit(_))), 53);
     assert_eq!(count(&|c| c.expect == Expect::Parity), 5);
-    assert_eq!(count(&|c| matches!(c.expect, Expect::Refused(_))), 122);
+    assert_eq!(count(&|c| matches!(c.expect, Expect::Refused(_))), 121);
     assert_eq!(count(&|c| c.bounded), 3);
     assert_eq!(count(&|c| c.red), 141);
     for case in &cases {

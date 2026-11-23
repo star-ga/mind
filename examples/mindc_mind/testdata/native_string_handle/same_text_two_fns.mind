@@ -1,0 +1,15 @@
+fn len_of(s: String) -> i64 {
+    return s.len;
+}
+
+fn first() -> i64 {
+    return len_of("abc");
+}
+
+fn second() -> i64 {
+    return len_of("abc");
+}
+
+fn main() -> i64 {
+    return first() + second();
+}

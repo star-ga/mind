@@ -1,0 +1,14 @@
+extern "C" {
+    unsafe fn getenv(name: *const u8) -> *const u8;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let p: i64 = __mind_alloc(64);
+    __mind_store_i64(p, 0);
+    let r: i64 = getenv(p as *const u8) as i64;
+    if r != 0 {
+        return 1;
+    }
+    return 42;
+}

@@ -1,0 +1,285 @@
+name	flagged	row	form	code
+direct_run	1	0	a direct subprocess.run	import subprocess\nsubprocess.run(['prog'])\n
+direct_popen	1	0	a direct subprocess.Popen	import subprocess\nsubprocess.Popen(['prog'])\n
+direct_check_output	1	0	a direct subprocess.check_output	import subprocess\nsubprocess.check_output(['prog'])\n
+direct_check_call	1	0	a direct subprocess.check_call	import subprocess\nsubprocess.check_call(['prog'])\n
+direct_call	1	0	a direct subprocess.call	import subprocess\nsubprocess.call(['prog'])\n
+direct_getoutput	1	0	a direct subprocess.getoutput	import subprocess\nsubprocess.getoutput('prog')\n
+bare_run	1	0	run imported from subprocess	from subprocess import run\nrun(['prog'])\n
+bare_alias	1	0	Popen imported under another name	from subprocess import Popen as P\nP(['prog'])\n
+module_alias	1	0	subprocess imported under another name	import subprocess as sp\nsp.run(['prog'])\n
+module_rebound	1	0	subprocess bound to another name	import subprocess\nm = subprocess\nm.run(['prog'])\n
+value_ref	1	0	a start stored as a value	import subprocess\nrunner = subprocess.run\n
+getattr_ref	1	0	getattr on subprocess	import subprocess\ngetattr(subprocess, 'run')(['prog'])\n
+dunder_import	1	0	__import__ of subprocess	__import__('subprocess').run(['prog'])\n
+import_module	1	0	importlib.import_module of subprocess	import importlib\nimportlib.import_module('subprocess').run(['prog'])\n
+computed_import	1	0	an import by a computed name	name = 'sub' + 'process'\n__import__(name).run(['prog'])\n
+star_import	1	0	a star import of subprocess	from subprocess import *\nrun(['prog'])\n
+os_system	1	0	os.system	import os\nos.system('prog')\n
+os_popen	1	0	os.popen	import os\nos.popen('prog')\n
+os_execv	1	0	os.execv	import os\nos.execv('/bin/prog', ['prog'])\n
+os_spawnv	1	0	os.spawnv	import os\nos.spawnv(os.P_WAIT, '/bin/prog', ['prog'])\n
+os_posix_spawn	1	0	os.posix_spawn	import os\nos.posix_spawn('/bin/prog', ['prog'], {})\n
+os_fork	1	0	os.fork	import os\nos.fork()\n
+from_os_system	1	0	system imported from os	from os import system\nsystem('prog')\n
+pty_spawn	1	0	pty.spawn	import pty\npty.spawn(['prog'])\n
+asyncio_exec	1	0	asyncio.create_subprocess_exec	import asyncio\nasyncio.create_subprocess_exec('prog')\n
+posixsubprocess	1	0	_posixsubprocess.fork_exec	import _posixsubprocess\n_posixsubprocess.fork_exec()\n
+ctypes_execv	1	0	execv on a ctypes libc	import ctypes\nlibc = ctypes.CDLL(None)\nlibc.execv(b'/bin/prog', None)\n
+nested_fn	1	1	a start in a fn nested in a fn of a table row	import subprocess\ndef f():\n    def g():\n        subprocess.run(['prog'])\n    g()\n
+row_no_stdin	0	1	a start with no stdin bytes in a fn of a table row	import subprocess\ndef f(exe):\n    subprocess.run([exe], capture_output=True)\n
+row_devnull	0	1	a start with stdin=DEVNULL in a fn of a table row	import subprocess\ndef f(exe):\n    subprocess.run([exe], stdin=subprocess.DEVNULL)\n
+row_input	1	1	input= in a fn of a table row	import subprocess\ndef f(exe, data):\n    subprocess.run([exe], input=data)\n
+row_stdin_pipe	1	1	stdin=PIPE in a fn of a table row	import subprocess\ndef f(exe):\n    subprocess.Popen([exe], stdin=subprocess.PIPE)\n
+row_stdin_file	1	1	stdin from a file in a fn of a table row	import subprocess\ndef f(exe, path):\n    subprocess.run([exe], stdin=open(path, 'rb'))\n
+row_kwargs	1	1	**kwargs in a fn of a table row	import subprocess\ndef f(exe, **kw):\n    subprocess.run([exe], **kw)\n
+row_positional_stdin	1	1	a positional stdin in a fn of a table row	import subprocess\ndef f(exe, fd):\n    subprocess.Popen([exe], -1, None, fd)\n
+row_os_popen_write	1	1	os.popen for writing in a fn of a table row	import os\ndef f():\n    os.popen('prog', 'w')\n
+row_posix_spawn_actions	1	1	posix_spawn file actions in a fn of a table row	import os\ndef f(acts):\n    os.posix_spawn('/bin/prog', ['prog'], {}, file_actions=acts)\n
+row_value	1	1	a start used as a value in a fn of a table row	import subprocess\ndef f():\n    return subprocess.run\n
+row_literal_tool	0	1	stdin bytes to git, named literally, in a fn of a table row	import subprocess\ndef f(patch):\n    subprocess.run(['git', 'apply'], input=patch)\n
+row_sys_executable	0	1	stdin bytes to sys.executable in a fn of a table row	import subprocess, sys\ndef f(code):\n    subprocess.run([sys.executable, '-'], input=code)\n
+row_other_executable	1	1	stdin bytes to the executable of another receiver in a fn of a table row	import subprocess\ndef f(tool, code):\n    subprocess.run([tool.executable, '-'], input=code)\n
+row_literal_path	1	1	stdin bytes to a program named by a literal path in a fn of a table row	import subprocess\ndef f(data):\n    subprocess.run(['./stage1.elf'], input=data)\n
+getattr_other	0	0	getattr on os for a name that starts nothing	import os\nkill = getattr(os, 'killpg', None)\n
+dunder_import_other	0	0	__import__ of os read for an attribute that starts nothing	home = __import__('os').environ.get('HOME')\n
+helper_call	0	0	a start through start_child	from _selfhost_sources import start_child\nstart_child(['prog'], b'user')\n
+annotation	0	0	Popen as a type annotation	import subprocess\ndef f(p: subprocess.Popen) -> subprocess.Popen:\n    return p\n
+isinstance_type	0	0	Popen as the class argument of isinstance	import subprocess\ndef f(p):\n    return isinstance(p, subprocess.Popen)\n
+via_module_attr	1	0	a start through an attribute of another module	import _selfhost_sources as sources\nsources.subprocess.run(['prog'], input=b'x')\n
+module_attr_from_import	1	0	a start module imported from another module	from _selfhost_sources import subprocess\nsubprocess.run(['prog'])\n
+module_attr_value	1	0	another module's start module stored as a value	import _selfhost_sources as sources\nsp = sources.subprocess\nsp.run(['prog'])\n
+module_attr_constant	0	0	an attribute of another module's start module that starts nothing	import _selfhost_sources as sources\nmode = sources.subprocess.PIPE\n
+alias_bound_only	1	0	a start module bound under another name, unused	import subprocess as sp\n
+from_alias_bound	1	0	a start module from another module under another name, unused	from _selfhost_sources import subprocess as sp\n
+start_fn_bound_only	1	0	a start fn imported by name, unused	from subprocess import run\n
+dotted_from	1	0	a start fn imported from a dotted start module	from asyncio.subprocess import create_subprocess_exec as cse\ncse('prog')\n
+sys_modules	1	0	sys.modules of a start module	import sys\nsys.modules['subprocess'].run(['prog'])\n
+sys_modules_alias	1	0	sys.modules through sys under another name	import sys as s\ns.modules['subprocess'].run(['prog'])\n
+sys_modules_get	1	0	sys.modules.get of a start module	import sys\nsys.modules.get('subprocess').run(['prog'])\n
+sys_modules_computed	1	0	sys.modules by a computed key	import sys\nkey = 'sub' + 'process'\nsys.modules[key].run(['prog'])\n
+sys_modules_self	0	0	sys.modules of this module	import sys\nme = sys.modules[__name__]\n
+from_sys_modules	1	0	modules imported from sys under another name	from sys import modules as loaded\nloaded['subprocess'].run(['prog'])\n
+import_module_alias	1	0	import_module under another name	from importlib import import_module as load\nload('subprocess').run(['prog'])\n
+importer_value	1	0	importlib.import_module stored as a value	import importlib\nload = importlib.import_module\nload('subprocess').run(['prog'])\n
+builtins_import	1	0	builtins.__import__ of a start module	import builtins\nbuiltins.__import__('subprocess').run(['prog'])\n
+import_module_value	1	0	a start module imported by name and stored	import importlib\nsp = importlib.import_module('subprocess')\nsp.run(['prog'])\n
+vars_module	1	0	vars() of a start module	import subprocess\nvars(subprocess)['run'](['prog'])\n
+dunder_dict	1	0	__dict__ of a start module	import subprocess\nsubprocess.__dict__['run'](['prog'])\n
+globals_lookup	1	0	globals() lookup of a start module	import subprocess\nglobals()['subprocess'].run(['prog'])\n
+globals_bound	1	0	globals() bound to a name, then a lookup of a start module	import subprocess\ng = globals()\ng['subprocess'].run(['prog'])\n
+namespace_computed	1	0	a namespace lookup by a computed key	key = 'sub' + 'process'\nglobals()[key].run(['prog'])\n
+other_module_dict	1	0	another module's __dict__ lookup of its start module	import _selfhost_sources as sources\nsources.__dict__['subprocess'].run(['prog'])\n
+module_argument	1	0	a start module passed on as an argument	import subprocess\ndef go(m):\n    m.run(['prog'])\ngo(subprocess)\n
+getattr_module_name	1	0	getattr of another module for its start module	import _selfhost_sources as sources\ngetattr(sources, 'subprocess').run(['prog'])\n
+getattr_computed_module	1	0	getattr of an imported module by a computed name, then a start	import _selfhost_sources as sources\nname = 'sub' + 'process'\ngetattr(sources, name).run(['prog'])\n
+getattr_restore	0	0	getattr of an imported module by a computed name, kept to restore it	import gap\nsaved = {k: getattr(gap, k) for k in ('A', 'B')}\n
+star_other_module	1	0	a star import of another module, then its start module	from _selfhost_sources import *\nsubprocess.run(['prog'])\n
+star_other_fn	1	0	a star import of another module, then a start fn by name	from helpers import *\nrun(['prog'])\n
+hasattr_module	0	0	hasattr on a start module	import os\nok = hasattr(os, 'fork')\n
+globals_items	1	0	globals() read for its items	cases = [v for k, v in globals().items() if k.startswith('case_')]\n
+shell_seed_stdin.sh	1	0	a shell start of $seed with a stdin redirect	"$seed" < "$out/input.packet" > "$out/native.elf"\n
+shell_copy_stdin.sh	1	0	a shell start of a copied compiler.elf with a stdin redirect	(ulimit -t 9; timeout 9s "$out/run/compiler.elf" < "$out/input.packet") > "$out/native.elf"\n
+shell_seed_pipe.sh	1	0	a pipe into a shell start of a seed	cat "$out/input.packet" | "$SEED" > "$out/native.elf"\n
+shell_stage_heredoc.sh	1	0	a here-document to a shell start of stage1.elf	./stage1.elf <<EOF > out.elf\nfn main() -> i64 { 0 }\nEOF\n
+shell_cand_continued.sh	1	0	a continued shell line that feeds $cand	"$cand" \\n  < "$out/input.packet" > "$out/native.elf"\n
+shell_seed_hash.sh	0	0	a shell hash check of a seed	echo "$seed_hash  $seed" | sha256sum --check > seed-check.stdout\n
+shell_seed_copy.sh	0	0	a shell copy of a seed	cp "$seed" "$out/compiler.elf"\n
+shell_built_program.sh	0	0	a shell start of a built program with a stdin redirect	"$out/run/$side.elf" < "$out/fixtures/case.input" > "$out/case.stdout"\n
+attrgetter_start	1	0	an attribute path by text (operator.attrgetter)	import _selfhost_sources as sources\nimport operator\noperator.attrgetter('subprocess.run')(sources)(['prog'], input=b'x')\n
+attrgetter_imported_by_name	1	0	operator.attrgetter on a module imported by name	import _selfhost_sources as sources\n__import__('operator').attrgetter('subprocess.run')(sources)(['prog'], input=b'x')\n
+methodcaller_start	1	0	a method by text (operator.methodcaller)	import operator\nstart = operator.methodcaller('run', ['prog'], input=b'x')\n
+exec_text	1	0	code run from text by exec	exec("import subprocess; subprocess.run(['prog'], input=b'x')")\n
+eval_text	1	0	code run from text by eval	eval("__import__('subprocess').run(['prog'])")\n
+compile_text	1	0	code compiled from text	code = compile('import subprocess', 'plant', 'exec')\n
+exec_value	1	0	exec stored as a value	run_text = exec\nrun_text('x = 1')\n
+exec_from_builtins	1	0	exec imported from builtins under another name	from builtins import exec as run_text\nrun_text('x = 1')\n
+builtins_exec	1	0	exec of the builtins module	import builtins\nbuiltins.exec('import subprocess')\n
+builtins_namespace_exec	1	0	exec looked up in __builtins__	__builtins__['exec']('import subprocess')\n
+builtins_getattr_eval	1	0	eval by getattr of builtins	import builtins\ngetattr(builtins, 'eval')('1')\n
+breakpoint_hook	1	0	breakpoint (its hook is named by the environment)	breakpoint()\n
+sys_modules_values	1	0	the values of sys.modules	import sys\nnext(m for m in sys.modules.values() if m.__name__ == 'subprocess').run(['prog'], input=b'x')\n
+sys_modules_items	1	0	the items of sys.modules	import sys\nmods = dict(sys.modules.items())\n
+sys_modules_argument	1	0	sys.modules passed on as an argument	import sys\ndict.get(sys.modules, 'subprocess').run(['prog'])\n
+sys_of_other_module	1	0	sys.modules through another module's sys	import os\nos.sys.modules['subprocess'].run(['prog'])\n
+sys_by_getattr	1	0	sys by getattr of another module	import os\ngetattr(os, 'sys').modules['subprocess'].run(['prog'])\n
+sys_by_import_name	1	0	sys imported by name, then its modules	import importlib\nimportlib.import_module('sys').modules['subprocess'].run(['prog'])\n
+sys_from_other_module	1	0	sys imported from another module	from os import sys\nsys.modules['subprocess'].run(['prog'])\n
+sys_import_as	1	0	sys bound under another name, unused	import sys as loaded\n
+globals_sys	1	0	sys looked up in globals()	import sys\nglobals()['sys'].modules['subprocess'].run(['prog'])\n
+globals_values	1	0	the values of globals()	import subprocess\nnext(v for v in globals().values() if getattr(v, '__name__', '') == 'subprocess').run(['prog'])\n
+globals_keys	0	0	a loop over the keys of globals()	names = [k for k in globals() if k.startswith('case_')]\n
+sys_modules_membership	0	0	a membership test of sys.modules	import sys\nok = 'subprocess' in sys.modules\n
+namespace_spread	1	0	a namespace spread into a call	import _selfhost_sources as sources\nprint(**vars(sources))\n
+fn_globals	1	0	a fn's __globals__ lookup of its module's start module	import _selfhost_sources as sources\nsources.start_child.__globals__['subprocess'].run(['prog'], input=b'x')\n
+frame_globals	1	0	a frame's f_globals lookup of a start module	import sys\nsys._getframe(0).f_globals['subprocess'].run(['prog'])\n
+vars_other_module	1	0	vars() of another module for its start module	import _selfhost_sources as sources\nvars(sources)['subprocess'].run(['prog'], input=b'x')\n
+locals_lookup	1	0	locals() lookup of a start module	def f():\n    import subprocess\n    locals()['subprocess'].run(['prog'])\n
+inspect_getmembers	1	0	the members of another module (inspect.getmembers)	import inspect\nimport _selfhost_sources as s\ndict(inspect.getmembers(s))['subprocess'].run(['prog'])\n
+inspect_getattr_static	1	0	inspect.getattr_static of another module	import inspect\nimport _selfhost_sources as s\ninspect.getattr_static(s, 'subprocess').run(['prog'])\n
+object_getattribute	1	0	object.__getattribute__ of another module	import _selfhost_sources as s\nobject.__getattribute__(s, 'subprocess').run(['prog'])\n
+getattr_value	1	0	getattr used as a value	import functools\nimport _selfhost_sources as s\nfunctools.reduce(getattr, ['subprocess', 'run'], s)(['prog'])\n
+getattr_computed_object	1	0	getattr of any object by a computed name	name = 'sub' + 'process'\ngetattr(object(), name)\n
+getattr_loop_module	1	0	getattr by a loop over literals that names a start module	import _selfhost_sources as s\nfor n in ('subprocess',):\n    sp = getattr(s, n)\nsp.run(['prog'])\n
+getattr_constant_loop	0	0	getattr at module level by a loop over a module constant of literals	NAMES = ('a', 'b')\nfor n in NAMES:\n    getattr(object, n)\n
+getattr_constant_in_fn	1	0	getattr in a fn by a loop over a module constant (another module may bind it again)	NAMES = ('a', 'b')\ndef f(lib):\n    return [getattr(lib, n) for n in NAMES]\n
+getattr_bound_once	0	0	getattr by a name that its fn binds once to a literal sum	def f(lib):\n    name = 'sel' + 'ftest'\n    return getattr(lib, name)\n
+getattr_parameter	1	0	getattr by a parameter of its fn	def f(lib, name):\n    return getattr(lib, name)\n
+getattr_loop_rebound	1	0	getattr by a loop name that is bound again	def f(lib):\n    for n in ('a', 'b'):\n        n = n.upper()\n        getattr(lib, n)\n
+importlib_loader	1	0	a module made from a spec and run (importlib.util)	import importlib.util\nspec = importlib.util.find_spec('subprocess')\nmod = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(mod)\nmod.run(['prog'], input=b'x')\n
+runpy_path	1	0	a file run as a module (runpy)	import runpy\nrunpy.run_path('helper.py')\n
+pickle_loads	1	0	bytes unpickled (pickle)	import pickle\npickle.loads(b'')\n
+code_interpreter	1	0	text run by the code module	import code\ncode.InteractiveInterpreter().runsource('import subprocess')\n
+timeit_text	1	0	text run by timeit	import timeit\ntimeit.timeit('import subprocess', number=1)\n
+code_object	1	0	a code object of a fn	f = lambda: 0\ng = f.__code__.replace(co_consts=())\n
+ctypes_system	1	0	libc system through ctypes	import ctypes\nctypes.CDLL(None).system(b'stage1.elf < src.mind')\n
+ctypes_popen	1	0	libc popen through a ctypes library name	import ctypes\nlibc = ctypes.CDLL(None)\nlibc.popen(b'stage1.elf', b'w')\n
+ctypes_fork	1	0	libc fork through ctypes	import ctypes\nlibc = ctypes.CDLL('libc.so.6')\nlibc.fork()\n
+ctypes_key	1	0	libc system by a literal key	import ctypes\nlibc = ctypes.CDLL(None)\nlibc['system'](b'x')\n
+ctypes_computed_key	1	0	a ctypes library by a computed key	import ctypes\nlibc = ctypes.CDLL(None)\nname = 'sys' + 'tem'\nlibc[name](b'x')\n
+ctypes_getattr_computed	1	0	a ctypes library by getattr of a computed name	import ctypes\nname = 'sys' + 'tem'\ngetattr(ctypes.CDLL(None), name)(b'x')\n
+ctypes_prototype	1	0	a ctypes prototype bound to libc system by name	import ctypes\nproto = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p)\nrun = proto(('system', ctypes.CDLL(None)))\n
+ctypes_pythonapi	1	0	Python run from text through ctypes.pythonapi	import ctypes\nctypes.pythonapi.PyRun_SimpleString(b'import subprocess')\n
+ctypes_c_api	1	0	a C-API fn through a ctypes library	import ctypes\nctypes.CDLL(None).PyRun_SimpleString(b'import subprocess')\n
+platform_system	0	0	platform.system of the imported module	import platform\nok = platform.system() == 'Linux'\n
+multiprocessing_process	1	0	a process of multiprocessing	import multiprocessing\nmultiprocessing.Process(target=print).start()\n
+process_pool	1	0	a process pool imported by name	from concurrent.futures import ProcessPoolExecutor\nProcessPoolExecutor()\n
+event_loop_exec	1	0	an event loop's subprocess_exec	import asyncio\nloop = asyncio.new_event_loop()\nloop.subprocess_exec(object, 'prog')\n
+webbrowser_command	1	0	a browser command of webbrowser	import webbrowser\nwebbrowser.get('stage1.elf %s').open('src.mind')\n
+sqlite_extension	1	0	native code loaded by sqlite3	import sqlite3\nsqlite3.connect(':memory:').load_extension('x')\n
+reflect_in_row	0	1	exec in a fn of a table row	def f():\n    exec('x = 1')\n
+value_after_reflect_in_row	1	1	a start stored as a value in a row fn with reflection	import subprocess\ndef f():\n    exec('x = 1')\n    runner = subprocess.run\n
+reflect_attrgetter	1	0	the reflection name attrgetter on any object	def f(obj):\n    return obj.attrgetter\n
+reflect_methodcaller	1	0	the reflection name methodcaller on any object	def f(obj):\n    return obj.methodcaller\n
+reflect_getmembers	1	0	the reflection name getmembers on any object	def f(obj):\n    return obj.getmembers\n
+reflect_getmembers_static	1	0	the reflection name getmembers_static on any object	def f(obj):\n    return obj.getmembers_static\n
+reflect_getattr_static	1	0	the reflection name getattr_static on any object	def f(obj):\n    return obj.getattr_static\n
+reflect_ugetattribute	1	0	the reflection name __getattribute__ on any object	def f(obj):\n    return obj.__getattribute__\n
+reflect_ugetattr	1	0	the reflection name __getattr__ on any object	def f(obj):\n    return obj.__getattr__\n
+reflect_spec_from_file_location	1	0	the reflection name spec_from_file_location on any object	def f(obj):\n    return obj.spec_from_file_location\n
+reflect_spec_from_loader	1	0	the reflection name spec_from_loader on any object	def f(obj):\n    return obj.spec_from_loader\n
+reflect_module_from_spec	1	0	the reflection name module_from_spec on any object	def f(obj):\n    return obj.module_from_spec\n
+reflect_exec_module	1	0	the reflection name exec_module on any object	def f(obj):\n    return obj.exec_module\n
+reflect_load_module	1	0	the reflection name load_module on any object	def f(obj):\n    return obj.load_module\n
+reflect_SourceFileLoader	1	0	the reflection name SourceFileLoader on any object	def f(obj):\n    return obj.SourceFileLoader\n
+reflect_SourcelessFileLoader	1	0	the reflection name SourcelessFileLoader on any object	def f(obj):\n    return obj.SourcelessFileLoader\n
+reflect_ExtensionFileLoader	1	0	the reflection name ExtensionFileLoader on any object	def f(obj):\n    return obj.ExtensionFileLoader\n
+reflect_run_path	1	0	the reflection name run_path on any object	def f(obj):\n    return obj.run_path\n
+reflect_run_module	1	0	the reflection name run_module on any object	def f(obj):\n    return obj.run_module\n
+reflect_ucode	1	0	the reflection name __code__ on any object	def f(obj):\n    return obj.__code__\n
+reflect_FunctionType	1	0	the reflection name FunctionType on any object	def f(obj):\n    return obj.FunctionType\n
+reflect_CodeType	1	0	the reflection name CodeType on any object	def f(obj):\n    return obj.CodeType\n
+reflect_LambdaType	1	0	the reflection name LambdaType on any object	def f(obj):\n    return obj.LambdaType\n
+reflect_InteractiveInterpreter	1	0	the reflection name InteractiveInterpreter on any object	def f(obj):\n    return obj.InteractiveInterpreter\n
+reflect_InteractiveConsole	1	0	the reflection name InteractiveConsole on any object	def f(obj):\n    return obj.InteractiveConsole\n
+reflect_compile_command	1	0	the reflection name compile_command on any object	def f(obj):\n    return obj.compile_command\n
+reflect_pythonapi	1	0	the reflection name pythonapi on any object	def f(obj):\n    return obj.pythonapi\n
+reflect_Unpickler	1	0	the reflection name Unpickler on any object	def f(obj):\n    return obj.Unpickler\n
+reflect_load_extension	1	0	the reflection name load_extension on any object	def f(obj):\n    return obj.load_extension\n
+reflect_enable_load_extension	1	0	the reflection name enable_load_extension on any object	def f(obj):\n    return obj.enable_load_extension\n
+libc_vfork	1	0	libc vfork through a ctypes library	import ctypes\nctypes.CDLL(None).vfork\n
+libc_clone	1	0	libc clone through a ctypes library	import ctypes\nctypes.CDLL(None).clone\n
+libc_clone3	1	0	libc clone3 through a ctypes library	import ctypes\nctypes.CDLL(None).clone3\n
+libc_wordexp	1	0	libc wordexp through a ctypes library	import ctypes\nctypes.CDLL(None).wordexp\n
+libc_syscall	1	0	libc syscall through a ctypes library	import ctypes\nctypes.CDLL(None).syscall\n
+libc_fexecve	1	0	libc fexecve through a ctypes library	import ctypes\nctypes.CDLL(None).fexecve\n
+libc_dlopen	1	0	libc dlopen through a ctypes library	import ctypes\nctypes.CDLL(None).dlopen\n
+libc_dlsym	1	0	libc dlsym through a ctypes library	import ctypes\nctypes.CDLL(None).dlsym\n
+libc_dlvsym	1	0	libc dlvsym through a ctypes library	import ctypes\nctypes.CDLL(None).dlvsym\n
+libc_getattr_literal	1	0	libc system by getattr of a literal	import ctypes\ngetattr(ctypes.CDLL(None), 'system')(b'x')\n
+libc_getattr_imported	0	0	getattr of an imported module for a libc name	import platform\nname = getattr(platform, 'system')()\n
+libc_loop_key	1	0	a ctypes library by a loop key that names libc system	import ctypes\nlibc = ctypes.CDLL(None)\nfor n in ('system',):\n    libc[n](b'x')\n
+library_loop_key	0	0	a ctypes library by a loop key over export names	import ctypes\nlib = ctypes.CDLL('x.so')\nfor n in ('mind_add',):\n    lib[n](1)\n
+module_upickle	1	0	an attribute of the module _pickle	import _pickle\n_pickle.anything\n
+module_marshal	1	0	an attribute of the module marshal	import marshal\nmarshal.anything\n
+module_shelve	1	0	an attribute of the module shelve	import shelve\nshelve.anything\n
+module_codeop	1	0	an attribute of the module codeop	import codeop\ncodeop.anything\n
+module_zipimport	1	0	an attribute of the module zipimport	import zipimport\nzipimport.anything\n
+module_pdb	1	0	an attribute of the module pdb	import pdb\npdb.anything\n
+module_bdb	1	0	an attribute of the module bdb	import bdb\nbdb.anything\n
+module_trace	1	0	an attribute of the module trace	import trace\ntrace.anything\n
+module_profile	1	0	an attribute of the module profile	import profile\nprofile.anything\n
+module_cProfile	1	0	an attribute of the module cProfile	import cProfile\ncProfile.anything\n
+module_doctest	1	0	an attribute of the module doctest	import doctest\ndoctest.anything\n
+module_tkinter	1	0	an attribute of the module tkinter	import tkinter\ntkinter.anything\n
+module_utkinter	1	0	an attribute of the module _tkinter	import _tkinter\n_tkinter.anything\n
+module_code_attr	1	0	an attribute of the module code	import code\ncode.interact()\n
+word_module_imported	1	0	code of another module (an import binds the receiver)	import _selfhost_sources as s\ns.code.interact()\n
+word_module_object	0	0	an attribute named code on an object that no import binds	def f(res):\n    return res.code\n
+word_module_trace	0	0	an attribute named trace on an object that no import binds	def f(env):\n    return env.trace\n
+word_module_profile	0	0	an attribute named profile on an object that no import binds	def f(case):\n    return case.profile\n
+event_loop_shell	1	0	an event loop's subprocess_shell	def f(loop):\n    return loop.subprocess_shell(object, 'prog')\n
+os_startfile	1	0	os.startfile	import os\nos.startfile('src.mind')\n
+frame_locals	1	0	a frame's f_locals lookup of a start module	import sys\nsys._getframe(0).f_locals['subprocess'].run(['prog'])\n
+frame_builtins	1	0	a frame's f_builtins lookup of exec	import sys\nsys._getframe(0).f_builtins['exec']('x = 1')\n
+vars_value	1	0	vars stored as a value	import _selfhost_sources as sources\nlook = vars\nlook(sources)['subprocess'].run(['prog'])\n
+namespace_attribute_store	1	0	a namespace stored in an attribute	class C:\n    def f(self):\n        self.ns = globals()\n
+namespace_store_by_key	0	0	a store by a literal key into sys.modules	import sys\nsys.modules['plant_mod'] = None\n
+namespace_del_by_key	0	0	a del by a literal key of sys.modules	import sys\ndel sys.modules['plant_mod']\n
+namespace_tuple_alias	0	0	globals() bound in a tuple assignment	g, h = globals(), 1\n
+namespace_keys_list	0	0	list() of a namespace (its keys)	import sys\nkeys = list(sys.modules)\n
+namespace_keys_sorted	0	0	sorted() of a namespace (its keys)	import sys\nkeys = sorted(sys.modules)\n
+namespace_keys_set	0	0	set() of a namespace (its keys)	import sys\nkeys = set(sys.modules)\n
+namespace_keys_frozenset	0	0	frozenset() of a namespace (its keys)	import sys\nkeys = frozenset(sys.modules)\n
+namespace_keys_tuple	0	0	tuple() of a namespace (its keys)	import sys\nkeys = tuple(sys.modules)\n
+namespace_keys_len	0	0	len() of a namespace (its keys)	import sys\nkeys = len(sys.modules)\n
+namespace_keys_bool	0	0	bool() of a namespace (its keys)	import sys\nkeys = bool(sys.modules)\n
+namespace_keys_method	0	0	the keys() of a namespace	names = list(globals().keys())\n
+namespace_update	0	0	the update() of a namespace	globals().update({'plant': 1})\n
+reaching_getattr_modules	1	0	getattr of any object for modules	def f(obj):\n    return getattr(obj, 'modules')\n
+reaching_getattr_builtins	1	0	getattr of any object for builtins	def f(obj):\n    return getattr(obj, 'builtins')\n
+reaching_getattr_ubuiltins	1	0	getattr of any object for __builtins__	def f(obj):\n    return getattr(obj, '__builtins__')\n
+reaching_getattr_getattr	1	0	getattr of any object for getattr	def f(obj):\n    return getattr(obj, 'getattr')\n
+reaching_getattr_uimport	1	0	getattr of any object for __import__	def f(obj):\n    return getattr(obj, '__import__')\n
+reaching_getattr_import_module	1	0	getattr of any object for import_module	def f(obj):\n    return getattr(obj, 'import_module')\n
+reaching_getattr_vars	1	0	getattr of any object for vars	def f(obj):\n    return getattr(obj, 'vars')\n
+reaching_getattr_globals	1	0	getattr of any object for globals	def f(obj):\n    return getattr(obj, 'globals')\n
+reaching_getattr_locals	1	0	getattr of any object for locals	def f(obj):\n    return getattr(obj, 'locals')\n
+reaching_getattr_udict	1	0	getattr of any object for __dict__	def f(obj):\n    return getattr(obj, '__dict__')\n
+reaching_getattr_uglobals	1	0	getattr of any object for __globals__	def f(obj):\n    return getattr(obj, '__globals__')\n
+reaching_getattr_f_globals	1	0	getattr of any object for f_globals	def f(obj):\n    return getattr(obj, 'f_globals')\n
+reaching_getattr_f_locals	1	0	getattr of any object for f_locals	def f(obj):\n    return getattr(obj, 'f_locals')\n
+reaching_getattr_f_builtins	1	0	getattr of any object for f_builtins	def f(obj):\n    return getattr(obj, 'f_builtins')\n
+reaching_getattr_exec	1	0	getattr of any object for exec	def f(obj):\n    return getattr(obj, 'exec')\n
+reaching_getattr_compile	1	0	getattr of any object for compile	def f(obj):\n    return getattr(obj, 'compile')\n
+reaching_getattr_breakpoint	1	0	getattr of any object for breakpoint	def f(obj):\n    return getattr(obj, 'breakpoint')\n
+builtins_import_as	1	0	builtins bound under another name, unused	import builtins as loaded\n
+code_module_import_as	1	0	a code module bound under another name, unused	import pickle as loaded\n
+reflect_from_import_as	1	0	a reflection name imported under another name	from operator import attrgetter as pick\n
+sys_from_import_as	1	0	sys imported from another module under another name	from os import sys as loaded\n
+star_then_sys_modules	1	0	a star import of another module, then sys.modules for its values	from helpers import *\nmods = list(sys.modules.values())\n
+star_then_builtins	1	0	a star import of another module, then exec of builtins	from helpers import *\nbuiltins.exec('x = 1')\n
+builtins_of_other_module	1	0	exec of another module's builtins	import os\nos.builtins.exec('x = 1')\n
+builtins_by_import_name	1	0	exec of builtins imported by name	import importlib\nimportlib.import_module('builtins').exec('x = 1')\n
+library_call_key	1	0	a ctypes load by a computed key	import ctypes\nname = 'sys' + 'tem'\nctypes.CDLL(None)[name.upper()](b'x')\n
+library_attribute_key	1	0	a ctypes library of an attribute by a computed key	import ctypes\nclass C:\n    def __init__(self, name):\n        self.lib = ctypes.CDLL(None)\n        self.lib[name](b'x')\n
+library_PyDLL	1	0	a library of PyDLL by a computed key	import ctypes\ndef f(name):\n    return ctypes.PyDLL('x')[name]\n
+library_WinDLL	1	0	a library of WinDLL by a computed key	import ctypes\ndef f(name):\n    return ctypes.WinDLL('x')[name]\n
+library_OleDLL	1	0	a library of OleDLL by a computed key	import ctypes\ndef f(name):\n    return ctypes.OleDLL('x')[name]\n
+library_LoadLibrary	1	0	a library of LoadLibrary by a computed key	import ctypes\ndef f(name):\n    return ctypes.LoadLibrary('x')[name]\n
+library_cdll_name	1	0	a library of ctypes.cdll by a computed key	import ctypes\ndef f(name):\n    return ctypes.cdll.libc[name]\n
+library_pydll_name	1	0	a library of ctypes.pydll by a computed key	import ctypes\ndef f(name):\n    return ctypes.pydll.libc[name]\n
+library_windll_name	1	0	a library of ctypes.windll by a computed key	import ctypes\ndef f(name):\n    return ctypes.windll.libc[name]\n
+library_oledll_name	1	0	a library of ctypes.oledll by a computed key	import ctypes\ndef f(name):\n    return ctypes.oledll.libc[name]\n
+getattr_fstring_loop	0	0	getattr by an f-string of a loop over literals	def f(lib):\n    for n in ('a', 'b'):\n        getattr(lib, f'sel_{n}')\n
+getattr_self_bound	1	0	getattr by a name bound to itself	def f(lib):\n    n = n + 'a'\n    return getattr(lib, n)\n
+getattr_constant_lookup	0	0	getattr at module level by a lookup in a constant dict of literals	RULES = {'a': 'sel_a'}\nfor k in ('a',):\n    getattr(object, RULES[k])\n
+getattr_constant_items	0	0	getattr at module level by the keys of a constant dict	TABLE = {'sel_a': 1}\nfor k, v in TABLE.items():\n    getattr(object, k)\n
+getattr_tuple_target	0	0	getattr by a tuple loop target over literals	for name, width in (('sel_a', 1), ('sel_b', 2)):\n    getattr(object, name)\n
+reflect_value_in_row	0	1	exec stored as a value in a fn of a table row	def f():\n    run_text = exec\n
+module_runpy	1	0	an attribute of the module runpy	import runpy\nrunpy.anything\n
+start_module_dict_in_row	1	1	the __dict__ of a start module as a value in a row fn	import subprocess\ndef f():\n    table = subprocess.__dict__\n
+start_module_getattribute_in_row	1	1	the __getattribute__ of a start module as a value in a row fn	import subprocess\ndef f():\n    look = subprocess.__getattribute__\n
+start_module_getattr_in_row	1	1	the __getattr__ of a start module as a value in a row fn	import subprocess\ndef f():\n    look = subprocess.__getattr__\n
+namespace_get_other	0	0	sys.modules.get of a module that starts nothing	import sys\nm = sys.modules.get('json')\n
+namespace_pop_other	0	0	sys.modules.pop of a module that starts nothing	import sys\nm = sys.modules.pop('json')\n
+namespace_setdefault_other	0	0	sys.modules.setdefault of a module that starts nothing	import sys\nm = sys.modules.setdefault('json', None)\n
+namespace_alias_lookup	0	0	globals() bound to a name, then a lookup that names no start	g = globals()\ncases = g['CASES']\n
+getattr_augmented	1	0	getattr by a name bound once, then changed by an augmented assignment	import ctypes\ndef f():\n    n = 'sy'\n    n += 'stem'\n    return getattr(ctypes.CDLL(None), n)\n
+reflect_bound_in_row	1	1	a reflection name imported under another name in a row fn, used in another fn	def f():\n    from operator import attrgetter as pick\ndef g():\n    return pick('a')\n
+exec_bound_in_row	1	1	exec imported under another name in a row fn, used in another fn	def f():\n    from builtins import exec as run_text\ndef g():\n    return run_text('x = 1')\n
+exec_from_builtins_unused	1	0	exec imported from builtins under another name, unused	from builtins import exec as run_text\n
+reflect_beside_start_in_row	1	1	reflection in a row fn that also starts a process	import subprocess\ndef f():\n    subprocess.run(['git', 'status'])\n    exec('x = 1')\n
+namespace_beside_start_in_row	1	1	a namespace read in a row fn that also starts a process	import subprocess\ndef f():\n    subprocess.run(['git', 'status'])\n    return list(globals().values())\n
+getattr_conditional	0	0	getattr by a name bound once to a conditional of literals	def f(lib, shipped):\n    n = 'sel_a' if shipped else 'sel_b'\n    return getattr(lib, n)\n
+getattr_conditional_computed	1	0	getattr by a conditional with a computed branch	def f(lib, shipped, other):\n    n = 'sel_a' if shipped else other\n    return getattr(lib, n)\n

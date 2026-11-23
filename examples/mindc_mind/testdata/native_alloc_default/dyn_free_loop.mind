@@ -1,0 +1,23 @@
+// A loop that calls an extern fn, allocates 1 MB and frees it, 2,000 times: 2 GB of
+// requests in total, more than a 1 GiB bump arena holds. The image is dynamic (an
+// extern call) and reclaims. Exit status 33.
+extern "C" {
+    unsafe fn getuid() -> i32;
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut a: i64 = 0;
+    while i < 2000 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, i);
+        a = a + __mind_load_i64(p) - i;
+        let f: i64 = __mind_free(p);
+        a = a + f;
+        let u: i64 = getuid() as i64;
+        if u < 0 {
+            a = a + 99;
+        }
+        i = i + 1;
+    }
+    return a + 33;
+}

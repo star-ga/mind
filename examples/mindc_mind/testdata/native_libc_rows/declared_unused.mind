@@ -1,0 +1,32 @@
+// A declaration of every row of the libc block and of the seven older network
+// rows, one called (close on descriptor -1 gives -1): the program builds and
+// returns 7, and the sixteen uncalled declarations create no import. Each
+// declaration must equal its row (name, arity, widths, result) or the build is
+// refused.
+extern "C" {
+    unsafe fn readlink(path: *const u8, buf: *mut u8, cap: i64) -> i64;
+    unsafe fn bind(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+    unsafe fn sendto(sockfd: i32, buf: *const u8, len: i64, flags: i32, dest_addr: *const u8, addrlen: i32) -> i64;
+    unsafe fn recvfrom(sockfd: i32, buf: *mut u8, len: i64, flags: i32, src_addr: *mut u8, addrlen: *mut u8) -> i64;
+    unsafe fn getenv(name: *const u8) -> *const u8;
+    unsafe fn creat(path: *const u8, mode: i32) -> i32;
+    unsafe fn poll(fds: *mut u8, nfds: i64, timeout_ms: i32) -> i32;
+    unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
+    unsafe fn getsockopt(sockfd: i32, level: i32, optname: i32, optval: *mut u8, optlen: *mut u8) -> i32;
+    unsafe fn socket(domain: i32, kind: i32, protocol: i32) -> i32;
+    unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn send(sockfd: i32, buf: *const u8, len: i64, flags: i32) -> i64;
+    unsafe fn recv(sockfd: i32, buf: *mut u8, len: i64, flags: i32) -> i64;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32;
+    unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    if close(minus_one as i32) as i64 != minus_one {
+        return 1;
+    }
+    return 7;
+}

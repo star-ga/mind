@@ -320,3 +320,26 @@ fn inspect_elf_note(artifact: &str, elf: &[u8], json: bool) -> i32 {
     }
     0
 }
+
+/// Escape a string for embedding inside a hand-built JSON string literal.
+///
+/// `--json` output is assembled by interpolation rather than via serde, so any
+/// free-form field (the artifact path, or the `substrate` / `toolchain` values
+/// which a crafted artifact controls verbatim) must be escaped or it could
+/// inject structure into the object — e.g. spoofing `trace_hash_valid` for a
+/// consumer that parses the JSON instead of checking the exit code.
+pub(super) fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}

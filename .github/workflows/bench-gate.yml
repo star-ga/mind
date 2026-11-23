@@ -360,7 +360,8 @@ jobs:
           cp e2e-base-target/release/mindc "$RUNNER_TEMP/e2e-bin/mindc-base"
           cp target/release/mindc "$RUNNER_TEMP/e2e-bin/mindc-cand"
           rustc --version
-          clang --version | head -1
+          clang_out=$(clang --version)
+          head -n 1 <<<"$clang_out"
           sha256sum "$RUNNER_TEMP/e2e-bin/mindc-base" "$RUNNER_TEMP/e2e-bin/mindc-cand"
 
       - name: Paired A/B bench and decision (one automatic re-run if inconclusive)

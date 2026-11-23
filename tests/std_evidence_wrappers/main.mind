@@ -18,6 +18,7 @@ import std.evidence_mic;
 import std.procgroup;
 import std.os_evidence;
 import std.x509_evidence;
+import std.x509_path;
 
 fn b(a: i64, i: i64) -> i64 {
     __mind_load_i8(a + i) & 255
@@ -120,12 +121,40 @@ fn budget64() -> i64 {
     c
 }
 
+// x509_verify_server_chain_ev on the vector at chain: the same result as the
+// plain x509_verify_server_chain, and one record of that verdict.
+fn check_chain_ev(chain: i64, anchors: i64, dns: i64, at: i64, s: i64) -> i64 {
+    let want: i64 = x509_verify_server_chain(chain, anchors, dns, at);
+    let n: i64 = evd_len(s);
+    if x509_verify_server_chain_ev(chain, anchors, dns, at, s) != want || evd_len(s) != n + 1 {
+        return 70;
+    }
+    if evd_field(s, n, 0) != evd_mod_x509() || evd_field(s, n, 2) != 0 - want || evd_field(s, n, 3) != __mind_load_i64(chain) || evd_field(s, n, 4) != 0 {
+        return 71;
+    }
+    if want == 0 && evd_field(s, n, 1) != evd_kind_accept() {
+        return 72;
+    }
+    if want != 0 && evd_field(s, n, 1) != evd_kind_refuse() {
+        return 73;
+    }
+    // sink 0 returns the same result and records nothing.
+    if x509_verify_server_chain_ev(chain, anchors, dns, at, 0) != want || evd_len(s) != n + 1 {
+        return 74;
+    }
+    0
+}
+
 // One accept and one refuse vector (inline anchors, mode 0) from the pack at
-// the C-string path cases.
+// the C-string path cases, through both x509 wrappers.
 fn check_x509(cases: i64) -> i64 {
-    let s: i64 = evd_new(8);
+    let s: i64 = evd_new(16);
     if x509_verify_server_chain_budget_ev(0, 0, 0, 0, budget64(), s) != 0 - 1 || evd_field(s, 0, 1) != evd_kind_refuse() || evd_field(s, 0, 2) != 1 || evd_field(s, 0, 3) != 0 {
         return 40;
+    }
+    // A pointer <= 0 is refused -1, as by x509_verify_server_chain.
+    if x509_verify_server_chain_ev(0, 0, 0, 0, s) != 0 - 1 || evd_len(s) != 2 || evd_field(s, 1, 0) != evd_mod_x509() || evd_field(s, 1, 1) != evd_kind_refuse() || evd_field(s, 1, 2) != 1 || evd_field(s, 1, 3) != 0 {
+        return 48;
     }
     let f: i64 = read_to_string(cases);
     let src: i64 = __mind_load_i64(f + 0);
@@ -153,6 +182,10 @@ fn check_x509(cases: i64) -> i64 {
             if evd_field(s, n, 2) != 0 - want || evd_field(s, n, 3) != __mind_load_i64(chain) || evd_field(s, n, 4) != 0 {
                 return 43;
             }
+            let ev: i64 = check_chain_ev(chain, anchors, dns, at, s);
+            if ev != 0 {
+                return ev;
+            }
             if want == 0 {
                 accepted = 1;
                 if evd_field(s, n, 1) != evd_kind_accept() {
@@ -160,7 +193,7 @@ fn check_x509(cases: i64) -> i64 {
                 }
                 // The budget passes through: a cell pointer 0 is refused -1
                 // exactly as x509_verify_server_chain_budget refuses it.
-                if x509_verify_server_chain_budget_ev(chain, anchors, dns, at, 0, s) != 0 - 1 || evd_field(s, n + 1, 2) != 1 {
+                if x509_verify_server_chain_budget_ev(chain, anchors, dns, at, 0, s) != 0 - 1 || evd_field(s, n + 2, 2) != 1 {
                     return 47;
                 }
             } else {

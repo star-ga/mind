@@ -1,0 +1,13 @@
+// The END bound of a for loop calls a function that frees. The parser evaluates the bound once, before the loop, so it is not a loop position. BUMP: the image equals the base compiler's. Exit status 33.
+fn bound(n: i64) -> i64 {
+    let q: i64 = __mind_alloc(64);
+    let z: i64 = __mind_free(q);
+    return n + z;
+}
+fn main() -> i64 {
+    let mut acc: i64 = 0;
+    for i in 0..bound(5) {
+        acc = acc + 1;
+    }
+    return acc + 28;
+}

@@ -1,0 +1,435 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The allocator class of one native image: BUMP (the inline bump core, whose
+// `__mind_free` releases nothing) or RECLAIM (the free-list runtime that
+// explicit-layout images carry, capped at the 1 GiB arena). The class is a pure
+// function of the composed source, read before lowering: no cell, no mode word,
+// no environment variable, so the shared-library form of the compiler and the
+// native compiler choose the same class.
+//
+// RECLAIM when a `__mind_free` call stands at a loop position, directly or
+// through calls, over the emitted set (every user fn and every std fn they
+// reach). A loop position is the condition or the body of a `while`, or the body
+// of a `for` (the parser makes it a `while`); the bound of a `for` that the
+// parser evaluates before the loop is not one. A callee resolves through
+// nb_last_def_idx, as in the reach walk; an intrinsic or an extern resolves to
+// nothing. Recursion without a loop is not counted.
+//
+// Phase A walks every emitted fn once at depth 0. A call at a loop position
+// queues its callee once; phase B walks each queued fn with its whole body at a
+// loop position, and its calls queue their callees the same way. So each fn is
+// walked at most twice and no fixpoint rounds are needed. Every loop is flat:
+// no return inside a loop, one helper fn per position (PARTS.md).
+//
+// Opt-out: a line of the leading `//` block of the user region (its first
+// lines that begin with `//`) that reads exactly `// mind: native_alloc = bump`
+// keeps BUMP. The compiler source carries it, so the compiler stays on BUMP.
+// The class is bit 4 of the per-compile flags word (`uses_argv`, bits 0-3: argv
+// capture, two entry guards, native_opt).
+//
+// Walk cell (6 words): +0 source buffer, +8 emitted fns, +16 their count, +24
+// mark words (1 once a fn is queued), +32 queue, +40 queue length.
+// PART RULE: intrinsics and other parts only.
+
+import nb_ast;
+import nb_lastdef;
+
+// Bit 4 of the per-compile flags word: allocator class RECLAIM.
+pub fn nbas_flag_reclaim() -> i64 {
+    16
+}
+
+// 1 iff buf[lo, hi) is the 28-byte directive: three little-endian words
+// "// mind:", " native_", "alloc = ", then the 4 bytes "bump". Like
+// nbo_directive_full, the last load may read up to 4 bytes past hi (the
+// source buffer holds 16 bytes past its end).
+pub fn nbas_dir_eq(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 28 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo) != 4207609350952333103 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 8) != 6874030601547116064 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo + 16) != 2323048594236271713 {
+        return 0;
+    }
+    if (__mind_load_i64(buf + lo + 24) & 4294967295) != 1886221666 {
+        return 0;
+    }
+    1
+}
+
+// The end of the line that starts at pos: the first newline, or lim.
+pub fn nbas_eol(buf: i64, pos: i64, lim: i64) -> i64 {
+    let mut i: i64 = pos;
+    let mut r: i64 = lim;
+    while i < lim {
+        if __mind_load_i8(buf + i) == 10 {
+            r = i;
+            i = lim;
+        }
+        i = i + 1;
+    }
+    r
+}
+
+// 0 = the line [pos, eol) does not begin with `//` (the leading block ended),
+// 1 = a comment line, 2 = the directive (a carriage return before the newline
+// is not part of the line).
+pub fn nbas_line_kind(buf: i64, pos: i64, eol: i64) -> i64 {
+    if eol - pos < 2 {
+        return 0;
+    }
+    if __mind_load_i8(buf + pos) != 47 {
+        return 0;
+    }
+    if __mind_load_i8(buf + pos + 1) != 47 {
+        return 0;
+    }
+    let mut hi: i64 = eol;
+    if __mind_load_i8(buf + eol - 1) == 13 {
+        hi = eol - 1;
+    }
+    if nbas_dir_eq(buf, pos, hi) == 1 {
+        return 2;
+    }
+    1
+}
+
+// The next line to read: the end of the source once the block ended or the
+// directive was found.
+pub fn nbas_next_line(kind: i64, eol: i64, lim: i64) -> i64 {
+    if kind != 1 {
+        return lim;
+    }
+    eol + 1
+}
+
+// 1 iff the leading `//` block of buf[user_lo, src_len) holds the directive.
+pub fn nbas_directive(buf: i64, user_lo: i64, src_len: i64) -> i64 {
+    let mut pos: i64 = user_lo;
+    let mut found: i64 = 0;
+    while pos < src_len {
+        let eol: i64 = nbas_eol(buf, pos, src_len);
+        let kind: i64 = nbas_line_kind(buf, pos, eol);
+        if kind == 2 {
+            found = 1;
+        }
+        pos = nbas_next_line(kind, eol, src_len);
+    }
+    found
+}
+
+// 1 iff buf[lo, hi) spells `__mind_free` (the only spelling that the native
+// intrinsic table maps to the free intrinsic).
+pub fn nbas_is_free(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 11 {
+        return 0;
+    }
+    if __mind_load_i64(buf + lo) != 7376725140034117471 {
+        return 0;
+    }
+    if (__mind_load_i64(buf + lo + 8) & 16777215) != 6645106 {
+        return 0;
+    }
+    1
+}
+
+// Queue the fn that `callee` names, once, when the call stands at a loop
+// position. Returns 0.
+pub fn nbas_enqueue(cell: i64, callee: i64, lp: i64) -> i64 {
+    if lp == 0 {
+        return 0;
+    }
+    let idx: i64 = nb_last_def_idx(__mind_load_i64(cell), __mind_load_i64(cell + 8), __mind_load_i64(cell + 16), ast_span_lo(callee), ast_span_hi(callee));
+    if idx < 0 {
+        return 0;
+    }
+    let mark: i64 = __mind_load_i64(cell + 24);
+    if __mind_load_i64(mark + idx * 8) == 1 {
+        return 0;
+    }
+    __mind_store_i64(mark + idx * 8, 1);
+    let qlen: i64 = __mind_load_i64(cell + 40);
+    __mind_store_i64(__mind_load_i64(cell + 32) + qlen * 8, idx);
+    __mind_store_i64(cell + 40, qlen + 1);
+    0
+}
+
+// One call: 1 when the callee is a free at a loop position (or an argument
+// already found one), else 0 after queueing the callee.
+pub fn nbas_call_at(cell: i64, callee: i64, lp: i64, found: i64) -> i64 {
+    if found == 1 {
+        return 1;
+    }
+    if nbas_is_free(__mind_load_i64(cell), ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+        return lp;
+    }
+    nbas_enqueue(cell, callee, lp)
+}
+
+// One node of a list: a statement (mode 1) or an expression (mode 0), unless a
+// hit is already known.
+pub fn nbas_node(cell: i64, node: i64, lp: i64, mode: i64, found: i64) -> i64 {
+    if found == 1 {
+        return 1;
+    }
+    if mode == 1 {
+        return nbas_stmt(cell, node, lp);
+    }
+    nbas_expr(cell, node, lp)
+}
+
+// The nodes at addr + (i * stride + off) * 8, i < n: 1 if one holds a free at a
+// loop position. A hit stops the walk of the later nodes.
+pub fn nbas_list(cell: i64, addr: i64, n: i64, stride: i64, off: i64, lp: i64, mode: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    while i < n {
+        let hit: i64 = nbas_node(cell, __mind_load_i64(addr + (i * stride + off) * 8), lp, mode, r);
+        r = hit;
+        i = i + 1;
+    }
+    r
+}
+
+// The statements of an if branch block; 0 for an absent else.
+pub fn nbas_block(cell: i64, blk: i64, lp: i64) -> i64 {
+    if blk == 0 {
+        return 0;
+    }
+    nbas_list(cell, ast_child0(blk), ast_aux(blk), 1, 0, lp, 1)
+}
+
+// `if COND { THEN } else { ELSE }`, as a statement and as a value.
+pub fn nbas_if(cell: i64, node: i64, lp: i64) -> i64 {
+    if nbas_expr(cell, ast_child0(node), lp) == 1 {
+        return 1;
+    }
+    if nbas_block(cell, ast_child1(node), lp) == 1 {
+        return 1;
+    }
+    nbas_block(cell, ast_child2(node), lp)
+}
+
+// An expression at depth `lp` (1 at a loop position). 1 iff a free call stands
+// at a loop position in it. Every kind with a call below it has an arm; every
+// other kind (literals, names, a method read, a poison leaf) holds no call.
+pub fn nbas_expr(cell: i64, node: i64, lp: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_call() {
+        let args: i64 = nbas_list(cell, ast_child1(node), ast_aux(node), 1, 0, lp, 0);
+        return nbas_call_at(cell, ast_child0(node), lp, args);
+    }
+    if k == ast_paren() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_binop() {
+        if nbas_expr(cell, ast_child0(node), lp) == 1 {
+            return 1;
+        }
+        return nbas_expr(cell, ast_child1(node), lp);
+    }
+    if k == ast_if() {
+        return nbas_if(cell, node, lp);
+    }
+    if k == ast_struct_lit() {
+        return nbas_list(cell, ast_child1(node), ast_aux(node), 3, 2, lp, 0);
+    }
+    if k == ast_array_lit() {
+        return nbas_list(cell, ast_child1(node), ast_aux(node), 1, 0, lp, 0);
+    }
+    if k == ast_enum_ctor() {
+        if ast_aux(node) == 1 {
+            return nbas_expr(cell, ast_child1(node), lp);
+        }
+        return 0;
+    }
+    if k == ast_index() {
+        if nbas_expr(cell, ast_child0(node), lp) == 1 {
+            return 1;
+        }
+        return nbas_expr(cell, ast_child1(node), lp);
+    }
+    if k == ast_field() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_neg() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_not() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_cast() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_addr_of() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_deref() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    0
+}
+
+// A statement at depth `lp`. A `while` walks its condition and its body at a
+// loop position.
+pub fn nbas_stmt(cell: i64, node: i64, lp: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        return nbas_expr(cell, ast_child0(node), lp);
+    }
+    if k == ast_let() {
+        return nbas_stmt(cell, ast_child2(node), lp);
+    }
+    if k == ast_while() {
+        if nbas_expr(cell, ast_child0(node), 1) == 1 {
+            return 1;
+        }
+        return nbas_block(cell, ast_child1(node), 1);
+    }
+    if k == ast_assign() {
+        return nbas_expr(cell, ast_child2(node), lp);
+    }
+    if k == ast_index_assign() {
+        if nbas_expr(cell, ast_child0(node), lp) == 1 {
+            return 1;
+        }
+        if nbas_expr(cell, ast_child1(node), lp) == 1 {
+            return 1;
+        }
+        return nbas_expr(cell, ast_child2(node), lp);
+    }
+    if k == ast_deref_assign() {
+        return nbas_expr(cell, ast_child2(node), lp);
+    }
+    if k == ast_field_assign() {
+        if nbas_expr(cell, ast_child0(node), lp) == 1 {
+            return 1;
+        }
+        return nbas_expr(cell, ast_child2(node), lp);
+    }
+    if k == ast_break() {
+        return 0;
+    }
+    if k == ast_continue() {
+        return 0;
+    }
+    // A bare expression statement (`__mind_free(p);`, `f(x);`) and an `if`.
+    nbas_expr(cell, node, lp)
+}
+
+// The whole body of emitted fn k, at depth `lp`.
+pub fn nbas_fn(cell: i64, k: i64, lp: i64) -> i64 {
+    let node: i64 = __mind_load_i64(__mind_load_i64(cell + 8) + k * 8);
+    let body: i64 = ast_child2(node);
+    nbas_list(cell, ast_child0(body), ast_aux(body), 1, 0, lp, 1)
+}
+
+// Phase A step: fn k at depth 0, unless a hit is already known.
+pub fn nbas_step_a(cell: i64, k: i64, found: i64) -> i64 {
+    if found == 1 {
+        return 1;
+    }
+    nbas_fn(cell, k, 0)
+}
+
+// Phase B step: queued fn number q with its whole body at a loop position.
+pub fn nbas_step_b(cell: i64, q: i64, found: i64) -> i64 {
+    if found == 1 {
+        return 1;
+    }
+    nbas_fn(cell, __mind_load_i64(__mind_load_i64(cell + 32) + q * 8), 1)
+}
+
+pub fn nbas_phase_a(cell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(cell + 16);
+    let mut k: i64 = 0;
+    let mut r: i64 = 0;
+    while k < n {
+        let hit: i64 = nbas_step_a(cell, k, r);
+        r = hit;
+        k = k + 1;
+    }
+    r
+}
+
+// The queue grows while it is walked: its length is read at every step.
+pub fn nbas_qlen(cell: i64) -> i64 {
+    __mind_load_i64(cell + 40)
+}
+
+pub fn nbas_phase_b(cell: i64) -> i64 {
+    let mut q: i64 = 0;
+    let mut r: i64 = 0;
+    while q < nbas_qlen(cell) {
+        let hit: i64 = nbas_step_b(cell, q, r);
+        r = hit;
+        q = q + 1;
+    }
+    r
+}
+
+pub fn nbas_zero(addr: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(addr + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// The two walk phases over the emitted fns `ordered[0, n_fns)`; their table
+// (nb_last_def_attach) resolves the callees. 1 iff RECLAIM.
+pub fn nbas_walk(buf: i64, ordered: i64, n_fns: i64) -> i64 {
+    let cell: i64 = __mind_alloc(48);
+    let mark: i64 = __mind_alloc((n_fns + 1) * 8);
+    let queue: i64 = __mind_alloc((n_fns + 1) * 8);
+    let _zm: i64 = nbas_zero(mark, n_fns + 1);
+    __mind_store_i64(cell, buf);
+    __mind_store_i64(cell + 8, ordered);
+    __mind_store_i64(cell + 16, n_fns);
+    __mind_store_i64(cell + 24, mark);
+    __mind_store_i64(cell + 32, queue);
+    __mind_store_i64(cell + 40, 0);
+    let a: i64 = nbas_phase_a(cell);
+    let b: i64 = nbas_phase_b_if(cell, a);
+    __mind_free(queue);
+    __mind_free(mark);
+    __mind_free(cell);
+    b
+}
+
+pub fn nbas_phase_b_if(cell: i64, found: i64) -> i64 {
+    if found == 1 {
+        return 1;
+    }
+    nbas_phase_b(cell)
+}
+
+// The flags-word contribution of the allocator class: nbas_flag_reclaim() or
+// 0. 0 for an emission-context image (ctx != 0) and for a user region that
+// carries the opt-out directive.
+pub fn nbas_alloc_flag(buf: i64, ordered: i64, n_fns: i64, user_lo: i64, src_len: i64, ctx: i64) -> i64 {
+    if ctx != 0 {
+        return 0;
+    }
+    if nbas_directive(buf, user_lo, src_len) == 1 {
+        return 0;
+    }
+    if nbas_walk(buf, ordered, n_fns) == 1 {
+        return nbas_flag_reclaim();
+    }
+    0
+}

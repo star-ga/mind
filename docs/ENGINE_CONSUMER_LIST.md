@@ -15,7 +15,7 @@ implementations of MIND's semantics does this tree carry, and which of them may
 be retired?" has so far been answered with summaries. A summary is not the
 artefact: an approver who rules on a list of module names and line counts has
 approved the *summary*, not the modules. Everything below is a measured fact
-with the command that produced it, so the ruling is made on the thing itself.
+with the command that produced it, so the decision is made on the thing itself.
 
 Measured at commit `03368cc7`. Every count, line number and program output in
 this file was produced by running the quoted command against that tree.
@@ -57,7 +57,7 @@ Two standing constraints govern every row:
 | 2 | `src/eval/mlir_export.rs::emit_mlir_with_opts` | Second Rust IR→MLIR emitter, in the `mind` binary | `src/main.rs:434,479`; `src/eval/mod.rs:669,689,735`; 9 test files | Partly; 20 variants, **type-blind**, unguarded, bare `_ => {}` | **Yes** (third emitter of the same construct) | **GATE now, SUBSTITUTE next.** Not delete: it is the sole emitter of 10 tensor/shape ops. |
 | 3 | `main.mind` mic@3 emitter (SECTION 4, ~147 `emit_*` fns) | The canonical self-host emitter | keystone, `mic3_flip_smoke`, `mic3_primitives_smoke`, self-host loop | Yes; gate-locked byte-for-byte | **No** — this IS the self-host leg | **KEEP.** |
 | 4 | `main.mind` native-ELF emitter (SECTION 4c, 580 `nb_*` fns) | Rust-free x86-64 backend; produces the frozen bootstrap ELF | `self_host_loop_smoke` (non-skippable), ~60 `self_host_native_*` gates | Yes; frozen `stage1.elf` reproduces itself | **No** — this is the Rust-independence deliverable | **KEEP.** |
-| 5 | `main.mind` real-MLIR-text emitter (SECTION 4b, 64 fns) | Byte-parity port of #1 into MIND | `selftest_emit_mlir` → `self_host_mlir_smoke` (`ci,keystone`), `mod_operator_smoke` | Yes for its stated scalar subset | **Yes** — a further hand-written meaning | **OPERATOR DECISION (D4).** Gate-owned; retiring it retires a keystone gate. |
+| 5 | `main.mind` real-MLIR-text emitter (SECTION 4b, 64 fns) | Byte-parity port of #1 into MIND | `selftest_emit_mlir` → `self_host_mlir_smoke` (`ci,keystone`), `mod_operator_smoke` | Yes for its stated scalar subset | **Yes** — a further hand-written meaning | **OPERATOR DECISION.** Gate-owned; retiring it retires a keystone gate. |
 | 6 | `src/eval/mod.rs` AST interpreter | The shipped execution engine | `mind eval`, `mind repl`, `mindc test` pass 1, `mindc conformance` value oracle, tensor stdlib | Yes, but **diverges from both code generators on the defined division edges** | **No** — it is the product's interpreter | **WIRE + fix the edge contract.** |
 | 7 | `src/eval/ir_interp.rs::eval_ir` | IR "preview" evaluator | `src/main.rs:530`; `tests/ir_lower.rs:23,33` — and **no longer** the conformance oracle | No; 20 of 43 variants modelled, `Index` is identity | **Yes** | **SUBSTITUTE.** The blocker cleared; the capability is already duplicated. |
 | 8 | `tests/mindfuzz_cross_substrate.rs` AST oracle + `mod mic3vm` | Two independent differential oracles | The `mindfuzz_cross_substrate` test target itself | Yes | **No** — permitted migration tool, not a compiler engine | **KEEP + de-duplicate one table.** |
@@ -253,7 +253,7 @@ Rust-independence claim.
 
 ---
 
-## 5. `examples/mindc_mind/main.mind` — real-MLIR-text emitter (SECTION 4b) — **operator decision D4**
+## 5. `examples/mindc_mind/main.mind` — real-MLIR-text emitter (SECTION 4b) — **operator decision**
 
 **Capability.** A byte-for-byte MIND port of engine 1's output for the scalar
 `i64`/`f64` subset. Its own header (`main.mind:23422-23457`) states the scope:
@@ -319,7 +319,7 @@ Retiring it means retiring `self_host_mlir_smoke` — a keystone-class gate — 
 losing the only differential proof that a MIND program can reproduce
 `mindc --emit-mlir` byte-for-byte.
 
-**Recommendation — OPERATOR DECISION (D4), with the evidence stated.**
+**Recommendation — OPERATOR DECISION, with the evidence stated.**
 It is genuinely a further hand-written meaning of `+`, and the MLIR backend has
 been demoted from the self-host path — so the rule says it should go. But it is
 not unowned code: deleting it deletes a green keystone gate, which is a

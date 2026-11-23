@@ -24,7 +24,7 @@ import tempfile
 
 from _selfhost_so import resolve_mindc
 from _stdlib_manifest import seed_blob
-from _selfhost_sources import compiler_library
+from _selfhost_sources import compiler_library, self_mode_image, start_child
 from self_host_loop_smoke import build_seed, _FROZEN
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -258,10 +258,14 @@ def closure_program(source: str, roots: list[str]) -> tuple[str, list[str]]:
     return "\n\n".join(items[n] for n in order if n in need) + "\n\n" + main, missing
 
 
-def emit(exe: pathlib.Path, user: str) -> bytes:
+def framed(user: str) -> bytes:
     prefix = seed_blob()
     source = prefix + user.encode()
-    return run_elf(exe, struct.pack("<qq", len(prefix), len(source)) + source)
+    return struct.pack("<qq", len(prefix), len(source)) + source
+
+
+def emit(exe: pathlib.Path, user: str) -> bytes:
+    return run_elf(exe, framed(user))
 
 
 def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
@@ -279,7 +283,7 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
     literal = tmp / "sentinel_only.elf"
     literal.write_bytes(new_bytes)
     literal.chmod(0o755)
-    proc = subprocess.run([str(literal)], cwd=tmp, input=b"", capture_output=True, timeout=15)
+    proc = start_child([str(literal)], b"", cwd=tmp, capture_output=True, timeout=15)
     if (proc.returncode, proc.stdout, proc.stderr) != (3, b"AAA", b""):
         fails.append(f"sentinel_only: exit={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}")
     else:
@@ -299,7 +303,7 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
     exe = tmp / "legacy_three_arg.elf"
     exe.write_bytes(three)
     exe.chmod(0o755)
-    proc = subprocess.run([str(exe)], cwd=tmp, input=b"", capture_output=True, timeout=15)
+    proc = start_child([str(exe)], b"", cwd=tmp, capture_output=True, timeout=15)
     got = (counts, proc.returncode, proc.stdout, proc.stderr)
     if got != ((1, 1, 0), 0, bytes.fromhex("8877665544332211"), b""):
         fails.append(f"legacy_three_arg: (legacy write/read, dispatch), exit, stdout = {got!r}")
@@ -326,7 +330,8 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
     program, missing = closure_program(compiler_library().decode(), PARITY_ROOTS)
     if missing:
         fails.append(f"emitter_seed_parity: roots missing from main.mind: {missing}")
-    seed_elf, new_elf = emit(_FROZEN, program), emit(stage1, program)
+    seed_elf = run_elf(_FROZEN, self_mode_image(framed(program), _FROZEN))
+    new_elf = run_elf(stage1, self_mode_image(framed(program), stage1))
     if seed_elf != new_elf:
         part = "code" if seed_elf[:-32] != new_elf[:-32] else "trace note"
         fails.append(f"emitter_seed_parity: stage1 != frozen seed ({part} differs; "
@@ -339,8 +344,8 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
 
 def run_elf(exe: pathlib.Path, source: bytes) -> bytes:
     # Full compiler derivation can exceed two minutes on shared CI hosts.
-    result = subprocess.run(
-        [str(exe)], input=source, capture_output=True,
+    result = start_child(
+        [str(exe)], source, capture_output=True,
         timeout=int(os.environ.get("MIND_SELFHOST_TIMEOUT_SECS", "600")),
     )
     if result.returncode or not result.stdout.startswith(b"\x7fELF"):
@@ -367,7 +372,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="mind-sys-") as td:
         tmp = pathlib.Path(td)
         stage1 = tmp / "stage1.elf"
-        stage1.write_bytes(run_elf(_FROZEN, seed))
+        stage1.write_bytes(run_elf(_FROZEN, self_mode_image(seed, _FROZEN)))
         stage1.chmod(0o755)
         print(f"stage1 from current main.mind: sha256={hashlib.sha256(stage1.read_bytes()).hexdigest()}", flush=True)
         for name, body, expected, posix in [

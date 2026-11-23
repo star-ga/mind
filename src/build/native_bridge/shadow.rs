@@ -21,7 +21,7 @@
 //! at one nesting only, so the walk reports EVERY cross-frame re-declaration.
 //!
 //! Soundness over precision: an enclosing scope is ANY lexical frame outside
-//! the binding's own -- module constants, function parameters, outer `let`s,
+//! the binding's own -- an extern const, function parameters, outer `let`s,
 //! an enclosing loop body, `if` block, `match` arm or `{ }` block, a loop's own
 //! induction variable. Admitted are only a re-declaration inside the SAME
 //! frame, and a `let` at a function's top level re-declaring a parameter: the
@@ -45,10 +45,10 @@
 //! `continue` and `return`; the MLIR build agrees except where it carries a
 //! loop-body shadow out through a `break`/`continue`, a known MLIR defect).
 //! Everything else -- `for` / for-each variables and bodies, `match` bindings
-//! and arms, closures, bare `{ }` blocks, regions, tuple `let`s, module
-//! constants, a binding inside an expression (a value-`if` branch), an
-//! unannotated `let` or any other type (structs, strings, references, tensors)
-//! and any node this walk does not model -- stays unproven.
+//! and arms, closures, bare `{ }` blocks, regions, tuple `let`s, a binding
+//! inside an expression (a value-`if` branch), an unannotated `let` or any
+//! other type (structs, strings, references, tensors) and any node this walk
+//! does not model -- stays unproven.
 
 use std::collections::BTreeMap;
 
@@ -121,7 +121,7 @@ pub(super) fn find(module: &Module) -> Vec<Shadow> {
     let mut module_frame = BTreeMap::new();
     for item in &module.items {
         match item {
-            Node::Const { name, span, .. } | Node::ExternConst { name, span, .. } => {
+            Node::ExternConst { name, span, .. } => {
                 module_frame.insert(
                     name.as_str(),
                     Binding {
@@ -298,12 +298,9 @@ impl<'a> Walk<'a> {
                     self.bind(name, *span, "let");
                 }
             }
-            Node::Const {
-                name, value, span, ..
-            } => {
-                self.expr(value);
-                self.bind(name, *span, "const");
-            }
+            // A module const is not storage. A `let` or parameter of the same
+            // name is a different binding; the compiler returns that value.
+            Node::Const { value, .. } => self.expr(value),
             Node::Block { stmts, .. } => self.scoped(stmts, FrameKind::Other),
             #[cfg(feature = "std-surface")]
             Node::Region { body, .. } => self.scoped(body, FrameKind::Other),

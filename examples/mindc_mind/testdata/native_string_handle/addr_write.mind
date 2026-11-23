@@ -1,0 +1,29 @@
+fn show(s: String) -> i64 {
+    return __mind_write(1, s.addr, s.len, 0 - 1);
+}
+
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn forward(s: String) -> i64 {
+    return show(s);
+}
+
+fn main() -> i64 {
+    let a: i64 = show("addr+len\n");
+    let b: i64 = forward("");
+    let c: i64 = show("tab\tquote\"slash\\\n");
+    let d: i64 = byte_sum("ABCD");
+    let e: i64 = show("été\n");
+    if e != 6 {
+        return 1;
+    }
+    return (a + b + c + d) % 256;
+}

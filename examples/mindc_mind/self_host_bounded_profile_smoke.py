@@ -53,7 +53,7 @@ _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
 from self_host_loop_smoke import build_seed, is_static_elf  # noqa: E402
-from _selfhost_sources import DRIVER  # noqa: E402
+from _selfhost_sources import DRIVER, compiler_feed, self_mode_image, start_child  # noqa: E402
 
 AS_CAP = 2 * 1024**3
 CPU_CAP_S = 12  # consumer compiles and runs (the evaluator's child CPU ceiling)
@@ -163,7 +163,7 @@ def capped(argv, stdin: bytes, *, cap=True, cpu=CPU_CAP_S, timeout=300):
             resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
             resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
     t0 = time.monotonic()
-    r = subprocess.run(argv, input=stdin, stdout=subprocess.PIPE,
+    r = start_child(argv, stdin, stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, timeout=timeout, preexec_fn=limit)
     wall = time.monotonic() - t0
     return r.returncode, r.stdout, r.stderr, wall, resource.getrusage(
@@ -180,7 +180,7 @@ def write_exec(d: pathlib.Path, name: str, data: bytes) -> pathlib.Path:
 def derive_from_default(stdin_v2: bytes) -> bytes:
     """Frozen DEFAULT seed + v2 header -> bounded compiler (uncapped: the
     default seed itself reserves 5 GiB)."""
-    rc, out, err, wall, _ = capped([str(DEFAULT_SEED)], stdin_v2, cap=False)
+    rc, out, err, wall, _ = capped([str(DEFAULT_SEED)], self_mode_image(stdin_v2, DEFAULT_SEED), cap=False)
     if rc != 0 or not is_static_elf(out):
         raise RuntimeError(f"default seed exited {rc}, {len(out)}B, err={err[:200]!r}")
     print(f"        derive: {len(out)} B in {wall:.1f}s sha256={sha(out)}")
@@ -190,7 +190,7 @@ def derive_from_default(stdin_v2: bytes) -> bytes:
 def loop(seed: pathlib.Path, stdin_v2: bytes, td: pathlib.Path) -> list[bytes]:
     stages, exe = [], seed
     for k in (1, 2, 3):
-        rc, out, err, wall, rss = capped([str(exe)], stdin_v2, cpu=SELF_CPU_CAP_S)
+        rc, out, err, wall, rss = capped([str(exe)], self_mode_image(stdin_v2, exe), cpu=SELF_CPU_CAP_S)
         print(f"        stage{k}: rc={rc} {len(out)} B wall={wall:.1f}s "
               f"peak_child_rss={rss} KiB sha256={sha(out)[:16]}")
         if rc != 0 or not is_static_elf(out):
@@ -326,18 +326,18 @@ def traced(compiler: pathlib.Path, image: bytes, td: pathlib.Path, name: str):
     libc = ctypes.CDLL(None, use_errno=True)
     libc.ptrace.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]
     libc.ptrace.restype = ctypes.c_long
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.dup2(os.open(inp, os.O_RDONLY), 0)
-            os.dup2(os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o755), 1)
-            os.dup2(os.open(err, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644), 2)
-            resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
-            resource.setrlimit(resource.RLIMIT_CPU, (SELF_CPU_CAP_S, SELF_CPU_CAP_S))
-            libc.ptrace(0, 0, None, None)  # PTRACE_TRACEME
-            os.execv(str(compiler), [str(compiler)])
-        finally:
-            os._exit(127)
+    def tracee() -> None:
+        resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
+        resource.setrlimit(resource.RLIMIT_CPU, (SELF_CPU_CAP_S, SELF_CPU_CAP_S))
+        libc.ptrace(0, 0, None, None)  # PTRACE_TRACEME
+    fds = (os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o755),
+           os.open(err, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644))
+    try:
+        child = start_child([str(compiler)], image, popen=True, stdout=fds[0], stderr=fds[1], preexec_fn=tracee)
+    finally:
+        for fd in fds:
+            os.close(fd)
+    pid = child.pid
     os.waitpid(pid, 0)
     libc.ptrace(0x4200, pid, None, ctypes.c_void_p(0x40))  # PTRACE_SETOPTIONS, PTRACE_O_TRACEEXIT
 
@@ -377,6 +377,7 @@ def traced(compiler: pathlib.Path, image: bytes, td: pathlib.Path, name: str):
         if (exit_stop or sig != 5) and hw is None:
             hw = high_water()
         libc.ptrace(7, pid, None, ctypes.c_void_p(0 if exit_stop or sig == 5 else sig))
+    child.returncode = rc  # reaped above: Popen's cleanup must not poll the pid again
     return rc, out.read_bytes(), err.read_bytes(), hw or 0
 
 
@@ -449,7 +450,7 @@ def stack_rows(argv: list[str]) -> int:
 
         def row(name: str, src: bytes, lo: int, want_rc: int | None, exe=compiler, run_to: int | None = None) -> tuple:
             tokens, budget = stack_budget(src)
-            rc, out, err, hw = traced(exe, image(src, lo), td, name.replace("/", "_"))
+            rc, out, err, hw = traced(exe, compiler_feed(image(src, lo), exe), td, name.replace("/", "_"))
             ok = rc >= 0 and 0 < hw <= budget and (want_rc is None or rc == want_rc)
             ran = None
             if ok and run_to is not None:
@@ -488,14 +489,15 @@ def stack_rows(argv: list[str]) -> int:
         report(rc == 3 and out == b"" and b"stack budget" in err, "stack/long-token",
                f"4 MB identifier: rc={rc} stderr={err[:80]!r}")
         for kind in ("recursive-walk", "no-precheck"):
-            rc, out, err, _ = traced(compiler, image(mutant_source(combined, kind), user_lo), td, "mutant_" + kind)
+            rc, out, err, _ = traced(compiler, self_mode_image(image(mutant_source(combined, kind), user_lo), compiler), td,
+                                "mutant_" + kind)
             if rc != 0 or not is_static_elf(out):
                 report(False, f"stack/mutant-{kind}", f"the mutant compiler did not build: rc={rc} stderr={err[:120]!r}")
                 continue
             bad = write_exec(td, f"mutant_{kind}.elf", out)
             if kind == "recursive-walk":
                 tokens, budget = stack_budget(grown)
-                rc, out, err, hw = traced(bad, image(grown, user_lo), td, "mutant_walk_run")
+                rc, out, err, hw = traced(bad, compiler_feed(image(grown, user_lo), bad), td, "mutant_walk_run")
                 report(rc < 0 or hw > budget, f"stack/mutant-{kind}",
                        f"KILLED iff growth25 leaves its budget: rc={rc} high-water={hw} B, budget {budget} B")
             else:

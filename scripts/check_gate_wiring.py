@@ -51,7 +51,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # rule; importing a sibling module would create one on every local run.
 sys.dont_write_bytecode = True
 
-from check_gate_wiring_preflight import check_preflight_feature_parity  # noqa: E402
+from check_gate_wiring_preflight import (  # noqa: E402
+    check_ci_pipe_readers,
+    check_preflight_feature_parity,
+)
 from workflow_scan import (  # noqa: E402
     blocks,
     job_display_name,
@@ -210,7 +213,25 @@ GATED_EVENTS = ("push", "pull_request")
 # of self_host_native_shadow_scope_smoke.py and its three controls (inside that
 # gate, now 738 lines, it would end near 840 lines, over the 800-line ceiling).
 # The controls run inside the gate on every run, not in a file of their own.
-HARNESS_CEILING = 329  # Exact reviewed integration inventory; no spare allowance.
+# 329 -> 331 counts exactly two tracked files split out of
+# examples/mindc_mind/_selfhost_sources.py. The tree holds these counts:
+# _selfhost_identity.py is 797 lines (the identity tool, its partitions and self-tests, and the compiler-only mode dispatch).
+# _selfhost_string_rows.py is 721 lines (the string-rows runner).
+# _selfhost_sources.py is 687 lines (capture, the compile helpers and the one stdin start helper; 327 at e52217f4).
+# native_lane_value_shapes_smoke.py is 794 lines (800 at e52217f4).
+# The bodies run only through that smoke.
+# 331 -> 332 adds examples/mindc_mind/_selfhost_alloc_rows.py, the rows of the allocator-class
+# smoke (its generated default-profile programs and its planted changes), moved unchanged out of the
+# .so resolver module _selfhost_so.py (795 -> 465 lines): harness rows live in a module named for them.
+# 332 -> 333 adds examples/mindc_mind/_process_starts.py, the static start rule: process starts in tracked
+# Python files (also through another module, a star import, a namespace or an import by name) and in tracked
+# shell files, with the table of starts that feed no compiler. _selfhost_sources.py keeps the run-time helper
+# start_child that the rule protects.
+# 333 -> 334 adds tests/_gate_floor_cases.py, the flip-gate leg case and the declared-VERDICTS case of the
+# count contract, moved unchanged out of tests/gate_assert_count_contract_test.py (816 -> 747 lines; the
+# 800-line ceiling): the contract test runs both with its own check and still reports 94 verdicts.
+# history-lines: examples/mindc_mind/_selfhost_identity.py=797 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=687 examples/mindc_mind/native_lane_value_shapes_smoke.py=794
+HARNESS_CEILING = 334  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
@@ -250,6 +271,68 @@ def check_harness_ratchet(root: Path, failures: list[str]) -> None:
         )
         return
     print(f"[PASS] harness ratchet: {n} tracked .py/.sh <= ceiling {HARNESS_CEILING}")
+
+
+# The history paragraph names these four files. A checkout that lacks one fails
+# closed: skipping would let a scratch copy of this script stay green.
+_HISTORY_FILES = (
+    "examples/mindc_mind/_selfhost_identity.py",
+    "examples/mindc_mind/_selfhost_string_rows.py",
+    "examples/mindc_mind/_selfhost_sources.py",
+    "examples/mindc_mind/native_lane_value_shapes_smoke.py",
+)
+_HISTORY_LINE = re.compile(r"^# history-lines: (.+)$", re.M)
+_HISTORY_ITEM = re.compile(r"(\S+)=(\d+)")
+_HISTORY_BASELINES = (
+    ("examples/mindc_mind/_selfhost_sources.py", 327),
+    ("examples/mindc_mind/native_lane_value_shapes_smoke.py", 800),
+)
+
+
+def check_harness_history_lines(root: Path, failures: list[str]) -> None:
+    """The history text states the line counts it can be checked against.
+
+    The machine row `# history-lines: path=N ...` must match `wc -l` of each
+    path, and the prose must say `<basename> is N lines`. The baselines
+    `327 at e52217f4` and `800 at e52217f4` are checked with `git show`. A
+    checkout without that commit (a shallow or one-commit copy) fails, as does a
+    missing file or a missing machine row: a check that is skipped can not fail.
+    """
+    missing = [rel for rel in _HISTORY_FILES if not (root / rel).is_file()]
+    if missing:
+        failures.append("harness history: missing " + ", ".join(missing))
+        return
+    text = Path(__file__).read_text(encoding="utf-8")
+    found = _HISTORY_LINE.search(text)
+    if not found:
+        failures.append("harness history: missing `# history-lines:` row")
+        return
+    items: list[tuple[str, int]] = []
+    for piece in found.group(1).split():
+        matched = _HISTORY_ITEM.fullmatch(piece)
+        if not matched:
+            failures.append(f"harness history: bad history-lines item {piece!r}")
+            return
+        items.append((matched.group(1), int(matched.group(2))))
+    if {rel for rel, _ in items} != set(_HISTORY_FILES):
+        failures.append("harness history: the row must name exactly the four split files")
+    for rel, n in items:
+        got = (root / rel).read_bytes().count(b"\n")
+        if got != n:
+            failures.append(f"harness history: {rel} is {got} lines, the history row says {n}")
+        if f"{Path(rel).name} is {n} lines" not in text:
+            failures.append(f"harness history: the prose does not say {Path(rel).name} is {n} lines")
+    if "327 at e52217f4" not in text or "800 at e52217f4" not in text:
+        failures.append("harness history: the prose must state 327 at e52217f4 and 800 at e52217f4")
+    for rel, n in _HISTORY_BASELINES:
+        shown = subprocess.run(["git", "show", f"e52217f4:{rel}"], cwd=root, capture_output=True)
+        if shown.returncode != 0:
+            failures.append(f"harness history: e52217f4:{rel} is not in this checkout; fetch the full history")
+            continue
+        got = shown.stdout.count(b"\n")
+        if got != n:
+            failures.append(f"harness history: e52217f4:{rel} is {got} lines, the prose says {n}")
+
 
 # (workflow file, job id) -> scripts that job MUST invoke as a step.
 # Checked against the job body with comment lines removed: a workflow that
@@ -620,6 +703,7 @@ def main() -> int:
     # (3) preflight's cargo-test feature matrix must mirror build_test in both
     # directions; this is structural and does not execute a compiler build.
     check_preflight_feature_parity(root, failures)
+    check_ci_pipe_readers(root, failures)
 
     # (4) every release-required row resolves to a real, non-empty job.
     check_manifest(root, failures)
@@ -629,6 +713,7 @@ def main() -> int:
 
     # (5) the harness surface may not grow past its recorded ceiling.
     check_harness_ratchet(root, failures)
+    check_harness_history_lines(root, failures)
 
     if failures:
         print("::error::gate wiring is broken - a whole-tree gate is not reachable:")

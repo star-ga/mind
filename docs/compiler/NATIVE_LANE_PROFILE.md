@@ -50,14 +50,27 @@ mismatched annotation (`lane.type.array`). In IR only an `ArrayLoad` may read a
 `ConstArray` result; the array value never enters the scalar type env.
 
 Unsigned integers, narrow integer expressions and casts, f32 and
-float-to-float casts, pointers, C externs, other aggregates, tensors, methods,
-implicit standard-library objects, closures, `print` (its runtime-call lowering
-has no native-lane implementation) and unrecognized syntax refuse. Each refusal
+float-to-float casts, pointers, other aggregates, tensors, methods,
+implicit standard-library objects, closures and unrecognized syntax refuse.
+A typable `extern "C"` block is admitted when the selected compiler carries
+the lane mark, and the compiler's rows name a refusal. A `print` of an i64
+builds on a compiler minted from this tree (it writes the integer and exits
+0). The committed seeds carry `nblane02`, so the host admits that build; a compiler that carries `nblane01` is refused before this predicate runs (`native.compiler_mark`).
+Each refusal
 names its construct (`lane.type.tensor`, `lane.type.int_width`,
 `lane.source.struct`, `lane.source.trait`, `lane.ir.tensor`, ...); the generic
 `*.unsupported` kinds remain only for what has no name of its own. A raw intrinsic accepting an i64 address does not
 prove memory safety of that address. The predicate is a compiler feature fence,
 not a memory-safety or theorem verifier.
+
+The type named exactly `String`, a string literal and a field read are typed
+as the i64 word, and this predicate decides nothing more about them: a field
+read walks its receiver first, a field write still refuses
+(`lane.source.struct`), and every other type name keeps its refusal
+(`lane.type.named`, `lane.type.int_width`). The rules for these three belong to
+the compiler that carries the `nblane02` mark. A compiler that does not carry
+`nblane02` is refused by the host before this predicate runs. The host does
+not apply the historical frozen profile to that compiler.
 
 Canonical intrinsic contracts supply the existing exact i64 ABI for allocation,
 loads, stores, read and write. The canonical contract marks store results
@@ -127,8 +140,7 @@ unsigned/narrow types, mixed float/integer operations, unknown/dead calls,
 wrong arity, intrinsic overrides, wrong return type, altered parameter index,
 branch scope escape, malformed loop tuples, a store result forged into a float
 operation, a float forged into the int-to-float conversion, refused casts and
-renamed imports, and `print` and C extern blocks refused at their source
-site. A refusal carries the function name and, for source checks,
+renamed imports. A refusal carries the function name and, for source checks,
 the byte offset of the refused node; the bridge reports it as a line and column
 of the composed user image. Passing
 these profile tests does not substitute for execution parity on a reseeded

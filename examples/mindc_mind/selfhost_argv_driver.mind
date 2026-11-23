@@ -75,8 +75,19 @@ pub fn main() -> i64 {
     if hn < 16 {
         return 4;
     }
-    let user_lo: i64 = __mind_load_i64(hdr);
-    let src_len: i64 = __mind_load_i64(hdr + 8);
+    let mut user_lo: i64 = __mind_load_i64(hdr);
+    let mut src_len: i64 = __mind_load_i64(hdr + 8);
+    // The self-mode input magic (nb_lane_keys.mind) may stand before the header: the compiler source
+    // is sent with it. This driver compiles through selftest_native_elf_u, whose lane rules are off,
+    // so the magic is only skipped: user_lo is the next word and src_len the one after it.
+    if user_lo == nb_lane_self_magic() {
+        user_lo = src_len;
+        let hn2: i64 = adrv_read_fully(fd, hdr + 8, 8, 0);
+        if hn2 < 8 {
+            return 4;
+        }
+        src_len = __mind_load_i64(hdr + 8);
+    }
     // Source bytes follow the header; +16 slack matches selfhost_driver.mind.
     let src: i64 = __mind_alloc(src_len + 16);
     let rn: i64 = adrv_read_fully(fd, src, src_len, 0);

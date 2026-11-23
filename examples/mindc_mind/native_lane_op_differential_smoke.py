@@ -51,7 +51,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import gate_assert  # noqa: E402
 
 SEED = 20261021
-MARK = b"\x48\xb8nblane01"
+MARK = b"\x48\xb8nblane02"
 TRAP_EXIT = 79
 # Exit of _narrow_min when the documented narrow MIN / -1 result (MIN, or 0 for
 # `%`) is observed; 1 is a wrong value and TRAP_EXIT a trap the contract forbids.

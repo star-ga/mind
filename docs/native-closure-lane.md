@@ -2,10 +2,12 @@
 
 Author: STARGA Inc.
 
-The historical native profile still rejects unresolved runtime calls and every
+The historical native profile rejects unresolved runtime calls and every
 collision with its standard-library prefix, except a user function that is an
 exact private copy of a private seed helper (see
-[exact private copies](#exact-private-copies-historical-profile)). A separate candidate lane profile
+[exact private copies](#exact-private-copies-historical-profile)). `mindc build`
+does not apply that profile at this head: it refuses a compiler without the
+`nblane02` mark before any profile (see Selection and trust). A separate candidate lane profile
 can distinguish supported intrinsic calls from missing user definitions and
 handle private helper collisions without rewriting user code. These changes do
 not qualify a compiler release or establish consumer backend parity.
@@ -15,15 +17,13 @@ defined in [the candidate lane profile](compiler/NATIVE_LANE_PROFILE.md).
 
 ## Selection and trust
 
-The bridge selects candidate `native-lane-v1` only when the chosen native
-compiler contains the distinct byte marker `48 b8 6e 62 6c 61 6e 65 30 31`
-(`movabs rax` with immediate bytes `nblane01`). The existing `nbscope1` marker
-and a bounded memory layout do not select this profile. Unmarked compilers
-retain the historical frozen source/IR predicates and collision rules. Under
-them a call to a compiler intrinsic stays an unresolved edge; the refusal
-names the intrinsic and the missing mark rather than reading as a forgotten
-user definition. The historical seeds' intrinsic lowering is not proven in
-every value position, so that refusal is not relaxed.
+The bridge runs a native compiler only when that compiler contains the distinct
+byte marker `48 b8 6e 62 6c 61 6e 65 30 32` (`movabs rax` with immediate bytes
+`nblane02`). The existing `nbscope1` marker, the earlier `nblane01` marker of
+the 0.10.3 seeds and a bounded memory layout do not carry this mark. A compiler
+with another mark, or with none, is refused with one message that names
+`nblane02`. The host does not apply the historical frozen source/IR predicates
+to that compiler, and it does not build the program.
 
 This is a version compatibility marker. It is not a signature, compiler hash,
 independent validation or qualified release pin. A user-supplied compiler
@@ -49,8 +49,8 @@ replace the source/IR profile checks.
 ## Calls into the standard-library seed
 
 A call resolves through one chain: user function, admitted `extern "C"`
-declaration (the closed libc table, under a compiler carrying `nbextc01`), std
-seed function, compiler intrinsic. A name
+declaration (typed by its ABI classes under a compiler carrying `nbextc01`; the
+compiler decides which symbols exist), std seed function, compiler intrinsic. A name
 that more than one tier defines refuses `lane.call.ambiguous`; the order never
 picks a winner, because the native compiler binds a bare name to the last
 definition in the image, so a seed body's call would silently bind to a user
@@ -119,13 +119,58 @@ with no parsed definition, still refuses. `naes_shape_public_name_closed` and
 
 ## Allocation in loops
 
-On the default native profile `__mind_free` releases nothing: the image runs
-on a bump arena with no reclamation. A program that frees in a loop relies on
-reclamation the image does not provide, so a free reached from a loop,
-directly or through any user or seed helper, refuses
-`lane.alloc.free_in_loop`. Allocate scratch once, outside every loop, in the
-function that owns the loop (or `main`), and pass the pointer down; never
-free in a loop-reached helper:
+### Allocator classes of the source tree
+
+The pure-MIND compiler of this source tree gives each native image one of
+three allocators. The host check of `mindc build` no longer has
+`lane.alloc.free_in_loop`. A compiler minted from the tree, carrying `nblane02`,
+builds a free reached from a loop and the image reclaims: three `__mind_free`
+calls in a `while` exit 7, and the corpus program `r3_free_loop` exits 33. The
+committed seeds carry `nblane02`, so a build that uses them is admitted. The
+host refuses a compiler that lacks `nblane02` before any profile
+(`native.compiler_mark`) and writes no image. The published 0.10.3 compiler does
+not have this allocator.
+
+- BUMP: the inline bump core. `__mind_free` releases nothing. A full arena kills
+  the process by signal. An allocation that does not fit runs a trap instruction
+  (SIGILL). An exact fill of the 1 GiB arena followed by one more allocation dies
+  on the guard gap (SIGSEGV). Every default-profile image of a program that has
+  no free at a loop position is a BUMP image, byte for byte the same as before.
+- RECLAIM: the free-list runtime that explicit-layout images carry (a shared
+  blob at the entry of the image), on the default 1 GiB arena. Alloc, free and
+  realloc call into it; a freed block is reused and neighbours merge. The arena
+  is the only region: a full arena ends the program with
+  `error: native arena exhausted` on stderr and exit status 70, a stop that
+  depends only on the program. A dynamic image (a program with `extern "C"`
+  calls) takes the same blob at its entry.
+- Bounded and emission-context images keep their own allocators, unchanged. An
+  explicit layout always uses the free-list runtime; the choice below does not
+  apply.
+
+`nb_alloc_select.mind` chooses the class of a default-layout image from the
+composed source alone (no environment variable, no mode word). RECLAIM is
+chosen when a `__mind_free` call stands at a loop position: the condition or the
+body of a `while`, or the body of a `for`. The call may be direct or reached
+through calls, over every function of the image (the user functions and the
+standard-library functions they reach). A `for` bound that is evaluated before
+the loop is not a loop position. Recursion without a loop is not counted.
+
+A line of the leading `//` block of the user region (its first lines that begin
+with `//`) that reads exactly `// mind: native_alloc = bump` keeps BUMP. The
+compiler's own source carries it, so the compiler stays on the bump allocator.
+`// mind: native_opt = full` stays a directive of line 1; both lines can be
+present (opt-level on line 1, allocator on line 2).
+
+Contract of a RECLAIM image: pass only 0 or a live block to `__mind_free` and
+`__mind_realloc`; never use a block after it is freed. A double free is
+undefined. Blocks are
+8-byte aligned and read zero. `__mind_alloc(n)` with `n <= 0` returns 0.
+
+### Allocation through a compiler minted from this tree
+
+`mindc build` with a compiler minted from this tree admits a free reached from
+a loop and the image reclaims. One shape that allocates its scratch once,
+outside the loop:
 
 ```mind
 fn clock_ns(ts: i64) -> i64 {
@@ -137,14 +182,19 @@ fn clock_ns(ts: i64) -> i64 {
 }
 ```
 
-with `let ts: i64 = __mind_alloc(16);` in `main` before the loop. An
-allocation reached from a loop without a free is admitted and grows the arena
-by its size on every iteration; the arena fails stop at its guard page, never
-with silent corruption, so this is acceptable only when the iteration count
-bounds it. `std.sha256`'s `sha256` frees its scratch in `sha256_checked`, so a
-call to it reached from a loop refuses there (`std_sha256_in_loop`).
+with `let ts: i64 = __mind_alloc(16);` in `main` before the loop.
+`std.sha256`'s `sha256` frees its scratch in `sha256_checked`. A call reached
+from a loop builds and runs (`std_sha256_in_loop`: exit 169, and the 32 bytes
+are the SHA-256 digest of the empty message). The same program through
+`--backend mlir` exits 169 and writes the same bytes.
 
 ## Exact private copies (historical profile)
+
+Status at this head: `mindc build --backend native` with a compiler that lacks
+`nblane02` (the committed seed before the advance) refuses a program that holds
+an exact copy of `sha_mask32` with `native.compiler_mark`, exit 3, before the
+rule below runs. The candidate minted from this tree builds the same program
+(exit 0). The rule below describes the historical profile only.
 
 The frozen compiler keeps the last definition of each bare name, so a user
 function named like a seed helper replaces that helper for every caller,

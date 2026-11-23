@@ -1,0 +1,127 @@
+// TCP over loopback on the C ABI path: socket, bind to 127.0.0.1 port 0, listen,
+// getsockname (a non-zero port, 16 address bytes) and getsockopt (SO_TYPE,
+// SO_ACCEPTCONN before and after listen). Error results read as -1 in the
+// 64-bit value: bind to a used port (errno 98) and with a short length (22),
+// getsockopt with an unknown level (92 or 95, the kernel's choice), listen and getsockname on descriptor -1
+// (9).
+extern "C" {
+    unsafe fn socket(domain: i32, kind: i32, protocol: i32) -> i32;
+    unsafe fn bind(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+    unsafe fn getsockopt(sockfd: i32, level: i32, optname: i32, optval: *mut u8, optlen: *mut u8) -> i32;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn __errno_location() -> *mut i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let fd: i64 = socket(2 as i32, 1 as i32, 0 as i32) as i64;
+    if fd < 0 {
+        return 1;
+    }
+    let sin: i64 = __mind_alloc(16);
+    // AF_INET, port 0, 127.0.0.1
+    __mind_store_i64(sin, 72058139498774530);
+    __mind_store_i64(sin + 8, 0);
+    if bind(fd as i32, sin as *const u8, 16 as i32) as i64 != 0 {
+        return 2;
+    }
+    let val: i64 = __mind_alloc(8);
+    let vlen: i64 = __mind_alloc(8);
+    __mind_store_i64(val, 77);
+    __mind_store_i64(vlen, 4);
+    if getsockopt(fd as i32, 1 as i32, 30 as i32, val as *mut u8, vlen as *mut u8) as i64 != 0 {
+        return 3;
+    }
+    if __mind_load_i32(val) != 0 {
+        return 4;
+    }
+    if listen(fd as i32, 1 as i32) as i64 != 0 {
+        return 5;
+    }
+    __mind_store_i64(val, 77);
+    __mind_store_i64(vlen, 4);
+    if getsockopt(fd as i32, 1 as i32, 30 as i32, val as *mut u8, vlen as *mut u8) as i64 != 0 {
+        return 6;
+    }
+    if __mind_load_i32(val) != 1 {
+        return 7;
+    }
+    __mind_store_i64(val, 77);
+    __mind_store_i64(vlen, 4);
+    if getsockopt(fd as i32, 1 as i32, 3 as i32, val as *mut u8, vlen as *mut u8) as i64 != 0 {
+        return 8;
+    }
+    if __mind_load_i32(val) != 1 {
+        return 9;
+    }
+    if __mind_load_i32(vlen) != 4 {
+        return 10;
+    }
+    let out: i64 = __mind_alloc(16);
+    let olen: i64 = __mind_alloc(8);
+    __mind_store_i64(out, 0);
+    __mind_store_i64(out + 8, 0);
+    __mind_store_i64(olen, 16);
+    if getsockname(fd as i32, out as *mut u8, olen as *mut u8) as i64 != 0 {
+        return 11;
+    }
+    if __mind_load_i32(olen) != 16 {
+        return 12;
+    }
+    if (__mind_load_i32(out) & 65535) != 2 {
+        return 13;
+    }
+    if (__mind_load_i32(out) / 65536) == 0 {
+        return 14;
+    }
+    if __mind_load_i32(out + 4) != 16777343 {
+        return 15;
+    }
+    let other: i64 = socket(2 as i32, 1 as i32, 0 as i32) as i64;
+    if other < 0 {
+        return 16;
+    }
+    if bind(other as i32, out as *const u8, 16 as i32) as i64 != minus_one {
+        return 17;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 98 {
+        return 18;
+    }
+    if bind(other as i32, out as *const u8, 4 as i32) as i64 != minus_one {
+        return 19;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 22 {
+        return 20;
+    }
+    __mind_store_i64(vlen, 4);
+    if getsockopt(fd as i32, 9999 as i32, 3 as i32, val as *mut u8, vlen as *mut u8) as i64 != minus_one {
+        return 21;
+    }
+    let proto: i64 = __mind_load_i32(__errno_location() as i64);
+    if proto != 92 {
+        if proto != 95 {
+            return 22;
+        }
+    }
+    if listen(minus_one as i32, 1 as i32) as i64 != minus_one {
+        return 23;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 9 {
+        return 24;
+    }
+    if getsockname(minus_one as i32, out as *mut u8, olen as *mut u8) as i64 != minus_one {
+        return 25;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 9 {
+        return 26;
+    }
+    if close(other as i32) as i64 != 0 {
+        return 27;
+    }
+    if close(fd as i32) as i64 != 0 {
+        return 28;
+    }
+    return 42;
+}

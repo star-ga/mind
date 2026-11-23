@@ -43,7 +43,7 @@ innovative, AND deterministic**. Independence must never be bought by sacrificin
   under a hard determinism constraint.* Applicable **per-part** (one kernel/schedule at a time)
   or, longer-term, to **whole** codegen strategy (pass ordering, lowering choices).
   INVARIANT: parallel trajectories must preserve deterministic resume + a single deterministic
-  keep/discard decision; U1 net-verifies every invented deliverable (no fake wins).
+  keep/discard decision; the workstation net-verifies every invented deliverable (no fake wins).
 
 ## Two axes (do not conflate)
 Independence is **two separate axes**, and a public claim must be honest about both:
@@ -79,7 +79,7 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 - [x] **A2** Stdin seed protocol `[8B user_lo][8B src_len][21 std/*.mind][main.mind]` via `nb_read_fully` ✅
 - [x] **A3** Compiler's own deterministic self-computed trace-hash used for the loop ✅ *(PT_NOTE `60725af3…`, non-zero, stable across stages)*
 - [x] **A4** First-ever execution of the 1.16 MB image — **ran clean, ZERO runtime bugs** ✅ *(1 GiB arena held, recursion held, short-read loop worked)*
-- [x] **A5** `stage1 == stage2 == stage3` byte-identical (sha256 `5a45f7c5…`, 1,159,233 B) — **independently re-verified by U1**: `./stage1.elf < src > stage2` → `cmp` IDENTICAL; `strace` = only `execve`(self)/`read`/`write`/`exit`; `ldd` = not dynamic ✅✅
+- [x] **A5** `stage1 == stage2 == stage3` byte-identical (sha256 `5a45f7c5…`, 1,159,233 B) — **independently re-verified on the workstation**: `./stage1.elf < src > stage2` → `cmp` IDENTICAL; `strace` = only `execve`(self)/`read`/`write`/`exit`; `ldd` = not dynamic ✅✅
 - [x] **A6** Frozen `stage1.elf` bootstrap shipped (`3b1a060`, testdata/selfhost_loop/) ✅
 - [x] **A7** Fail-closed self-host loop gate (asserts stage1==stage2==stage3; not skippable) wired into CI (`self_host_loop_smoke.py`, `3b1a060`) ✅
 - [x] **A8** README backend claims corrected — self-host landmark + src/native deleted (`c508923`) ✅

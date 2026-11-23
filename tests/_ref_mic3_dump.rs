@@ -234,7 +234,7 @@ fn note_of(ir: &IRModule) -> String {
 // The output directory is resolved from THIS checkout, never a fixed absolute
 // path: `$MIND_REF_OUT_DIR` if set, else `$CARGO_MANIFEST_DIR/examples/mindc_mind`
 // (CARGO_MANIFEST_DIR is the crate root of the tree being built). For the default
-// main-repo build this is `/home/n/mind/examples/mindc_mind` — byte-identical to
+// main-repo build this is `<checkout>/examples/mindc_mind` — byte-identical to
 // the old hardcoded path — but a git-worktree / CI checkout now regenerates into
 // ITS OWN tree instead of clobbering the main repo's committed references.
 #[test]

@@ -20,6 +20,7 @@ import pathlib
 import shutil
 import sys
 import tempfile
+from _selfhost_sources import start_child
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -84,7 +85,7 @@ def stage1_direct(user_src: bytes):
     std = std_blob()
     comb = std + user_src
     img = struct.pack("<qq", len(std), len(comb)) + comb
-    r = subprocess.run([str(STAGE1)], input=img, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    r = start_child([str(STAGE1)], img, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return r.returncode, r.stdout
 
 

@@ -1,0 +1,11 @@
+fn sink(s: String, k: i64) -> i64 {
+    return k * 3;
+}
+
+fn relay(a: String, b: String, k: i64) -> i64 {
+    return sink(b, k) + sink(a, k + 1);
+}
+
+fn main() -> i64 {
+    return relay("x", "yz", 4) + 5;
+}

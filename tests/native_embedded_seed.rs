@@ -251,7 +251,7 @@ fn the_consumer_command_line_builds_with_the_embedded_default_seed() {
 /// native-lane-v1 admission path binds the intrinsics and admits these casts;
 /// the historical path refuses the program at the closure fence
 /// (`__mind_alloc` has no definition, `closure.unresolved_edge`). The bridge
-/// selects the lane only for a compiler carrying the `nblane01` mark, so with
+/// selects the lane only for a compiler carrying the `nblane02` mark, so with
 /// the embedded seeds and no override this builds exactly when the reseeded
 /// seeds carry it. Expected: every store result is the defined 0, so `bad` is
 /// 0; slot 7 holds 7 * 3 + 1 = 22, and (22.0 + 0.5) as i64 truncates to 22.
@@ -372,7 +372,7 @@ fn an_explicit_missing_std_override_is_still_refused() {
 // Default backend = native (0.10.3): no flag, no `[build] backend` key.
 // ---------------------------------------------------------------------------
 
-/// The sentence after each native refusal (ruling RULE 1.3), verbatim.
+/// The sentence after each native refusal, verbatim.
 const MLIR_SENTENCE: &str = "Select the MLIR backend with `--backend mlir` or \
                              `[build] backend = \"mlir\"` (needs mlir-opt, mlir-translate, clang).";
 
@@ -449,7 +449,7 @@ fn every_native_refusal_names_its_key_then_the_mlir_sentence() {
     }
 }
 
-/// RULE 1.9: in a project with no `--out`, the native backend writes the MLIR
+/// In a project with no `--out`, the native backend writes the MLIR
 /// path (`target/<profile>/<name>`), replacing a stale binary there.
 #[test]
 fn a_project_native_build_writes_the_mlir_artifact_path() {

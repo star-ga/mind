@@ -1,4 +1,4 @@
-// std/json_canon.mind -- CRX-04 canonical JSON dump (WP-MC-47b, ruling D-5).
+// std/json_canon.mind -- CRX-04 canonical JSON dump (WP-MC-47b).
 //
 // The NAMED rule (byte-equal to the documented reference dump):
 //   - object keys sorted by UTF-16 CODE-UNIT order (not UTF-8 byte order)

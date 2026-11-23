@@ -13,9 +13,16 @@
 # (an independent trusted reference) so the hardcoded hex cannot be a
 # transcription error. Prints PASS/FAIL per case with computed vs expected hex.
 #
+# Also checks that x25519 releases its work buffers: 2000 chained calls in this
+# one process must not grow the resident set past LEAK_BOUND_BYTES (a call kept
+# about 1.2 MB before the buffers were released), must not leave more than
+# HEAP_BOUND_BYTES more allocator bytes in use (this catches a single buffer of
+# a few dozen bytes that a call keeps), and the chain must equal the pyca chain.
+#
 # Usage: python3 x25519_vectors_driver.py <x25519.so>  [--million]
 
 import ctypes
+import os
 import sys
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -95,6 +102,83 @@ v2_exp = bytes.fromhex(
     "95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957")
 assert ref_x25519(v2_scalar, v2_u) == v2_exp, "pyca disagrees with RFC 7748 §5.2 v2"
 record("RFC7748-5.2 vector 2", mind_x25519(v2_scalar, v2_u), v2_exp)
+
+print("=" * 72)
+print("X25519 — work buffers are released (2000 chained calls, resident set)")
+print("=" * 72)
+
+LEAK_CALLS = 2000
+# A call that keeps its work buffers holds about 1.2 MB (1000 chained calls
+# held 1.24 GB resident on the MLIR build); a call that releases them holds none
+# after it returns. The bound is on growth of the CURRENT resident set, not on the
+# peak: a peak never falls, so a peak taken after other work would hide a leak.
+LEAK_BOUND_BYTES = 64 * 1024 * 1024
+# The resident bound only sees a leak of 32 KB or more per call. The allocator's own
+# count of bytes in use (mallinfo2, glibc) is exact: a buffer of 32 bytes kept by every
+# call leaves 48 bytes of chunk per call, 96,000 bytes over 2000 calls.
+HEAP_BOUND_BYTES = 32 * 1024
+MIB = 1024 * 1024
+leak_base9 = bytes([9] + [0] * 31)
+
+
+class MallInfo2(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_size_t) for n in (
+        "arena", "ordblks", "smblks", "hblks", "hblkhd",
+        "usmblks", "fsmblks", "uordblks", "fordblks", "keepcost")]
+
+
+_libc = ctypes.CDLL(None)
+_libc.mallinfo2.restype = MallInfo2
+
+
+def heap_in_use_bytes() -> int:
+    """Bytes the allocator holds in use now: small chunks plus mmapped chunks."""
+    mi = _libc.mallinfo2()
+    return mi.uordblks + mi.hblkhd
+
+
+def resident_bytes() -> int:
+    """Resident set of this process now (Linux /proc/self/statm, pages -> bytes)."""
+    with open("/proc/self/statm") as f:
+        return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+
+
+def mind_chain(n: int) -> bytes:
+    """n chained calls (k, u = x25519(k, u), k) on one set of buffers; returns k."""
+    sb, ub, ob = buf(leak_base9), buf(leak_base9), out(32)
+    for _ in range(n):
+        X.x25519(addr(sb), addr(ub), addr(ob))
+        ctypes.memmove(ub, sb, 32)
+        ctypes.memmove(sb, ob, 32)
+    return sb.raw[:32]
+
+
+# Positive control: the probe must SEE a growth above the bound, or a pass below
+# proves nothing. 96 MiB written page by page is resident the moment it exists.
+control_before = resident_bytes()
+ballast = bytearray(b"\x01") * (96 * MIB)
+control_grew = resident_bytes() - control_before
+del ballast
+record_bool("leak probe sees a known 96 MiB allocation (positive control)",
+            control_grew > LEAK_BOUND_BYTES,
+            f"grew={control_grew / MIB:.1f} MiB bound={LEAK_BOUND_BYTES / MIB:.0f} MiB")
+
+mind_chain(1)  # warm the allocator: one call's worth of heap is not a leak
+leak_before = resident_bytes()
+heap_before = heap_in_use_bytes()
+leak_k = mind_chain(LEAK_CALLS)
+leak_grew = resident_bytes() - leak_before
+heap_grew = heap_in_use_bytes() - heap_before
+leak_ref_k, leak_ref_u = leak_base9, leak_base9
+for _ in range(LEAK_CALLS):
+    leak_ref_k, leak_ref_u = ref_x25519(leak_ref_k, leak_ref_u), leak_ref_k
+record("x25519 2000-call chain equals pyca", leak_k, leak_ref_k)
+record_bool(f"resident set grows < {LEAK_BOUND_BYTES / MIB:.0f} MiB over {LEAK_CALLS} chained calls",
+            leak_grew < LEAK_BOUND_BYTES,
+            f"grew={leak_grew / MIB:.1f} MiB ({leak_grew // LEAK_CALLS} bytes per call)")
+record_bool(f"allocator bytes in use grow < {HEAP_BOUND_BYTES // 1024} KiB over {LEAK_CALLS} chained calls",
+            heap_grew < HEAP_BOUND_BYTES,
+            f"grew={heap_grew} bytes ({heap_grew // LEAK_CALLS} bytes per call)")
 
 print("=" * 72)
 print("X25519 — RFC 7748 §5.2 iterated test (k=u=9; k,u = X25519(k,u),k)")

@@ -495,7 +495,7 @@ for tier in "${want[@]}"; do
   # (Hit for real while building this gate: an in-flight test file calling a
   # non-existent `TempDir::join` failed the whole build with harnesses=0.)
   mapfile -t build_errs < <(
-    grep -E '^error(\[[A-Z0-9]+\])?: ' "$analysis_log" | grep -v '^error: test failed' | sort -u | head -5
+    grep -E '^error(\[[A-Z0-9]+\])?: ' "$analysis_log" | grep -v '^error: test failed' | sort -u | sed -n '1,5p'
   )
   # --- CRITICAL HARNESS MINIMUMS (independent of the aggregate floors) ------
   # Parsed per-target from the `Running ...` / `test result:` pairing, so erasing
@@ -772,10 +772,10 @@ for tier in "${want[@]}"; do
         # Anchor on the harness's own failure list instead, or the reader gets an
         # empty excerpt for exactly the failures this gate was just taught to see.
         @*)
-          awk '/^failures:$/ {on=1} on {print} on && /^test result:/ {exit}' "$analysis_log" | head -40 ;;
+          awk '/^failures:$/ {on=1} on {print} on && /^test result:/ {exit}' "$analysis_log" | sed -n '1,40p' ;;
         *)
           awk -v t="tests/$t.rs" '$0 ~ ("Running " t) {on=1} on {print} on && /^test result:/ {exit}' "$analysis_log" \
-            | grep -Ev '^test .* \.\.\. ok$' | head -40 ;;
+            | grep -Ev '^test .* \.\.\. ok$' | sed -n '1,40p' ;;
       esac
     done
     overall=1

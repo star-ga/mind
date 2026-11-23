@@ -17,7 +17,7 @@ runs:
         # this job printed PASS having compared no programs. The test refuses any count below its floor, and
         # this job refuses a file that does not state a count at or above it, so neither side can go vacuous.
         MIN_ITERS=32
-        read_count() { sed -n 's/^iters=\([0-9][0-9]*\)$/\1/p' "$1" | head -1; }
+        read_count() { sed -n '/^iters=\([0-9][0-9]*\)$/{s//\1/p;q;}' "$1"; }
         read_digest() { sed -n '2p' "$1" | tr -d '[:space:]'; }
         AVX2_N="$(read_count avx2/mindfuzz_digest_avx2.txt)"
         NEON_N="$(read_count neon/mindfuzz_digest_neon.txt)"

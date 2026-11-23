@@ -1,0 +1,33 @@
+# The refusal keys the rows may name (verdict refuse, or a recorded key of a by_run row); an id is the key's
+# number in the refusal word of the string rule (`-`: a key of another check that the rows also meet).
+key	id
+lane.source.string	16
+lane.type.mismatch	17
+lane.binop.non_scalar	18
+lane.source.neg_type	19
+lane.source.cast	20
+lane.source.print_argument	21
+lane.source.struct	22
+lane.source.index	23
+lane.source.method_call	24
+lane.type.named	25
+lane.source.binding_type	26
+lane.string.argument	32
+lane.string.result	33
+lane.string.binding	34
+lane.string.const	35
+lane.string.assign	36
+lane.string.equality	37
+lane.string.cap	38
+lane.string.use	39
+lane.string.raw_newline	40
+lane.string.escape	41
+lane.string.literal_capacity	42
+lane.extern.unknown_symbol	64
+closure.std_symbol_collision	-
+native.block_shadow	-
+lane.call.unknown	-
+lower.materialization_refused	-
+lane.source.top_level	-
+scope.entry_does_not_parse	-
+scope.bounded_extern	-

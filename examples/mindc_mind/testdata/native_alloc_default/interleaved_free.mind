@@ -1,0 +1,24 @@
+// Four blocks of different sizes per iteration, freed in an order that is not the reverse of the allocation order, 2,000 times. The checksum is the sum of i % 5 (4000) plus 7 x the byte-for-byte read-back error (0): 4000 % 251 = 235.
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut chk: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < 2000 {
+        let a: i64 = __mind_alloc(64 + 8 * (i % 7));
+        let b: i64 = __mind_alloc(200);
+        let c: i64 = __mind_alloc(1000);
+        let d: i64 = __mind_alloc(24);
+        __mind_store_i64(a, i);
+        __mind_store_i64(b, i);
+        __mind_store_i64(c, i);
+        __mind_store_i64(d, i);
+        bad = bad + (__mind_load_i64(a) - i) + (__mind_load_i64(b) - i) + (__mind_load_i64(c) - i) + (__mind_load_i64(d) - i);
+        let f1: i64 = __mind_free(b);
+        let f2: i64 = __mind_free(d);
+        let f3: i64 = __mind_free(a);
+        let f4: i64 = __mind_free(c);
+        chk = chk + i % 5 + f1 + f2 + f3 + f4;
+        i = i + 1;
+    }
+    return (chk + 7 * bad) % 251;
+}

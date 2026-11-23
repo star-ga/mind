@@ -57,8 +57,6 @@ pub(super) enum Ty {
     I32,
     U32,
     /// A C pointer of any allowed pointee (`*const u8`, `*mut u8`, `*mut i32`).
-    /// The exact pointee is enforced at extern-signature admission
-    /// (`admit_extern`); the lane value graph only needs "pointer origin".
     Ptr,
     F64,
     Unit,
@@ -108,6 +106,7 @@ pub(super) fn scalar(ann: &TypeAnn) -> Check<Ty> {
         TypeAnn::ScalarBool => Ok(Ty::Bool),
         TypeAnn::ScalarF64 => Ok(Ty::F64),
         TypeAnn::ScalarF32 => reject("lane.type.non_f64_float"),
+        TypeAnn::Named(name) if name == "String" => Ok(Ty::I64),
         TypeAnn::ScalarI32
         | TypeAnn::ScalarU32
         | TypeAnn::Named(_)
@@ -321,6 +320,7 @@ pub(super) fn equal(actual: Ty, wanted: Ty) -> Check<()> {
     if actual == wanted
         || matches!((actual, wanted), (Ty::Bool, Ty::I64) | (Ty::I64, Ty::Bool))
         || actual == Ty::Never
+        || wanted == Ty::Never
         || store_fits
     {
         Ok(())
@@ -399,11 +399,16 @@ impl Callees<'_> {
 }
 
 pub(super) fn call_type<'a>(name: &str, args: &[Ty], callees: impl Into<Callees<'a>>) -> Check<Ty> {
-    let sig = match callees.into().lookup(name).as_slice() {
+    let callees = callees.into();
+    let sig = match callees.lookup(name).as_slice() {
         [] => return reject("lane.call.unknown"),
         [(_, sig)] => sig.clone(),
         _ => return reject("lane.call.ambiguous"),
     };
+    // An extern call passes through: Never matches any use, the compiler's rows judge it.
+    if callees.externs.contains_key(name) {
+        return Ok(Ty::Never);
+    }
     if args.len() != sig.params.len() {
         return reject("lane.call.arity");
     }
@@ -421,11 +426,15 @@ pub(super) fn call_type_ir<'a>(
     args: &[Ty],
     callees: impl Into<Callees<'a>>,
 ) -> Check<Ty> {
-    let sig = match callees.into().lookup(name).as_slice() {
+    let callees = callees.into();
+    let sig = match callees.lookup(name).as_slice() {
         [] => return reject("lane.call.unknown"),
         [(_, sig)] => sig.clone(),
         _ => return reject("lane.call.ambiguous"),
     };
+    if callees.externs.contains_key(name) {
+        return Ok(Ty::Never);
+    }
     if args.len() != sig.params.len() {
         return reject("lane.call.arity");
     }
@@ -439,9 +448,12 @@ pub(super) fn binary(op: &BinOp, left: Ty, right: Ty) -> Check<Ty> {
     if left == Ty::Bool || right == Ty::Bool {
         return reject("lane.bool.width");
     }
-    let (left, right) = (value(left), value(right));
+    let (left, right) = match (value(left), value(right)) {
+        (Ty::Never, other) | (other, Ty::Never) => (other, other),
+        pair => pair,
+    };
     equal(left, right)?;
-    if !matches!(left, Ty::I64 | Ty::F64) {
+    if !matches!(left, Ty::I64 | Ty::F64 | Ty::Never) {
         return reject("lane.binop.non_scalar");
     }
     match op {
@@ -486,14 +498,45 @@ mod chain_tests {
     }
 
     #[test]
+    fn an_unjudged_extern_is_left_to_the_compiler() {
+        let none = Functions::new();
+        let cbrt = table("cbrt", vec![Ty::F64], Ty::F64);
+        let callees = chain(&none, &cbrt, &none);
+        assert_eq!(call_type("cbrt", &[Ty::F64], callees), Ok(Ty::Never));
+        assert_eq!(call_type("cbrt", &[], callees), Ok(Ty::Never));
+        assert_eq!(call_type_ir("cbrt", &[Ty::I64], callees), Ok(Ty::Never));
+        // An integer signature is not judged either: the compiler names 65 and 66.
+        let real = table("close", vec![Ty::I32], Ty::I32);
+        let callees = chain(&none, &real, &none);
+        assert_eq!(call_type("close", &[Ty::I32], callees), Ok(Ty::Never));
+        assert_eq!(call_type("close", &[Ty::F64], callees), Ok(Ty::Never));
+        assert_eq!(call_type_ir("close", &[], callees), Ok(Ty::Never));
+        // A user function with the same shape is still judged.
+        let user = table("cbrt", vec![Ty::F64], Ty::F64);
+        let callees = chain(&user, &none, &none);
+        assert_eq!(
+            call_type("cbrt", &[Ty::I64], callees)
+                .unwrap_err()
+                .construct,
+            "lane.type.mismatch"
+        );
+        // The result passes through every use; the other operand stays judged.
+        assert_eq!(equal(Ty::I64, Ty::Never), Ok(()));
+        assert_eq!(binary(&BinOp::Lt, Ty::Never, Ty::I64), Ok(Ty::I64));
+        assert_eq!(binary(&BinOp::Sub, Ty::I64, Ty::Never), Ok(Ty::I64));
+        assert_eq!(binary(&BinOp::Add, Ty::Never, Ty::F64), Ok(Ty::F64));
+        assert_eq!(binary(&BinOp::Add, Ty::Never, Ty::Never), Ok(Ty::Never));
+        let unit = binary(&BinOp::Add, Ty::Never, Ty::Unit).unwrap_err();
+        assert_eq!(unit.construct, "lane.binop.non_scalar");
+        let modf = binary(&BinOp::Mod, Ty::F64, Ty::Never).unwrap_err();
+        assert_eq!(modf.construct, "lane.type.mismatch");
+    }
+
+    #[test]
     fn each_tier_alone_resolves_with_its_own_signature() {
         let none = Functions::new();
         let f = table("f", vec![Ty::I64], Ty::F64);
-        for callees in [
-            chain(&f, &none, &none),
-            chain(&none, &f, &none),
-            chain(&none, &none, &f),
-        ] {
+        for callees in [chain(&f, &none, &none), chain(&none, &none, &f)] {
             assert_eq!(call_type("f", &[Ty::I64], callees), Ok(Ty::F64));
             assert_eq!(
                 call_type("f", &[], callees).unwrap_err().construct,
@@ -502,6 +545,13 @@ mod chain_tests {
             let wrong = call_type("f", &[Ty::F64], callees).unwrap_err();
             assert_eq!(wrong.construct, "lane.type.mismatch");
         }
+        // An extern result matches any wanted type. Arity and argument class
+        // are the compiler's rows, not a host verdict.
+        let externs = chain(&none, &f, &none);
+        assert_eq!(call_type("f", &[Ty::I64], externs), Ok(Ty::Never));
+        assert_eq!(call_type("f", &[], externs), Ok(Ty::Never));
+        assert_eq!(call_type("f", &[Ty::F64], externs), Ok(Ty::Never));
+        assert_eq!(call_type_ir("f", &[], externs), Ok(Ty::Never));
         assert_eq!(call_type("__mind_alloc", &[Ty::I64], &none), Ok(Ty::I64));
         let unknown = call_type("g", &[], chain(&f, &f, &none)).unwrap_err();
         assert_eq!(unknown.construct, "lane.call.unknown");

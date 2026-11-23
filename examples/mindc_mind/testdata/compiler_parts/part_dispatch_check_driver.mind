@@ -182,9 +182,9 @@ pub fn pdc_slots() -> i64 {
 // nothing (the frozen raw-syscall rule).
 pub fn pdc_shm_bytes(t: i64) -> i64 {
     let ids: i64 = pdc_slots();
-    let ld: String = nb_emit_intrinsic_ctx(pdc_code(), 3, ids, 7, 0);
+    let ld: String = nb_emit_intrinsic_ctx(pdc_code(), 3, ids, 7, 0, 0);
     pdc_mark(t, 6, string_eq(nbs_emit(pdc_code(), 85, ids, 7, 0), ld));
-    let st: String = nb_store_rax(nb_emit_free_xor(nb_emit_intrinsic_ctx(pdc_code(), 2, ids, 7, 0)), nb_slot_disp(7));
+    let st: String = nb_store_rax(nb_emit_free_xor(nb_emit_intrinsic_ctx(pdc_code(), 2, ids, 7, 0, 0)), nb_slot_disp(7));
     pdc_mark(t, 6, string_eq(nbs_emit(pdc_code(), 86, ids, 7, 0), st));
     pdc_mark(t, 6, string_eq(nbs_sys_emit(pdc_code(), 90, ids, 7, 0), nb_store_rax(nb_emit_syscall(pdc_code(), 9, ids, 6), nb_slot_disp(7))));
     pdc_mark(t, 6, string_eq(nbs_sys_emit(pdc_code(), 91, ids, 7, 0), nb_store_rax(nb_emit_syscall(pdc_code(), 11, ids, 2), nb_slot_disp(7))));
@@ -256,13 +256,14 @@ pub fn pdc_measure_emit(t: i64) -> i64 {
 }
 
 // Extern rows i..127 past the frozen 0..53 table (nbx_find scans 128): the MC-6
-// driver rows 54..86 (nbcu_row), none past them.
+// driver rows 54..86 (nbcu_row), the libc rows 87..88 (nbx_row_part) and 89..98
+// (nbx_libc_rows), none past them.
 pub fn pdc_rows(t: i64, out: i64, i: i64) -> i64 {
     if i > 127 {
         return 0;
     }
     let mut want: i64 = 0;
-    if i < 87 {
+    if i < 99 {
         want = 1;
     }
     pdc_mark(t, 6, pdc_eq(nbx_row(i, out), want));

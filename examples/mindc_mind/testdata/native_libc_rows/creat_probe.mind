@@ -1,0 +1,59 @@
+// creat on the C ABI path: a descriptor of a new regular file whose mode is the
+// requested 0640 under umask 0 (read back with fstatat, then closed and removed
+// with close and unlinkat), and a -1 result with errno 2 for a path under a directory that does not exist.
+// shortcut: one fixed path under /tmp, so two runs at the same time on one host race on it; upgrade
+// when a process-id or clock row gives a unique name.
+extern "C" {
+    unsafe fn creat(path: *const u8, mode: i32) -> i32;
+    unsafe fn umask(mask: i32) -> i32;
+    unsafe fn fstatat(dirfd: i32, path: *const u8, buf: *mut u8, flags: i32) -> i32;
+    unsafe fn unlinkat(dirfd: i32, path: *const u8, flags: i32) -> i32;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn __errno_location() -> *mut i32;
+}
+
+fn main() -> i64 {
+    let minus_one: i64 = 0 - 1;
+    let at: i64 = 0 - 100;
+    let path: i64 = __mind_alloc(24);
+    // "/tmp/mind_libc3_creat"
+    __mind_store_i64(path, 7956010267243803695);
+    __mind_store_i64(path + 8, 6859935931742052196);
+    __mind_store_i64(path + 16, 499850244707);
+    let _stale: i64 = unlinkat(at as i32, path as *const u8, 0 as i32) as i64;
+    let _old: i64 = umask(0 as i32) as i64;
+    let fd: i64 = creat(path as *const u8, 416 as i32) as i64;
+    if fd < 0 {
+        return 1;
+    }
+    let st: i64 = __mind_alloc(144);
+    if fstatat(at as i32, path as *const u8, st as *mut u8, 0 as i32) as i64 != 0 {
+        return 2;
+    }
+    let mode: i64 = __mind_load_i32(st + 24);
+    if (mode & 61440) != 32768 {
+        return 3;
+    }
+    if (mode & 4095) != 416 {
+        return 4;
+    }
+    if close(fd as i32) as i64 != 0 {
+        return 5;
+    }
+    if unlinkat(at as i32, path as *const u8, 0 as i32) as i64 != 0 {
+        return 6;
+    }
+    let miss: i64 = __mind_alloc(24);
+    // "/proc/nodir_mind/f"
+    __mind_store_i64(miss, 8029407289766211631);
+    __mind_store_i64(miss + 8, 7236837569704651108);
+    __mind_store_i64(miss + 16, 26159);
+    let bad: i64 = creat(miss as *const u8, 416 as i32) as i64;
+    if bad != minus_one {
+        return 7;
+    }
+    if __mind_load_i32(__errno_location() as i64) != 2 {
+        return 8;
+    }
+    return 42;
+}

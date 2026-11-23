@@ -792,7 +792,7 @@ pub enum IrVerifyError {
     #[error("canonical metadata: {0}")]
     CanonicalMetadata(crate::ir::CanonicalMetadataError),
 
-    /// Step D (AGGREGATE_TYPE_INVARIANT / Amendment 1) — a canonical
+    /// Step D (AGGREGATE_TYPE_INVARIANT) — a canonical
     /// `value_types` entry for a ValueId disagrees with the intrinsic type of the
     /// `ConstDenseTensor` node that also defines it. Two authorities may not
     /// disagree; this is fail-closed rather than silently preferring one.

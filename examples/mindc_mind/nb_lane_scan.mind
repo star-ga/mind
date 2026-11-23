@@ -1,0 +1,516 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The string rule of the native lane, the byte scans: packed-word compares, the
+// type names (String, a scalar), the result type of a fn, a String const item
+// and the key of a field name. The AST has no node for these texts (the result
+// type of a fn and the const items are not kept), so they are read from the
+// source bytes. Parts 1 and 2 of the rule are nb_lane_str.mind and
+// nb_lane_str2.mind. main.mind fns read: none. Calls nb_ast and nb_emit_core
+// (load_byte).
+
+import nb_ast;
+import nb_emit_core;
+import nb_lane_keys;
+
+// 1 iff the bytes at lo under mask equal the packed word (little endian).
+pub fn nbls_word(src: i64, lo: i64, mask: i64, packed: i64) -> i64 {
+    if (__mind_load_i64(src + lo) & mask) == packed {
+        return 1;
+    }
+    0
+}
+
+// 1 iff the type leaf ty (0 = none) has the exact text String.
+pub fn nbls_ty_is_string(src: i64, ty: i64) -> i64 {
+    if ty == 0 {
+        return 0;
+    }
+    if ast_span_hi(ty) - ast_span_lo(ty) != 6 {
+        return 0;
+    }
+    nbls_word(src, ast_span_lo(ty), 281474976710655, 113723913172051)
+}
+
+// 1 iff byte c is a letter, a digit or an underscore.
+pub fn nbls_idchar(c: i64) -> i64 {
+    let u: i64 = c | 32;
+    if u >= 97 {
+        if u <= 122 {
+            return 1;
+        }
+    }
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    if c == 95 {
+        return 1;
+    }
+    0
+}
+
+pub fn nbls_idchar_at(src: i64, p: i64, limit: i64) -> i64 {
+    if p >= limit {
+        return 0;
+    }
+    nbls_idchar(load_byte(src, p))
+}
+
+pub fn nbls_eol_at(src: i64, q: i64, limit: i64) -> i64 {
+    if q >= limit {
+        return 1;
+    }
+    if load_byte(src, q) == 10 {
+        return 1;
+    }
+    0
+}
+
+// The position after the line feed at or after p, or limit when none.
+pub fn nbls_gap_eol(src: i64, p: i64, limit: i64) -> i64 {
+    let mut q: i64 = p;
+    while nbls_eol_at(src, q, limit) == 0 {
+        q = q + 1;
+    }
+    if q >= limit {
+        return limit;
+    }
+    q + 1
+}
+
+// 1 iff byte c is a blank (space, tab, carriage return, line feed).
+pub fn nbls_blank(c: i64) -> i64 {
+    if c == 32 {
+        return 1;
+    }
+    if c == 9 {
+        return 1;
+    }
+    if c == 13 {
+        return 1;
+    }
+    if c == 10 {
+        return 1;
+    }
+    0
+}
+
+// The position after one blank byte or one `//` comment at p, else p.
+pub fn nbls_gap_step(src: i64, p: i64, limit: i64) -> i64 {
+    if p >= limit {
+        return p;
+    }
+    if nbls_blank(load_byte(src, p)) == 1 {
+        return p + 1;
+    }
+    if load_byte(src, p) == 47 {
+        if load_byte(src, p + 1) == 47 {
+            return nbls_gap_eol(src, p + 2, limit);
+        }
+    }
+    p
+}
+
+// The position of the next token: blanks and `//` comments skipped.
+pub fn nbls_gap(src: i64, p0: i64, limit: i64) -> i64 {
+    let mut p: i64 = p0;
+    let mut q: i64 = nbls_gap_step(src, p, limit);
+    while q != p {
+        p = q;
+        q = nbls_gap_step(src, p, limit);
+    }
+    p
+}
+
+// The position of the first token after `->` in the head of fn f, or -1 when
+// the fn has no result type. The head is read from the end of the last param
+// (or of the name) up to the body block; one trailing comma is skipped.
+pub fn nbls_ret_lo(src: i64, f: i64) -> i64 {
+    let body: i64 = ast_child2(f);
+    if body == 0 {
+        return 0 - 1;
+    }
+    let limit: i64 = ast_span_lo(body);
+    let n: i64 = ast_aux(f) / 2;
+    let mut p: i64 = ast_span_hi(ast_child0(f));
+    if n > 0 {
+        p = ast_span_hi(__mind_load_i64(ast_child1(f) + (n - 1) * 8));
+    }
+    if n == 0 {
+        p = nbls_gap(src, p, limit);
+        if load_byte(src, p) != 40 {
+            return 0 - 1;
+        }
+        p = p + 1;
+    }
+    p = nbls_gap(src, p, limit);
+    if load_byte(src, p) == 44 {
+        p = nbls_gap(src, p + 1, limit);
+    }
+    if load_byte(src, p) != 41 {
+        return 0 - 1;
+    }
+    p = nbls_gap(src, p + 1, limit);
+    if nbls_word(src, p, 65535, 15917) == 0 {
+        return 0 - 1;
+    }
+    nbls_gap(src, p + 2, limit)
+}
+
+// The site of the `String` word after `->` in the head of fn f, or -1 when the
+// fn has no String result.
+pub fn nbls_ret_pos(src: i64, f: i64) -> i64 {
+    let p: i64 = nbls_ret_lo(src, f);
+    if p < 0 {
+        return 0 - 1;
+    }
+    if nbls_word(src, p, 281474976710655, 113723913172051) == 0 {
+        return 0 - 1;
+    }
+    if nbls_idchar_at(src, p + 6, ast_span_lo(ast_child2(f))) == 1 {
+        return 0 - 1;
+    }
+    p
+}
+
+// 1 iff the result type of fn f is a scalar type name.
+pub fn nbls_ret_scalar(src: i64, f: i64) -> i64 {
+    let p: i64 = nbls_ret_lo(src, f);
+    if p < 0 {
+        return 0;
+    }
+    let limit: i64 = ast_span_lo(ast_child2(f));
+    let mut e: i64 = p;
+    while nbls_idchar_at(src, e, limit) == 1 {
+        e = e + 1;
+    }
+    nbls_scalar_name(src, p, e)
+}
+
+// The site of an item leaf that is `const NAME: String ...`, else -1.
+pub fn nbls_const_pos(src: i64, it: i64) -> i64 {
+    let lo: i64 = ast_span_lo(it);
+    let limit: i64 = ast_span_hi(it);
+    if nbls_word(src, lo, 1099511627775, 500152823651) == 0 {
+        return 0 - 1;
+    }
+    if nbls_idchar_at(src, lo + 5, limit) == 1 {
+        return 0 - 1;
+    }
+    let mut p: i64 = nbls_gap(src, lo + 5, limit);
+    while nbls_idchar_at(src, p, limit) == 1 {
+        p = p + 1;
+    }
+    p = nbls_gap(src, p, limit);
+    if load_byte(src, p) != 58 {
+        return 0 - 1;
+    }
+    p = nbls_gap(src, p + 1, limit);
+    if nbls_word(src, p, 281474976710655, 113723913172051) == 0 {
+        return 0 - 1;
+    }
+    if nbls_idchar_at(src, p + 6, limit) == 1 {
+        return 0 - 1;
+    }
+    lo
+}
+
+// The value of the n decimal digits at lo, or a negative number when a byte is
+// no digit (one step per digit: nbls_digit_step).
+pub fn nbls_digit_step(src: i64, p: i64, v: i64) -> i64 {
+    if v < 0 {
+        return v;
+    }
+    let d: i64 = load_byte(src, p) - 48;
+    if d < 0 {
+        return 0 - 1;
+    }
+    if d > 9 {
+        return 0 - 1;
+    }
+    v * 10 + d
+}
+
+pub fn nbls_digits(src: i64, lo: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut v: i64 = 0;
+    while i < n {
+        v = nbls_digit_step(src, lo + i, v);
+        i = i + 1;
+    }
+    v
+}
+
+// 1 iff v is a width of the numeric type whose letter is c: 32 and 64 for
+// i u f, and 8 and 16 for i u.
+pub fn nbls_num_ok(c: i64, v: i64) -> i64 {
+    if v == 32 {
+        return 1;
+    }
+    if v == 64 {
+        return 1;
+    }
+    if c == 102 {
+        return 0;
+    }
+    if v == 8 {
+        return 1;
+    }
+    if v == 16 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff the text [lo, hi) is a scalar type name: i8 to i64, u8 to u64, f32,
+// f64, isize, usize or bool.
+pub fn nbls_scalar_name(src: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n == 4 {
+        return nbls_word(src, lo, 4294967295, 1819242338);
+    }
+    let c: i64 = load_byte(src, lo);
+    if n == 5 {
+        if nbls_word(src, lo + 1, 4294967295, 1702521203) == 1 {
+            if c == 105 {
+                return 1;
+            }
+            if c == 117 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if n < 2 {
+        return 0;
+    }
+    if n > 3 {
+        return 0;
+    }
+    if c == 102 {
+        return nbls_num_ok(c, nbls_digits(src, lo + 1, n - 1));
+    }
+    if c == 105 {
+        return nbls_num_ok(c, nbls_digits(src, lo + 1, n - 1));
+    }
+    if c == 117 {
+        return nbls_num_ok(c, nbls_digits(src, lo + 1, n - 1));
+    }
+    0
+}
+
+// The type code of the type leaf ty (0 = none): 1 String, 2 a scalar, else 0.
+pub fn nbls_ty_code(src: i64, ty: i64) -> i64 {
+    if ty == 0 {
+        return 0;
+    }
+    if nbls_ty_is_string(src, ty) == 1 {
+        return 1;
+    }
+    if nbls_scalar_name(src, ast_span_lo(ty), ast_span_hi(ty)) == 1 {
+        return 2;
+    }
+    0
+}
+
+// The key of reading the field named [lo, hi) of a String name: 0 for addr and
+// len (plain values), lane.string.cap, else lane.source.struct.
+pub fn nbls_field_key(src: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 4 {
+        if nbls_word(src, lo, 4294967295, 1919181921) == 1 {
+            return 0;
+        }
+    }
+    if hi - lo == 3 {
+        if nbls_word(src, lo, 16777215, 7234924) == 1 {
+            return 0;
+        }
+        if nbls_word(src, lo, 16777215, 7364963) == 1 {
+            return 38;
+        }
+    }
+    22
+}
+
+// ---- the literals the lexer refuses ----
+// The lexer ends a string literal at its closing quote on the same line; a raw line
+// feed or an escape outside n t r 0 \ ' " fails it, and the quote lexes alone. The
+// walk reads the same bytes and names the first such literal itself, so that the
+// walk never judges the pieces the parser makes of it.
+
+// The class of the byte at p inside a literal: 3 closing quote, 40 raw line feed,
+// 41 an escape the lexer does not know (also a backslash at the end), 1 a known
+// escape pair, 0 any other byte.
+pub fn nbls_lit_class(src: i64, p: i64, limit: i64) -> i64 {
+    let b: i64 = load_byte(src, p);
+    if b == 34 {
+        return 3;
+    }
+    if b == 10 {
+        return 40;
+    }
+    if b == 92 {
+        if p + 1 >= limit {
+            return 41;
+        }
+        let e: i64 = load_byte(src, p + 1);
+        if e == 110 {
+            return 1;
+        }
+        if e == 116 {
+            return 1;
+        }
+        if e == 114 {
+            return 1;
+        }
+        if e == 48 {
+            return 1;
+        }
+        if e == 92 {
+            return 1;
+        }
+        if e == 39 {
+            return 1;
+        }
+        if e == 34 {
+            return 1;
+        }
+        return 41;
+    }
+    0
+}
+
+pub fn nbls_lit_open(p: i64, limit: i64, c: i64) -> i64 {
+    if p >= limit {
+        return 0;
+    }
+    if c == 0 {
+        return 1;
+    }
+    if c == 1 {
+        return 1;
+    }
+    0
+}
+
+pub fn nbls_lit_adv(p: i64, c: i64) -> i64 {
+    if c == 1 {
+        return p + 2;
+    }
+    if c == 40 {
+        return p;
+    }
+    if c == 41 {
+        return p;
+    }
+    p + 1
+}
+
+// The literal that opens with the quote at q: the position after its closing
+// quote, or 0 - nb_lane_pack(40 or 41, q) when it is refused, or limit when it is
+// not closed before the end (the lexer gives that no key).
+pub fn nbls_lit_end(src: i64, q: i64, limit: i64) -> i64 {
+    let mut p: i64 = q + 1;
+    let mut c: i64 = 0;
+    while nbls_lit_open(p, limit, c) == 1 {
+        c = nbls_lit_class(src, p, limit);
+        p = nbls_lit_adv(p, c);
+    }
+    if c == 3 {
+        return p;
+    }
+    if c == 40 {
+        return 0 - nb_lane_pack(40, q);
+    }
+    if c == 41 {
+        return 0 - nb_lane_pack(41, q);
+    }
+    limit
+}
+
+// One lexer step inside a span that is not an AST expression (a const item is a
+// leaf). A well-formed string literal stores its opening quote in `found` while
+// that cell is still -1, then skips the literal. Comments and char literals are
+// skipped as the lexer skips them. The next position is always past p.
+pub fn nbls_seek_lit(src: i64, p: i64, hi: i64, found: i64) -> i64 {
+    if load_byte(src, p) == 34 {
+        let end: i64 = nbls_lit_end(src, p, hi);
+        if end > p {
+            if __mind_load_i64(found) < 0 {
+                __mind_store_i64(found, p)
+            }
+            return end;
+        }
+        return p + 1;
+    }
+    let s: i64 = nbls_lex_step(src, p, hi);
+    if s > p {
+        return s;
+    }
+    p + 1
+}
+
+// One step of the byte scan at p: the next position, or the negative word of a
+// refused literal. A `//` comment and a char literal are skipped as the lexer does.
+pub fn nbls_lex_step(src: i64, p: i64, limit: i64) -> i64 {
+    let b: i64 = load_byte(src, p);
+    if b == 47 {
+        if p + 1 < limit {
+            if load_byte(src, p + 1) == 47 {
+                return nbls_gap_eol(src, p + 2, limit);
+            }
+        }
+    }
+    if b == 39 {
+        if p + 3 < limit {
+            if load_byte(src, p + 1) == 92 {
+                if load_byte(src, p + 3) == 39 {
+                    return p + 4;
+                }
+            }
+        }
+        if p + 2 < limit {
+            if load_byte(src, p + 1) != 39 {
+                if load_byte(src, p + 1) != 92 {
+                    if load_byte(src, p + 2) == 39 {
+                        return p + 3;
+                    }
+                }
+            }
+        }
+        return p + 1;
+    }
+    if b == 34 {
+        return nbls_lit_end(src, p, limit);
+    }
+    p + 1
+}
+
+pub fn nbls_lex_open(p: i64, limit: i64, res: i64) -> i64 {
+    if res != 0 {
+        return 0;
+    }
+    if p >= limit {
+        return 0;
+    }
+    1
+}
+
+// The word nb_lane_pack(40 or 41, position of the opening quote) of the first
+// literal of [lo, limit) that the lexer refuses, or 0.
+pub fn nbls_lex_scan(src: i64, lo: i64, limit: i64) -> i64 {
+    let mut p: i64 = lo;
+    let mut res: i64 = 0;
+    while nbls_lex_open(p, limit, res) == 1 {
+        let s: i64 = nbls_lex_step(src, p, limit);
+        if s < 0 {
+            res = 0 - s;
+        } else {
+            p = s;
+        }
+    }
+    res
+}

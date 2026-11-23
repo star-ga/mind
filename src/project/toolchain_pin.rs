@@ -581,7 +581,7 @@ mod tests {
         );
     }
 
-    /// RULE 1.1/1.2: the flag, else the manifest, else native; `auto` is refused.
+    /// The flag, else the manifest, else native; `auto` is refused.
     #[test]
     fn backend_selection_order_and_default_is_native() {
         assert_eq!(DEFAULT_BACKEND, Backend::Native);
@@ -608,7 +608,7 @@ mod tests {
         );
     }
 
-    /// RULE 1.4 (m3): only x86-64 Linux passes; every other host is refused by key.
+    /// Only x86-64 Linux passes; every other host is refused by key.
     /// Mutant: make `native_host_refusal` return `None` and this test fails.
     #[test]
     fn native_host_check_admits_x86_64_linux_only() {
@@ -629,7 +629,7 @@ mod tests {
         }
     }
 
-    /// RULE 1.3/1.5: the refusal sentence is verbatim, and each native request
+    /// The refusal sentence is verbatim, and each native request
     /// the backend cannot honor is refused by its own key.
     #[test]
     fn native_request_refusals_are_named() {

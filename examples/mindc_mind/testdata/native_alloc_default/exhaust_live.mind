@@ -1,0 +1,17 @@
+// 1,100 live blocks of 1 MB (1.1 GB) in a linked list, then a free loop: the arena (1 GiB) is full before the loop. The image ends with the line `error: native arena exhausted` on stderr and exit status 70.
+fn main() -> i64 {
+    let mut prev: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1100 {
+        let p: i64 = __mind_alloc(1000000);
+        __mind_store_i64(p, prev);
+        prev = p;
+        i = i + 1;
+    }
+    while prev != 0 {
+        let nx: i64 = __mind_load_i64(prev);
+        let z: i64 = __mind_free(prev);
+        prev = nx;
+    }
+    return 33;
+}

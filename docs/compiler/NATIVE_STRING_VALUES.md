@@ -9,21 +9,43 @@ same seven-entry table for both decoded length and byte copying: `\n`, `\t`,
 Unknown escapes, unsupported hexadecimal/Unicode escapes and unterminated
 strings remain refused. Embedded NUL is a byte, not an end marker.
 
-The emitter validates the complete span before copying. It checks the existing
-8 MiB literal window with subtraction (`length <= capacity - offset`) after
-rejecting negative values and oversized offsets. Both passes use bounded
-iteration with constant call depth. The decoder's readable, immutable source
+The emitter validates the complete span before copying. Each literal site then
+takes its decoded bytes, a zero gap of 0 to 7 bytes up to the next 8-byte
+address, and a 24-byte handle `{addr, len, cap = 0}` in the read-only literal
+segment. The handle is written once, at compile time; the literal expression
+is the address of that handle, so evaluating a literal allocates nothing. The
+8 MiB literal window counts all three parts of every site: it refuses a site
+whose handle would end past the window, with subtraction (`handle end <=
+capacity`) after rejecting negative values and oversized offsets. Both passes
+use bounded iteration with constant call depth. The decoder's readable, immutable source
 span is supplied by the parser; these helpers are not arbitrary-pointer parsers.
 
-An uppercase constant declared as `const NAME: String = "literal"` can use the
-same literal path, with or without a trailing semicolon. Duplicate declarations,
-composite initializers and other annotation shapes stay unsupported. Existing
-local/parameter precedence remains conservative: a matching binding anywhere
-in the source prevents global substitution. This includes ordinary/mutable
-lets, tuple patterns, range-for variables and the accepted enum payload match
-pattern. It applies to integer constants as well as String constants. A global
-use outside a same-named local's scope may therefore refuse; it must never be
-silently replaced with the wrong value. Lowercase lookup stays unsupported.
+The default native route refuses `const NAME: String = "literal"`. `mindc build`
+with a compiler minted from this tree names the refusal `lane.string.const` at
+the const item (line 1, column 1 when that const is the first line) and writes
+no artifact. The same source fed to that compiler with no mode magic is the
+same refusal. A lowercase `const value: String` is the same key. A literal
+argument of a `String` parameter still builds on that route: `take("abc")`,
+where `take` returns `s.len`, writes an image and the image exits 3.
+
+Substitution of that const onto the literal runs when the lane is off (self
+mode, where the lane rules return 0). In that mode the const is the literal, with
+or without a trailing semicolon: `__mind_load_i64(VALUE + 8)` on
+`const VALUE: String = "ab"` exits 2. A duplicate declaration, a composite
+initializer (`"a" + "b"`), another annotation (`const VALUE: i64 = "ab"`)
+and a lowercase name each refuse with `unsupported construct; use --backend=mlir`
+when that name is read. When the name is not read, each of those four programs
+builds in that mode and the image exits 0. A matching binding anywhere in the
+source prevents substitution, for a `String` const and for an integer const.
+The bindings are an ordinary `let`, a mutable `let`, a tuple pattern, a
+range-for variable, a `String` parameter and the accepted enum payload match.
+In self mode the bound use keeps the local value: a `for` binder, a tuple
+element, a mutable `let` and a match payload of `7` each exit 7, and a
+`String` parameter `"zz"` loads length 2. A use of the same name in another
+function, while a `let` of that name occurs anywhere in the source, refuses
+with `unsupported construct; use --backend=mlir`. Integer constants still
+substitute on the default route: `mindc build` of `const N: i64 = 7;` returned
+from `main` writes an image and the image exits 7.
 
 Independent review found six silent wrong results in the earlier candidate:
 integer and String globals overrode for, tuple and match bindings. Those exact
@@ -39,7 +61,8 @@ constructor expressions do not spuriously suppress global lookup. Any future
 extension to admitted binding patterns must extend the substitution guard.
 
 This change preserves the existing native borrowed String representation
-`{addr, len, cap = 0}` and read-only literal storage. It does **not** establish
+`{addr, len, cap = 0}` and read-only literal storage; the handle is now read-only
+too, so a store through a literal's handle address faults. It does **not** establish
 parity for arbitrary String mutation, capacity inspection or ownership operations
 against the MLIR backend's owned representation. Those are separate integration
 obligations. The separately reviewed standard-library append fix now copies a

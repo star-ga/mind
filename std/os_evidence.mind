@@ -90,6 +90,7 @@ pub fn procgroup_spawn_ev(g: i64, prog_addr: i64, argv_vec_addr: i64, argv_vec_l
     slot
 }
 
+#[protection]
 pub fn procgroup_wait_all_ev(g: i64, timeout_ms: i64, sink: i64) -> i64 {
     let failures: i64 = procgroup_wait_all(g, timeout_ms);
     if sink == 0 {

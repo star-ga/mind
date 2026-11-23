@@ -44,7 +44,7 @@ import time
 HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
 from _stdlib_manifest import seed_blob  # noqa: E402
-from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import compiler_library, self_mode_image, start_child  # noqa: E402
 from mindfuzz_self_host import RustRef, note_of_elf  # noqa: E402
 
 FROZEN_SEED = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
@@ -148,7 +148,7 @@ def build_stage1() -> pathlib.Path:
     out = CACHE / f"stage1_{key}.elf"
     if out.exists():
         return out
-    r = subprocess.run([str(FROZEN_SEED)], input=img, capture_output=True, timeout=1500)
+    r = start_child([str(FROZEN_SEED)], self_mode_image(img, FROZEN_SEED), capture_output=True, timeout=1500)
     if r.returncode != 0 or r.stdout[:4] != b"\x7fELF":
         raise SystemExit(f"frozen seed failed to build stage1: rc={r.returncode} "
                          f"stderr={r.stderr[-400:]!r}")
@@ -162,7 +162,7 @@ def native_compile(stage1: pathlib.Path, src: bytes) -> tuple[int, bytes, str]:
     blob = seed_blob()
     combined = blob + src
     img = struct.pack("<qq", len(blob), len(combined)) + combined
-    r = subprocess.run([str(stage1)], input=img, capture_output=True, timeout=900)
+    r = start_child([str(stage1)], img, capture_output=True, timeout=900)
     return r.returncode, r.stdout, r.stderr.decode(errors="replace")[-300:]
 
 

@@ -94,8 +94,8 @@ fn const_dense_tensor_survives_mic3_round_trip() {
     );
 }
 
-/// Spec 3.3 table (ruling section 5): each row is a Q16.16 dense element. The
-/// expected i32 values come from exact rational arithmetic (the ruling's
+/// Spec 3.3 table: each row is a Q16.16 dense element. The
+/// expected i32 values come from exact rational arithmetic (an independent
 /// reference script), never from the compiler. `(row, literal, Some(q))` must
 /// lower to `q`; `None` must be refused by name (`Q16ConstantOutOfRange`).
 const Q16_ROWS: &[(u8, &str, Option<i32>)] = &[

@@ -30,6 +30,8 @@ import subprocess
 import sys
 import tempfile
 
+from _selfhost_sources import start_child
+
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 MINDC = pathlib.Path(os.environ.get("MINDC_BIN", str(REPO / "target" / "release" / "mindc")))
@@ -83,7 +85,7 @@ SHAPES = [
 
 
 def _run(cmd, **kw):
-    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+    return start_child(cmd, None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
 
 
 def mlir_value(src: str, tmp: pathlib.Path):

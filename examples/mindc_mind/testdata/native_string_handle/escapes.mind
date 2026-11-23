@@ -1,0 +1,13 @@
+fn byte_sum(s: String) -> i64 {
+    let mut t: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len {
+        t = t + __mind_load_i8(s.addr + i);
+        i = i + 1;
+    }
+    return t;
+}
+
+fn main() -> i64 {
+    return byte_sum("\n\t\r\0\\'\"") % 256;
+}

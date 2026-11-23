@@ -66,7 +66,7 @@ _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
 import _stdlib_manifest  # noqa: E402
 from _selfhost_so import resolve_so  # noqa: E402
-from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import compiler_library, self_mode_image, start_child  # noqa: E402
 # Reuse the loop's EXACT source-combining so the headline compiles the identical
 # bytes the frozen stage1.elf was minted from.
 from self_host_loop_smoke import build_seed  # noqa: E402
@@ -140,8 +140,8 @@ def _run_driver(driver_path: pathlib.Path, image: bytes, td: pathlib.Path,
     img = td / "seed.image"
     img.write_bytes(image)
     args = [str(driver_path), str(img)] + (extra_args or [])
-    r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                       timeout=180)
+    r = start_child(args, None, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=180)
     return r.returncode, r.stdout
 
 
@@ -184,7 +184,7 @@ def main() -> int:
         #    its emitted ELF must be byte-identical to the frozen stage1.elf.
         # --------------------------------------------------------------
         _combined, seed_image, _user_lo = build_seed()  # the loop's exact bytes
-        rc, out = _run_driver(drv, seed_image, td)
+        rc, out = _run_driver(drv, self_mode_image(seed_image, drv), td)
         if rc != 0:
             print(f"  FAIL  standalone driver exited {rc} on the seed image "
                   f"(0 expected) — read/compile/write path broke")
@@ -250,7 +250,7 @@ def main() -> int:
         combined_a = std_blob + compiler_library() + b"\n" + \
             (_HERE / "selfhost_argv_driver.mind").read_bytes()
         image_a = struct.pack("<qq", len(std_blob), len(combined_a)) + combined_a
-        r_pure = subprocess.run([str(_FROZEN)], input=image_a,
+        r_pure = start_child([str(_FROZEN)], self_mode_image(image_a, _FROZEN),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 timeout=180)
         driver_pure = r_pure.stdout
@@ -260,7 +260,7 @@ def main() -> int:
                   f"({len(driver_elf)}B)")
             return 1
         drv2 = _write_exec(td, "driver_pure.elf", driver_pure)
-        rc3, out3 = _run_driver(drv2, seed_image, td)
+        rc3, out3 = _run_driver(drv2, self_mode_image(seed_image, drv2), td)
         if rc3 != 0 or out3 != frozen:
             print(f"  FAIL  [ZERO-RUST] pure-MIND-built driver did not reproduce "
                   f"stage1.elf (exit {rc3}, {len(out3)}B)")

@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 import _cf_corpus as C
+from _selfhost_sources import start_child
 
 BOUNDED = (768 << 20, 384 << 20, 1 << 20)  # arena, stack, guard (self_host_bounded_profile_smoke)
 
@@ -680,11 +681,9 @@ def _scaling_limits():
 
 def child_cpu(argv, data: bytes) -> tuple:
     """(user + system CPU seconds of the child alone, exit code, stdout) of one run."""
-    with tempfile.TemporaryFile() as fi, tempfile.TemporaryFile() as fo:
-        fi.write(data)
-        fi.seek(0)
-        p = subprocess.Popen(argv, stdin=fi, stdout=fo, stderr=subprocess.DEVNULL,
-                             preexec_fn=_scaling_limits)
+    with tempfile.TemporaryFile() as fo:
+        p = start_child(argv, data, popen=True, stdout=fo, stderr=subprocess.DEVNULL,
+                        preexec_fn=_scaling_limits)
         _, status, ru = os.wait4(p.pid, 0)
         fo.seek(0)
         return ru.ru_utime + ru.ru_stime, os.waitstatus_to_exitcode(status), fo.read()

@@ -1,0 +1,309 @@
+// Copyright 2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// The key table of the native lane and the packing of a lane refusal reason.
+//
+// A lane refusal is one word, stored in word 5 of the layout cell (the stage's
+// refusal reason; 1 = capacity and 2 = arena keep their meaning):
+//   word = key_id * 4294967296 + site
+// where site is the byte offset of the refused node from the start of the composed
+// image (never negative, below 4294967296). Every lane word is at least
+// nb_lane_floor(). nb_lane_key_of and nb_lane_site_of decode it.
+//
+// nb_lane_key_name is the ONE table of every key the compiler can name. Each row
+// carries its name as a quoted comment, and the compiler prints the whole table
+// (one line per key: id, a space, the name) when its stdin starts with the 8-byte
+// magic nb_lane_key_magic() ("MINDKEY" and the byte 1). The committed copy of that
+// dump is testdata/lane_keys.txt, and self_host_native_diag_smoke.py compares the two.
+// Id ranges: 16-31 source, type and binop keys, 32-63 string keys (40, 41 and 42 are the renamed string
+// refusals), 64-79 extern keys.
+//
+// The first 8 bytes of the stdin image may also be one of two other magics:
+//   nb_lane_self_magic() ("MINDSLF" and the byte 1): self mode, then the usual v1 or v2 header.
+//   nb_lane_hook_magic() ("MINDHOOK"): a test input; the next 8 bytes are a rule word that
+//     nb_lane_rules_run returns in lane mode, then the self magic (optional) and the usual header.
+// The host never sends either magic: its first 8 bytes are user_lo (a length, far below
+// 2^56) or the layout magic. See _selfhost_sources.py (SELF_MAGIC, the one sender helper).
+// PART RULE: intrinsics only.
+
+// 16 * 4294967296: every lane word is at least this; 1 and 2 are the capacity and arena reasons.
+pub fn nb_lane_floor() -> i64 {
+    68719476736
+}
+
+pub fn nb_lane_pack(key_id: i64, site: i64) -> i64 {
+    key_id * 4294967296 + site
+}
+
+pub fn nb_lane_key_of(word: i64) -> i64 {
+    word / 4294967296
+}
+
+pub fn nb_lane_site_of(word: i64) -> i64 {
+    word - nb_lane_key_of(word) * 4294967296
+}
+
+// "MINDSLF" + 1 little-endian: self mode (no lane rule runs).
+pub fn nb_lane_self_magic() -> i64 {
+    91844762919651661
+}
+
+// "MINDKEY" + 1 little-endian: print the key table.
+pub fn nb_lane_key_magic() -> i64 {
+    97185056536021325
+}
+
+// "MINDHOOK" little-endian: test input, the next 8 bytes are the word the rules return.
+pub fn nb_lane_hook_magic() -> i64 {
+    5426643247806957901
+}
+
+// Write the four name words (32 bytes, so dst needs 32 bytes of room) and return the name length.
+pub fn nbk_name(dst: i64, w0: i64, w1: i64, w2: i64, w3: i64, n: i64) -> i64 {
+    __mind_store_i64(dst, w0);
+    __mind_store_i64(dst + 8, w1);
+    __mind_store_i64(dst + 16, w2);
+    __mind_store_i64(dst + 24, w3);
+    n
+}
+
+// The name of key_id at dst (32 bytes of room needed); its length, or 0 for an id with no row.
+pub fn nb_lane_key_name(key_id: i64, dst: i64) -> i64 {
+    if key_id == 16 {
+        // "lane.source.string"
+        return nbk_name(dst, 8462108867959873900, 7598263559375905650, 26478, 0, 18);
+    }
+    if key_id == 17 {
+        // "lane.type.mismatch"
+        return nbk_name(dst, 8104636747048968556, 8386104323598003813, 26723, 0, 18);
+    }
+    if key_id == 18 {
+        // "lane.binop.non_scalar"
+        return nbk_name(dst, 7955998168136442220, 8313484862018187375, 491260764515, 0, 21);
+    }
+    if key_id == 19 {
+        // "lane.source.neg_type"
+        return nbk_name(dst, 8462108867959873900, 6874574880103555954, 1701869940, 0, 20);
+    }
+    if key_id == 20 {
+        // "lane.source.cast"
+        return nbk_name(dst, 8462108867959873900, 8391157609329419122, 0, 0, 16);
+    }
+    if key_id == 21 {
+        // "lane.source.print_argument"
+        return nbk_name(dst, 8462108867959873900, 7956016042866991986, 7308626857453248372, 29806, 26);
+    }
+    if key_id == 22 {
+        // "lane.source.struct"
+        return nbk_name(dst, 8462108867959873900, 8462954687831040882, 29795, 0, 18);
+    }
+    if key_id == 23 {
+        // "lane.source.index"
+        return nbk_name(dst, 8462108867959873900, 7306085893530805106, 120, 0, 17);
+    }
+    if key_id == 24 {
+        // "lane.source.method_call"
+        return nbk_name(dst, 8462108867959873900, 7526752396847178610, 30518463019574383, 0, 23);
+    }
+    if key_id == 25 {
+        // "lane.type.named"
+        return nbk_name(dst, 8104636747048968556, 28259018131517029, 0, 0, 15);
+    }
+    if key_id == 26 {
+        // "lane.source.binding_type"
+        return nbk_name(dst, 8462108867959873900, 7236837521637073778, 7309475735946096233, 0, 24);
+    }
+    if key_id == 32 {
+        // "lane.string.argument"
+        return nbk_name(dst, 8247343460729643372, 8459856186754690665, 1953391981, 0, 20);
+    }
+    if key_id == 33 {
+        // "lane.string.result"
+        return nbk_name(dst, 8247343460729643372, 8463219665838501481, 29804, 0, 18);
+    }
+    if key_id == 34 {
+        // "lane.string.binding"
+        return nbk_name(dst, 8247343460729643372, 7236837521637207657, 6778473, 0, 19);
+    }
+    if key_id == 35 {
+        // "lane.string.const"
+        return nbk_name(dst, 8247343460729643372, 8317708033570860649, 116, 0, 17);
+    }
+    if key_id == 36 {
+        // "lane.string.assign"
+        return nbk_name(dst, 8247343460729643372, 7598543857531711081, 28263, 0, 18);
+    }
+    if key_id == 37 {
+        // "lane.string.equality"
+        return nbk_name(dst, 8247343460729643372, 7022643873338322537, 2037672300, 0, 20);
+    }
+    if key_id == 38 {
+        // "lane.string.cap"
+        return nbk_name(dst, 8247343460729643372, 31632275999780457, 0, 0, 15);
+    }
+    if key_id == 39 {
+        // "lane.string.use"
+        return nbk_name(dst, 8247343460729643372, 28555919774674537, 0, 0, 15);
+    }
+    if key_id == 40 {
+        // "lane.string.raw_newline"
+        return nbk_name(dst, 8247343460729643372, 6879074098864418409, 28550371718161774, 0, 23);
+    }
+    if key_id == 41 {
+        // "lane.string.escape"
+        return nbk_name(dst, 8247343460729643372, 7017579522780786281, 25968, 0, 18);
+    }
+    if key_id == 42 {
+        // "lane.string.literal_capacity"
+        return nbk_name(dst, 8247343460729643372, 7310584008485072489, 7021218898501198194, 2037672291, 28);
+    }
+    if key_id == 64 {
+        // "lane.extern.unknown_symbol"
+        return nbk_name(dst, 8392569155549553004, 7956574616249332325, 7092458524607674223, 27759, 26);
+    }
+    if key_id == 65 {
+        // "lane.extern.arity"
+        return nbk_name(dst, 8392569155549553004, 8388361542670643813, 121, 0, 17);
+    }
+    if key_id == 66 {
+        // "lane.extern.signature_mismatch"
+        return nbk_name(dst, 8392569155549553004, 7955443210194416229, 7596833035760530529, 114776363593075, 30);
+    }
+    if key_id == 67 {
+        // "lane.extern.callconv"
+        return nbk_name(dst, 8392569155549553004, 7812726532189614693, 1986948963, 0, 20);
+    }
+    0
+}
+
+// The number of rows, and the id of row i (ids 16-26, 32-42, 64-67).
+pub fn nb_lane_key_count() -> i64 {
+    26
+}
+
+pub fn nb_lane_key_at(i: i64) -> i64 {
+    if i < 11 {
+        return 16 + i;
+    }
+    if i < 22 {
+        return 21 + i;
+    }
+    42 + i
+}
+
+// The decimal digits of n (n >= 0) at dst; the count written.
+pub fn nbk_dec(dst: i64, n: i64) -> i64 {
+    if n < 10 {
+        __mind_store_i8(dst, 48 + n);
+        return 1;
+    }
+    let k: i64 = nbk_dec(dst, n / 10);
+    __mind_store_i8(dst + k, 48 + n - n / 10 * 10);
+    k + 1
+}
+
+// One dump line "<id> <name>\n" at dst; the bytes written.
+pub fn nbk_line(dst: i64, key_id: i64) -> i64 {
+    let d: i64 = nbk_dec(dst, key_id);
+    __mind_store_i8(dst + d, 32);
+    let n: i64 = nb_lane_key_name(key_id, dst + d + 1);
+    __mind_store_i8(dst + d + 1 + n, 10);
+    d + n + 2
+}
+
+pub fn nbk_dump_from(buf: i64, p: i64, i: i64) -> i64 {
+    if i >= nb_lane_key_count() {
+        return p;
+    }
+    nbk_dump_from(buf, p + nbk_line(buf + p, nb_lane_key_at(i)), i + 1)
+}
+
+// The MINDKEY output: the whole table on fd 1, one line per key. Returns 0 (the exit status).
+pub fn nb_lane_dump() -> i64 {
+    let buf: i64 = __mind_alloc(2048);
+    let n: i64 = nbk_dump_from(buf, 0, 0);
+    let _w: i64 = __mind_write(1, buf, n, 0 - 1);
+    0
+}
+
+// Text fragment `which` of the refusal report at dst (96 bytes of room needed); its length.
+// 0 the head up to the key, 1 ")", 2 " in fn `", 3 "`", 4 " at line ", 5 ", column ",
+// 6 " of the composed user image.", 7 " in the std region.", 8 " No artifact written.\n",
+// 9 "lane.key." (the name of a key with no row, followed by its decimal id), 10 ".".
+pub fn nb_lane_frag(dst: i64, which: i64) -> i64 {
+    if which == 0 {
+        // "error[native-lane]: the program is outside candidate native-lane-v1 ("
+        __mind_store_i64(dst, 7020649416171352677);
+        __mind_store_i64(dst + 8, 7953757359144593780);
+        __mind_store_i64(dst + 16, 2334386829827661157);
+        __mind_store_i64(dst + 24, 2336630925664678512);
+        __mind_store_i64(dst + 32, 7598545044028552041);
+        __mind_store_i64(dst + 40, 7594316236207449444);
+        __mind_store_i64(dst + 48, 8386105066560708964);
+        __mind_store_i64(dst + 56, 7308886362514880105);
+        __mind_store_i64(dst + 64, 172338804269);
+        return 69;
+    }
+    if which == 1 {
+        // ")"
+        __mind_store_i64(dst, 41);
+        return 1;
+    }
+    if which == 2 {
+        // " in fn `"
+        __mind_store_i64(dst, 6926657611805649184);
+        return 8;
+    }
+    if which == 3 {
+        // "`"
+        __mind_store_i64(dst, 96);
+        return 1;
+    }
+    if which == 4 {
+        // " at line "
+        __mind_store_i64(dst, 7308895158390776096);
+        __mind_store_i64(dst + 8, 32);
+        return 9;
+    }
+    if which == 5 {
+        // ", column "
+        __mind_store_i64(dst, 7957145225219219500);
+        __mind_store_i64(dst + 8, 32);
+        return 9;
+    }
+    if which == 6 {
+        // " of the composed user image."
+        __mind_store_i64(dst, 2334386829830549280);
+        __mind_store_i64(dst + 8, 7234315298905354083);
+        __mind_store_i64(dst + 16, 7883868298389189920);
+        __mind_store_i64(dst + 24, 778397537);
+        return 28;
+    }
+    if which == 7 {
+        // " in the std region."
+        __mind_store_i64(dst, 2334386829831072032);
+        __mind_store_i64(dst + 8, 7595150837427762291);
+        __mind_store_i64(dst + 16, 3042927);
+        return 19;
+    }
+    if which == 8 {
+        // " No artifact written.\n"
+        __mind_store_i64(dst, 7598824232762428960);
+        __mind_store_i64(dst + 8, 7598266502602776934);
+        __mind_store_i64(dst + 16, 11194536916084);
+        return 22;
+    }
+    if which == 9 {
+        // "lane.key."
+        __mind_store_i64(dst, 8747515698251456876);
+        __mind_store_i64(dst + 8, 46);
+        return 9;
+    }
+    if which == 10 {
+        // "."
+        __mind_store_i64(dst, 46);
+        return 1;
+    }
+    0
+}

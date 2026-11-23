@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 static uint64_t A, AB, ST, OB, CAP;
+static int capped;  // default layout: OB = A, no overflow region (a full arena exits 70)
 typedef int64_t (*fn2)(int64_t, int64_t);
 static fn2 f_alloc, f_free, f_realloc;
 
@@ -24,7 +25,7 @@ static void setup(const char *bin, uint64_t arena_bytes) {
     A = 0x10000000ULL;
     AB = arena_bytes;
     ST = A + AB - 4096;
-    OB = 0x200000000ULL;
+    OB = capped ? A : 0x200000000ULL;
     CAP = AB - 8 - 4096;
     void *ar = mmap((void *)A, AB, PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
@@ -255,12 +256,37 @@ static void big_top_test(void) {
     check();
 }
 
+// Default-layout (RECLAIM) mode: the arena is the only region. Frees must keep a loop that
+// requests several arena sizes in total inside it, and a full arena must end the process
+// with exit status 70 (the blob's own exit_group), never return 0 and never map more.
+static void capped_test(void) {
+    for (long i = 0; i < 40; i++) {
+        int64_t p = f_alloc(0, AB / 4);
+        if (p == 0) die("capped: alloc failed inside the arena", i, 0);
+        if ((uint64_t)p + AB / 4 > ST) die("capped: block reaches the state page", i, 0);
+        *(int64_t *)p = i;
+        if (*(int64_t *)p != i) die("capped: read-back", i, 0);
+        f_free(p, 0);
+    }
+    check();
+    if (W(ST + 512) != 0) die("capped: overflow region in use", (long)W(ST + 512), 0);
+    printf("CAP reclaim OK cursor=%lu\n", (unsigned long)*(uint64_t *)A);
+    fflush(stdout);
+    for (;;) {
+        int64_t p = f_alloc(0, 1 << 20);
+        if (p == 0) die("capped: alloc returned 0 instead of exit 70", 0, 0);
+        *(int64_t *)p = 1;
+    }
+}
+
 int main(int argc, char **argv) {
+    capped = argc > 6 && strcmp(argv[6], "cap") == 0;
     uint64_t ab = argc > 2 ? strtoull(argv[2], 0, 0) : (16u << 20);
     long steps = argc > 3 ? atol(argv[3]) : 20000;
     int mode = argc > 4 ? atoi(argv[4]) : 0;
     rng ^= argc > 5 ? strtoull(argv[5], 0, 0) : 0;
     setup(argv[1], ab);
+    if (capped) capped_test();
     // edge cases (C runtime parity)
     if (f_alloc(0, 0) != 0 || f_alloc(0, -1) != 0 || f_alloc(0, INT64_MIN) != 0) die("alloc nonpos", 0, 0);
     int64_t z = f_realloc(0, 0);

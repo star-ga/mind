@@ -14,6 +14,7 @@ sys.path.insert(0,str(HERE))
 from native_c_call_plan_check import words,ty,sha
 from native_dynamic_writer_check import encoder
 from _stdlib_manifest import seed_blob
+from _selfhost_sources import self_mode_image, start_child
 
 def cases():
  rows=[]
@@ -71,7 +72,7 @@ def run(label,argv,*,data=None,cwd=None):
   if key.startswith('LD_') or key in ('GLIBC_TUNABLES','MINDC_NATIVE_ELF','MINDC_SO'):
    env.pop(key)
  env.update(LC_ALL='C',OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
- p=subprocess.run(list(map(str,argv)),input=data,capture_output=True,cwd=cwd,timeout=240,preexec_fn=limits,env=env)
+ p=start_child(list(map(str,argv)),data,capture_output=True,cwd=cwd,timeout=240,preexec_fn=limits,env=env)
  stem=OUT/label;stem.parent.mkdir(parents=True,exist_ok=True)
  stem.with_suffix('.stdout').write_bytes(p.stdout);stem.with_suffix('.stderr').write_bytes(p.stderr)
  stem.with_suffix('.json').write_text(json.dumps(dict(argv=list(map(str,argv)),exit=p.returncode,stdout_sha256=sha(p.stdout),stderr_sha256=sha(p.stderr)))+'\n')
@@ -92,7 +93,7 @@ def build():
  owned=out/'compiler.elf';owned.write_bytes(compiler.read_bytes());owned.chmod(0o500)
  inp=words([int.from_bytes(b'MINDLAY\x01','little'),268435456,134217728,4096,len(prefix),len(combined)])+combined
  (out/'packet').write_bytes(inp)
- r=run('build/native',[owned],data=inp)
+ r=run('build/native',[owned],data=self_mode_image(inp, owned))
  assert r.stdout.startswith(b'\x7fELF') and not r.stderr
  native=out/'native.elf';native.write_bytes(r.stdout);native.chmod(0o500)
  project=out/'mlir';project.mkdir();(project/'main.mind').write_bytes(user)

@@ -1,0 +1,569 @@
+id	verdict	key	line	col	exit	profile	status	clause	note
+addr_use	admit					both	run	S3	.addr bound to a let and returned is a plain i64
+argument	admit				0	both	run	S2	parentheses are transparent: take((s)) / take(("hi")) are judged as take(s) / take("hi"), S2(b)/S2(a)
+assign	refuse	lane.string.assign	3			both	run	S5	assignment to a String name
+binding	refuse	lane.string.binding	3			both	run	S5	let annotated String
+cap	refuse	lane.string.cap	3			both	run	S5	.cap refused by name
+equality	refuse	lane.string.equality	3			both	run	S5	== with String operand
+equality_host	refuse	lane.call.unknown				both	host	S5	== with String operand Host check names lane.call.unknown.
+literal_capacity	pending					default	capacity	-	
+raw_newline	refuse	lane.string.raw_newline				both	run	-	raw line feed inside a literal is refused with lane.string.raw_newline (lexical, before any walk)
+read_unbounded	admit					both	run	S3	no bounds proof under S3: load through .addr is a plain i64 load; reads 8 bytes of a 3-byte literal
+result	refuse	lane.string.result	2			both	run	S5	String as result type
+store	admit					both	run	S3/S4	no store key under S3; the store into a literal is a program error that faults at run (S4)
+str_forwarded	admit				32	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_literal_args	admit				100	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_len_reads	admit				35	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_addr_write	admit				36	both	run	S1-S3	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_same_prefix	admit				11	both	run	S1-S3	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_two_loops	admit				198	both	run	S1-S3	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_byte_sum_twice	admit				20	both	run	S1-S3	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_escape_lens	admit				154	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_many_args	admit				110	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_nested_calls	admit				234	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_forwarded_bounded	admit				32	both	run	S1/S2	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_addr_write_bounded	admit				36	both	run	S1-S3	admitted under S1-S4; exit value taken from an earlier run (native = MLIR)
+str_refused_store	admit					both	run	S3/S4	store through .addr: no key (S3); the literal is read-only so the run faults (S4)
+str_refused_store_via_let	admit					both	run	S3/S4	.addr via let and call argument is a plain i64 (S3); poke() stores into a literal: faults at run (S4)
+str_refused_store_via_call	admit					both	run	S3/S4	.addr as a call argument is a plain i64 (S3); the store faults at run (S4)
+str_refused_cap	refuse	lane.string.cap	2			both	run	S5	.cap
+str_refused_equality	refuse	lane.string.equality	2			both	run	S5	== with String operands
+str_refused_equality_host	refuse	lane.call.unknown				both	host	S5	== with String operands Host check names lane.call.unknown.
+str_refused_result	refuse	lane.string.result	1			both	run	S5	String result
+str_refused_annotated_let	refuse	lane.string.binding	2			both	run	S5	annotated String let (annotation precedes the literal in source order)
+str_refused_assign	refuse	lane.string.assign	2			both	run	S5	assignment to a String name
+str_refused_computed_argument	refuse	lane.string.argument	6			both	run	S2	argument is an if-expression, neither literal nor name
+str_refused_let_literal	refuse	lane.source.string	2			both	run	S5	literal outside a String slot and print
+str_refused_literal_to_i64_parameter	refuse	lane.source.string	6			both	run	S5	literal in an i64 slot is not S2(a)
+str_refused_lowercase_type	refuse	lane.type.named	1			both	host	exact_name	string stays Named
+str_refused_unbounded_read	admit					both	run	S3	no bounds proof: wide load through .addr is admitted; the value reads past the literal
+str_refused_unbounded_index	admit					both	run	S3	b.addr + i is a plain i64 sum; b shorter than a reads past the end
+str_refused_empty_text_read	admit					both	run	S3	load through the address of an empty literal: plain i64 load, value undefined (no terminator, S4)
+str_refused_string_sum	refuse	lane.binop.non_scalar	2			both	run	S5	binary operator on String operands keeps today's key lane.binop.non_scalar
+str_refused_raw_newline	refuse	lane.string.raw_newline				both	run	-	raw line feed inside a literal is refused with lane.string.raw_newline (lexical, before any walk)
+adm_1	admit				5	both	run	S1/S2/S3	admitted; no string rule changes this
+adm_2	admit				27	both	run	S1/S2/S3	admitted; no string rule changes this
+adm_3	admit				4	both	run	S1/S2/S3	admitted; no string rule changes this
+adm_4	admit					both	run	S1/S2/S3	admitted; no string rule changes this
+adm_5	admit					both	run	S1/S2/S3	admitted; no string rule changes this
+proven_1	admit				0	both	run	S3	read loop; admitted both ways; main returns 0 without calling f
+proven_2	admit				0	both	run	S3	read loop; admitted both ways; main returns 0 without calling f
+proven_3	admit				0	both	run	S3	read loop; admitted both ways; main returns 0 without calling f
+proven_4	admit				0	both	run	S3	read loop; admitted both ways; main returns 0 without calling f
+proven_5	admit				0	both	run	S3	read loop; admitted both ways; main returns 0 without calling f
+proven_6	admit				0	both	run	S3	read loop; admitted both ways; main returns 0 without calling f
+edge_01	refuse	lane.string.cap	1			both	run	S5	.cap; no main
+edge_02	refuse	lane.string.assign	1			both	run	S5	assign to a String name; no main
+edge_03	refuse	lane.string.argument	1			both	run	S2	if-expression in the slot; no main
+edge_04	admit					both	run	S2	parentheses are transparent: take((s)) / take(("hi")) are judged as take(s) / take("hi"), S2(b)/S2(a)
+edge_05	refuse	lane.string.result	1			both	run	S5	result; no main
+edge_06	refuse	lane.string.binding	1			both	run	S5	annotated let; no main
+edge_07	refuse	lane.string.equality	1			both	run	S5	==; no main
+edge_07_host	refuse	lane.call.unknown				both	host	S5	==; no main Host check names lane.call.unknown.
+edge_08	refuse	lane.string.equality	1			both	run	S5	!=; no main
+edge_08_host	refuse	lane.call.unknown				both	host	S5	!=; no main Host check names lane.call.unknown.
+edge_09	refuse	lane.string.equality	1			both	run	S5	== with a String operand and an i64 (equality arm wins over mix); no main
+edge_10	refuse	lane.source.string	1			both	run	S5	literal in a let; no main
+edge_11	admit					both	run	S2	parentheses are transparent: take((s)) / take(("hi")) are judged as take(s) / take("hi"), S2(b)/S2(a)
+edge_12	refuse	lane.source.string	1			both	run	S5	literal in an i64 slot; no main
+edge_13	refuse	lane.source.string	1			both	run	S5	literal as an intrinsic argument is not S2(a); no main
+edge_14	refuse	lane.string.binding				both	run	S5	let t = s; with no annotation and a String value -> lane.string.binding
+edge_15	refuse	lane.type.named	1			both	host	exact_name	no main
+edge_16	refuse	lane.type.named	1			both	host	exact_name	no main
+edge_17	refuse	lane.string.use	1			both	run	S5	return s; -> lane.string.use
+edge_18	refuse	lane.type.mismatch	1			both	run	S5	String name into an i64 parameter slot -> lane.type.mismatch
+edge_19	refuse	lane.string.argument	1			both	run	S2	i64 literal in a String slot: S2 anything else; no main
+edge_20	refuse	lane.type.mismatch	1			both	run	S5	String + String is non_scalar)
+edge_21	refuse	lane.type.mismatch				both	run	S5	String value as an intrinsic argument -> lane.type.mismatch
+edge_22	refuse	lane.source.cast	1			both	run	S5	cast of the String value keeps today's key lane.source.cast
+edge_23	refuse	lane.type.mismatch	1			both	run	S5	String as condition; no main
+edge_24	refuse	lane.binop.non_scalar	1			both	run	S5	binary operator on String operands keeps today's key lane.binop.non_scalar
+edge_25	refuse	lane.binop.non_scalar	1			both	run	S5	binary operator on String operands keeps today's key lane.binop.non_scalar
+edge_26	refuse	lane.source.neg_type	1			both	run	S5	unary minus on a String keeps today's key lane.source.neg_type
+edge_27	refuse	lane.type.mismatch	1			both	run	S5	logical use; no main
+edge_28	refuse	lane.type.mismatch	1			both	run	S5	logical use; no main
+edge_29	refuse	lane.string.assign	1			both	run	S5	no main
+edge_29_host	refuse	lane.source.struct	1	26		both	host	S5	no main Host check names lane.source.struct.
+edge_30	refuse	lane.source.struct	1			both	run	S2/S5	the top-level let shadows the parameter: receiver is not a String parameter; no main
+edge_30_host	refuse	lower.materialization_refused				both	host	S2/S5	the top-level let shadows the parameter: receiver is not a String parameter; no main Host check names lower.materialization_refused.
+edge_31	refuse	lane.source.struct	1			both	run	S5	receiver is an i64; no main
+edge_31_host	refuse	lower.materialization_refused				both	host	S5	receiver is an i64; no main Host check names lower.materialization_refused.
+edge_32	refuse	lane.source.struct	1			both	run	S5	unknown field; no main
+edge_32_host	refuse	lower.materialization_refused				both	host	S5	unknown field; no main Host check names lower.materialization_refused.
+store_1	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_2	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_3	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_4	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_5	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_6	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_7	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_8	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+store_9	admit					both	run	S3/S4	no store key; the store/read targets a read-only literal (S4): compiles, faults at run
+addr_01	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_02	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_03	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_04	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_05	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_06	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; i64 equality on an i64 value is not S5 equality; no main
+addr_07	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_08	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_09	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_10	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_11	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_12	by_run					both	by_run	S3	string part: s.addr is a plain i64 in the size position of __mind_alloc; the alloc rule is unchanged so the verdict is whatever today's compiler gives
+addr_13	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; the intrinsic argument types are non-string rules (write fd s.addr); no main
+addr_14	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+addr_15	admit					both	run	S3	.addr is a plain i64 wherever an i64 goes (S3); no addr_use key; no main
+unb_01	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_02	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_03	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_04	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_05	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_06	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_07	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_08	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_09	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_10	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_11	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_12	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_13	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_14	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_15	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_16	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_17	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_18	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_19	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_20	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_21	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_22	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_23	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_24	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_25	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_26	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_27	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_28	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_29	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_30	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_31	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_32	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_33	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_34	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_35	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_36	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_37	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_38	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_39	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_40	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_41	by_run	native.block_shadow				both	by_run	S3	same name declared twice in one scope: native.block_shadow stays, expected as today; key recorded
+unb_42	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_43	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_44	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_45	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_46	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_47	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_48	admit					both	run	S3	no bounds proof (S3): every shape here is plain i64 arithmetic and loads; other rules as today; no main
+unb_control	admit				0	both	run	S3	the bounded control; main returns 0
+rawlf_raw	refuse	lane.string.raw_newline				both	run	-	raw line feed inside a literal is refused with lane.string.raw_newline (lexical, before any walk)
+rawlf_escape	admit				3	both	run	S2/S4	a\nb has 3 bytes
+rawlf_let	refuse	lane.string.raw_newline	1			both	run	S5	lexical refusal of the raw LF precedes the walk, so it wins over lane.source.string for the literal in a let (same position
+len_1	admit				3	both	run	S3	.len is a plain i64
+len_2	admit				0	both	run	S3	.len is a plain i64
+len_3	admit				1	both	run	S3	.len is a plain i64
+len_4	admit					both	run	S3	.len is a plain i64
+seed_result	refuse	lane.string.result	1			both	run	S5	String as result
+seed_param	admit					both	run	S1	S1: String is admitted as a parameter type; text has no main
+seed_binding_std	refuse	lane.string.binding	1			both	run	S5/S6	S6 says user and std walk are the same rule, so lane.type.named for a seed body is gone; no main
+mv_paren_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_paren_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_neg_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_neg_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_not_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_not_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_bit_not_moved	admit					both	outside	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main; holds a unary ~: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+mv_bit_not_kept	admit					both	outside	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main; holds a unary ~: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+mv_as_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_as_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_binary_left_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_binary_left_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_binary_right_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_binary_right_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_bitwise_left_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_bitwise_left_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_bitwise_right_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_bitwise_right_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_logical_left_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_logical_left_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_logical_right_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_logical_right_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_return_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_return_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_call_argument_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_call_argument_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_let_value_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_let_value_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_assign_value_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_assign_value_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_condition_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_condition_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_then_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_then_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_else_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_else_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_else_nested_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_if_else_nested_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_while_condition_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_while_condition_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_while_body_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_while_body_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_start_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_start_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_end_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_end_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_body_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_body_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_body_nested_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_for_body_nested_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_index_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_index_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_paren_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_paren_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_neg_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_neg_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_not_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_not_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_bit_not_moved	admit					both	outside	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main; holds a unary ~: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+rs_bit_not_kept	admit					both	outside	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main; holds a unary ~: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+rs_as_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_as_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_binary_left_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_binary_left_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_binary_right_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_binary_right_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_bitwise_left_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_bitwise_left_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_bitwise_right_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_bitwise_right_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_logical_left_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_logical_left_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_logical_right_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_logical_right_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_return_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_return_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_call_argument_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_call_argument_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_let_value_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_let_value_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_assign_value_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_assign_value_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_condition_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_condition_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_then_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_then_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_else_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_else_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_else_nested_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_if_else_nested_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_while_condition_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_while_condition_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_while_body_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_while_body_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_start_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_start_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_end_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_end_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_body_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_body_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_body_nested_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_for_body_nested_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_index_moved	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+rs_index_kept	admit					both	run	S3	no bounds proof, so the counter scan is gone (S3): admitted whether the counter is moved or not; other rules as today; no main
+mv_break	admit					both	run	S3	neutral statement; no main
+rs_break	admit					both	run	S3	neutral statement; no main
+mv_continue	admit					both	run	S3	neutral statement; no main
+rs_continue	admit					both	run	S3	neutral statement; no main
+mv_array_literal	admit					both	run	S3	neutral statement; no main
+rs_array_literal	admit					both	run	S3	neutral statement; no main
+rs_field_receiver_moved	refuse	lane.source.struct	1			both	run	S5	field read on a non-String receiver (an if-expression): lane.source.struct; no main
+rs_field_receiver_moved_host	refuse	lower.materialization_refused				both	host	S5	field read on a non-String receiver (an if-expression): lane.source.struct; no main Host check names lower.materialization_refused.
+rs_field_receiver_kept	refuse	lane.source.struct	1			both	run	S5	field read on a non-String receiver (an if-expression): lane.source.struct; no main
+rs_field_receiver_kept_host	refuse	lower.materialization_refused				both	host	S5	field read on a non-String receiver (an if-expression): lane.source.struct; no main Host check names lower.materialization_refused.
+rs_array_element_moved	by_run					both	by_run	-	non-constant array element: outside the string rule, today's verdict
+rs_array_element_kept	by_run					both	by_run	-	non-constant array element: outside the string rule, today's verdict
+print_moved_0	admit					both	run	S3	print of an i64 value is admitted (S5 refuses only print of a String value); needs the nbprint1 mark as today; no main
+print_kept_1	admit					both	run	S3	print of an i64 value is admitted (S5 refuses only print of a String value); needs the nbprint1 mark as today; no main
+print_reset_2	admit					both	run	S3	print of an i64 value is admitted (S5 refuses only print of a String value); needs the nbprint1 mark as today; no main
+print_kept_3	admit					both	run	S3	print of an i64 value is admitted (S5 refuses only print of a String value); needs the nbprint1 mark as today; no main
+else_move	admit					both	run	S3	counter scan gone; with c = 0 the second step reads past the string, value undefined; no main
+else_move_control	admit					both	run	S3	control; no main
+for_move	admit					both	run	S3	counter scan gone; no main
+for_move_control	admit					both	run	S3	control; no main
+looptest_move	admit					both	run	S3	counter scan gone; the loop-test conjunct is an if-expression with a statement body (value test): other rules as today; no main
+looptest_stay	admit					both	run	S3	counter scan gone; the loop-test conjunct is an if-expression with a statement body (value test): other rules as today; no main
+blind_assert	by_run					both	by_run	-	assert: outside the string rule, today's verdict
+blind_after	by_run					both	by_run	-	assert: outside the string rule, today's verdict
+blind_seen	admit					both	run	S3	control; no main
+block_in_loop_text	admit					both	run	S3	the planted-Block variants cannot be written as source; this is the text carrier of them; no main
+block_after_text	admit					both	run	S3	text carrier of the planted-Block reset variants; no main
+constlet_1	by_run	native.block_shadow				both	by_run	-	const then let of the same name: native.block_shadow stays, expected as today; key recorded
+constlet_2	by_run	native.block_shadow				both	by_run	-	const then let of the same name: native.block_shadow stays, expected as today; key recorded
+constlet_3	by_run	native.block_shadow				both	by_run	-	const then let of the same name: native.block_shadow stays, expected as today; key recorded
+constlet_4	by_run	native.block_shadow				both	by_run	-	const then let of the same name: native.block_shadow stays, expected as today; key recorded
+cap_at_bound	pending					default	capacity	-	
+cap_over_bound	pending					default	capacity	-	
+cap_uncalled_over	pending					default	capacity	-	
+cap_big_no_literal	admit				0	both	run	S1	a function over 49152 bytes without a literal holds no String shape; exit is by run (a = 6144 after 6144 steps: 6144 % 256 = 0)
+lim_lit_under	admit				54	both	run	S4	
+lim_lit_over	admit				54	both	run	S4	under S4 the handle is built once so the run ends with 54
+lim_alloc_under	admit				54	both	run	-	
+lim_alloc_over	admit				132	default	run	-	default profile only: exit 132 is the arena-guard trap (signal 4, read as 128 + signal); on the bounded layout the frozen seed ends with 54 (2^25 allocations of 24 bytes are 805306368 bytes)
+nul_in_write	admit					both	run	S4	escape \0 inside literals
+partial_write	admit					both	run	S3	suffix write and load at s.addr+s.len-1 are plain i64
+value_if_len	admit				74	both	run	S3	if-expression over .len
+recursion_1000	admit				235	both	run	S2	param name passed down recursively (S2b); 1003 % 256
+loop_1m	admit				144	both	run	S4	1e6 literal evaluations; 9e6 % 251
+loop_50m	admit				172	both	run	S4	450000000 % 251 = 172
+branchy_param	admit				123	both	run	S3	.len of two params in branches
+read_through_len	admit				80	both	run	S3	byte loop
+arena_argc_literal_loop	admit					both	run	S4	literal in a loop with argc-dependent count; main(argc, argv) entry as today
+arena_argc_alloc_loop	admit					both	run	-	__mind_alloc loop: not a string shape
+oob_load_i64	admit					both	run	S3	plain i64 load through .addr; reads past a 1-byte literal
+vowels	admit					both	run	S3	count("education")=5 *10 + count("rhythm")=0 + 0 = 50?
+prefix_both	admit					both	run	S3	common prefixes
+reuse_counter	admit					both	run	S3	counter reset to 0 between loops
+break_in_loop	admit					both	run	S3	break inside the byte loop
+loop_reached_helper	admit					both	run	S3	helper with a byte loop called from a loop
+recursion_loops	admit					both	run	S3	recursion with a loop in each frame
+write_orders	admit					both	run	S3	whole-string writes through a helper
+many_literals_loop	admit					both	run	S4	literal evaluated 2e6 times
+le_guard	admit					both	run	S3	i <= s.len reads one byte past the literal; plain loads (S3)
+read_after_loop	admit					both	run	S3	read at s.addr + s.len after the loop: past the literal (no terminator, S4)
+step_first	admit					both	run	S3	step before read: reads at index len
+helper_index	admit					both	run	S3	index 5 of a 2-byte literal
+alias_index	admit					both	run	S3	index i+3
+put_loop	admit					both	run	S3	the partial-write loop of print_text
+other_string_guard	admit					both	run	S3	b.addr + i guarded by a.len
+if_guard	admit					both	run	S3	f("ab",1) loads byte index 1 = 98; the if guard is the program's own
+bare_empty	admit					both	run	S3	load through the address of an empty literal
+string_plus_string	refuse	lane.binop.non_scalar	2			both	run	S5	binary operator on String operands keeps today's key lane.binop.non_scalar
+h_const_shadow	by_run	native.block_shadow				both	by_run	-	same name declared twice in one scope: native.block_shadow stays, expected as today; key recorded
+h_second_var	admit					both	run	S3	j = i + 1: reads index len
+h_compound_before	admit					both	run	S3	i += 1 before the read (compound assign is a non-string rule)
+h_compound_last	admit					both	run	S3	i += 1 after the read; bounded in fact
+h_call_counter	admit					both	run	S3	i = bump(i) before the read
+h_after_loop	admit					both	run	S3	read after the loop
+h_negative_start	admit					both	run	S3	reads index -1
+len_of_x	admit				1	both	run	S2	
+c2_shadow_no_let	admit					both	outside	S3	const i as the counter; holds a top-level const item: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+c3_let_first	admit					both	run	S3	let i first; reads index 0 of "Q"
+c4_const_read	admit				100	both	outside	S1	return const -100 + 200 = 100; holds a top-level const item: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+c5_sibling_scope	admit					both	outside	S3	sibling-scope let i; holds a top-level const item: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+h_else_move	admit					both	run	S3	
+h_for_move	admit					both	run	S3	for body moves i
+h_value_if_move	admit					both	run	S3	value-if moves i
+h_high_bytes	admit					both	run	S3	bytes above 127 through i8 loads (sign): compare native = MLIR by run
+h_two_strings	admit					both	run	S3	two strings in one loop test
+h_reset_between	admit					both	run	S3	counter reset between loops
+me_else_move	admit					both	run	S3	
+const_shadow	by_run	native.block_shadow				both	by_run	-	const then let of the same name: native.block_shadow stays, expected as today; key recorded
+const_shadow_block	by_run	native.block_shadow				both	by_run	-	const then let of the same name: native.block_shadow stays, expected as today; key recorded
+high_bytes	admit				3	both	run	S3	exit 3
+comment_marks	admit				53	both	run	S4	// and "/*" inside literals: 11 bytes written + 4*10 + 2 = 53
+dead_fn	admit				7	both	run	S6	uncalled function with String shapes: admitted (these shapes are admitted anyway)
+recursion_5	admit				8	both	run	S2	r("abc",5) = 3 + 5
+else_move_alt	admit					both	run	S3	else move, main calls f("ab",0)
+nested_loop_move	admit					both	run	S3	inner loop moves i
+for_shadow_counter	admit					both	run	S3	
+unicode_escape	refuse	lane.string.escape	6	19		both	run	-	unknown escape \u is lane.string.escape at the opening quote. A mindc build stops in the host lexer (error[parse][E1001]) before the compiler.
+hex_escape	refuse	lane.string.escape	6	19		both	run	-	unknown escape \x is lane.string.escape at the opening quote. A mindc build stops in the host lexer (error[parse][E1001]) before the compiler.
+lit_field	refuse	lane.source.string	2			both	run	S5	abc.len: the literal (receiver) is first in source order and the inner node wins
+str_index	refuse	lane.source.index				both	run	-	String value as an index base -> lane.source.index
+str_cast	refuse	lane.source.cast	2			both	run	S5	cast of the String value keeps today's key lane.source.cast
+str_to_free	refuse	lane.type.mismatch				both	run	-	String value as an intrinsic argument -> lane.type.mismatch
+ptr_cast_len	refuse	lane.source.binding_type	2			both	host	S3	.len is a plain i64 (S3), so this is the existing let-of-pointer-cast refusal, unchanged
+user_collide	refuse	closure.std_symbol_collision				both	host	-	symbol `string_len`: non-string refusal of the closure, unchanged; no S rule decides it. Host check names the key and prints no line.
+method_len	refuse	lane.source.method_call				both	run	S5	String value as a method receiver -> lane.source.method_call
+loop_template_1m	admit				64	both	run	S4	1e6 % 256; under S4 none stops the image
+loop_44000000	admit				0	both	run	S4	44000000 % 256
+loop_45000000	admit				64	both	run	S4	45000000 % 256
+loop_50000000	admit				128	both	run	S4	50000000 % 256
+g0_lit_loop	admit				54	both	run	S4	same program as lim_lit_over
+g0_alloc_loop	admit				132	default	run	-	arena guard on __mind_alloc: unchanged; default profile only: exit 132 is the arena-guard trap (signal 4, read as 128 + signal); on the bounded layout the frozen seed ends with 54 (2^25 allocations of 24 bytes are 805306368 bytes)
+raw_cr	admit				31	both	run	S2/S4	raw CR byte inside a literal: S2(a) admits a literal
+raw_tab	admit				31	both	run	S2/S4	raw TAB
+raw_ctl	admit				31	both	run	S2/S4	raw control byte 0x01
+raw_nul	admit					both	run	-	every other raw byte in a literal: the present behaviour is the specification
+raw_crlf_file	admit				31	both	run	S2	file with CRLF endings
+size_1	admit				1	both	run	S2	
+size_65536	pending					default	capacity	-	
+s2_int_literal	refuse	lane.string.argument	7			both	run	S2	an integer literal in a String slot
+s2_i64_param	refuse	lane.string.argument	7			both	run	S2	a name bound to an i64 parameter
+s2_shadow_let	refuse	lane.string.argument	8			both	run	S2	a top-level let re-declares s as i64: resolved binding is the let, not the String parameter
+s2_call_result	refuse	lane.string.argument	10			both	run	S2	a call result in the slot
+s2_len_value	refuse	lane.string.argument	7			both	run	S2	s.len is an i64 value (S3), not a String
+s2_addr_value	refuse	lane.string.argument	7			both	run	S2	s.addr is an i64 value
+s2_spelling_not_binding	refuse	lane.string.argument	7			both	run	S2	same spelling s, but in f it is bound to an i64 parameter: resolved binding, not spelling
+s2_literal_slot	admit				2	both	run	S2	a literal in the slot
+s2_param_slot	admit				3	both	run	S2	a parameter name in the slot
+s2_two_level	admit				5	both	run	S2	pass-down through two levels
+s2_mixed_slots	admit				172	both	run	S2	literal, i64 and a parameter name in one call: 100+70+2 = 172
+s3_addr_return	admit				0	both	run	S3	.addr returned as an i64; the address of a literal is not 0
+s3_addr_let	admit				65	both	run	S3	.addr stored in a let and loaded
+s3_addr_call	admit				90	both	run	S3	.addr passed to a function as an i64
+s3_load_loop	admit				198	both	run	S3	load loop bounded by .len: 65+66+67
+s3_extern_cast	admit					both	outside	S3	.addr with the pointer cast as an extern argument; the \0 is written in the literal (S4); holds an extern function declaration: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+s3_addr_plus_i	admit				66	both	run	S3	.addr + constant
+s3_addr_compare	admit				0	both	run	S3	== on i64 values of .addr is i64 equality, not String equality
+s3_addr_mem	admit				1	both	run	S3	.addr stored to memory and read back
+s3_copy_to_buffer	admit				66	both	run	S3	copy of the literal bytes into a buffer: store through a buffer address, load through .addr
+s3_len_arith	admit				7	both	run	S3	.len in arithmetic
+s3_nonstring_addr	refuse	lane.source.struct	4			both	run	S3/S5	.addr on an i64 receiver
+s3_nonstring_addr_host	refuse	lower.materialization_refused				both	host	S3/S5	.addr on an i64 receiver Host check names lower.materialization_refused.
+s3_shadow_addr	refuse	lane.source.struct	5			both	run	S2/S3/S5	receiver name is shadowed by a top-level let: not the String parameter
+s3_shadow_addr_host	refuse	lower.materialization_refused				both	host	S2/S3/S5	receiver name is shadowed by a top-level let: not the String parameter Host check names lower.materialization_refused.
+s3_call_receiver	refuse	lane.source.struct	7			both	run	S5	field read on a call result
+s3_call_receiver_host	refuse	lower.materialization_refused				both	host	S5	field read on a call result Host check names lower.materialization_refused.
+s4_nul_end	admit				4	both	run	S4	the \0 written in the literal counts: len 4; no hidden terminator
+s4_nul_value	admit				7	both	run	S4	the written \0 is the last defined byte
+s4_empty	admit				3	both	run	S4	the empty literal has len 0
+s4_each_escape	admit				7	both	run	S4	each escape of string_escape_value (n t r 0 backslash quote dquote) is one byte
+s4_store_literal	admit					both	run	S4	read-only bytes: compiled, faults at run
+s4_past_end	admit					both	run	S4	no hidden terminator: byte len is not defined (program error), compiler admits
+s5_result	refuse	lane.string.result	3			both	run	S5	String as result type
+s5_binding	refuse	lane.string.binding	4			both	run	S5	let typed String (annotation precedes the literal)
+s5_const	refuse	lane.string.const	3			both	run	S5	const of type String
+s5_const_used	refuse	lane.string.const	3			both	run	S5	const of type String, also used as an argument: the declaration is first in source order
+s5_assign_name	refuse	lane.string.assign	4			both	run	S5	assignment to the name (target precedes the literal)
+s5_assign_len	refuse	lane.string.assign	4			both	run	S5	assignment to a field (len)
+s5_assign_len_host	refuse	lane.source.struct	4	5		both	host	S5	assignment to a field (len) Host check names lane.source.struct.
+s5_assign_addr	refuse	lane.string.assign	4			both	run	S5	assignment to a field (addr)
+s5_assign_addr_host	refuse	lane.source.struct	4	5		both	host	S5	assignment to a field (addr) Host check names lane.source.struct.
+s5_eq	refuse	lane.string.equality	4			both	run	S5	== of a String with itself
+s5_eq_host	refuse	lane.call.unknown				both	host	S5	== of a String with itself Host check names lane.call.unknown.
+s5_neq	refuse	lane.string.equality	4			both	run	S5	!=
+s5_neq_host	refuse	lane.call.unknown				both	host	S5	!= Host check names lane.call.unknown.
+s5_arith_add	refuse	lane.binop.non_scalar	4			both	run	S5	binary operator on String operands keeps today's key lane.binop.non_scalar
+s5_neg	refuse	lane.source.neg_type	4	13		both	run	S5	unary minus on a String keeps today's key lane.source.neg_type
+s5_cast_i64	refuse	lane.source.cast	4	12		both	run	S5	cast of the String value keeps today's key lane.source.cast
+s5_cast_ptr	refuse	lane.source.cast	5			both	run	S5	open(s as *const u8,..): a cast of the String value itself -> lane.source.cast
+s5_cond_if	refuse	lane.type.mismatch	4			both	run	S5	String as a condition
+s5_logic_and	refuse	lane.type.mismatch	4			both	run	S5	logical use
+s5_print	refuse	lane.source.print_argument	4	11		both	run	S5	print of a String value
+s5_cap	refuse	lane.string.cap	4			both	run	S5	.cap
+s5_field_unknown	refuse	lane.source.struct	4			both	run	S5	unknown field
+s5_field_unknown_host	refuse	lower.materialization_refused				both	host	S5	unknown field Host check names lower.materialization_refused.
+s5_extern_arg	refuse	lane.string.use	5			both	run	S5	String value as an extern argument
+s5_extern_arg_host	refuse	lane.string.use	5	17		default	host	S5	String value as an extern argument The host passes the extern call through; the compiler names lane.string.use (the bounded profile refuses every user extern first: scope.bounded_extern).
+s5_extern_arg_host_bounded	refuse	scope.bounded_extern				bounded	host	S5	String value as an extern argument, bounded profile: the bounded profile refuses every user extern block in the host check before the compiler is fed (scope.bounded_extern, no line); the default profile is the row s5_extern_arg_host
+s5_return_value	refuse	lane.string.use	4	12		both	run	S5	return s; -> lane.string.use
+s5_call_i64_slot	refuse	lane.type.mismatch	7	14		both	run	S5	String name into an i64 parameter slot -> lane.type.mismatch
+s5_literal_return	refuse	lane.source.string	4			both	run	S5	literal outside S2(a) and print
+s5_print_literal	admit					both	run	S5	a literal as a print argument is the S5 exception
+s6_result	refuse	lane.string.result	3			both	run	S6	same rule inside a helper-only function: result
+s6_binding	refuse	lane.string.binding	4			both	run	S6	
+s6_assign	refuse	lane.string.assign	4			both	run	S6	same rule inside a helper-only function: assign
+s6_equality	refuse	lane.string.equality	4			both	run	S6	same rule inside a helper-only function: equality
+s6_equality_host	refuse	lane.call.unknown				both	host	S6	same rule inside a helper-only function: equality Host check names lane.call.unknown.
+s6_arith	refuse	lane.binop.non_scalar	4			both	run	S6	binary operator on String operands keeps today's key lane.binop.non_scalar
+s6_cond	refuse	lane.type.mismatch	4			both	run	S6	same rule inside a helper-only function: condition
+s6_print	refuse	lane.source.print_argument	4			both	run	S6	same rule inside a helper-only function: print of a String
+s6_extern_arg	refuse	lane.string.use	5			both	run	S6	same rule inside a helper-only function: String as extern argument
+s6_extern_arg_host	refuse	lane.string.use	5	17		default	host	S6	same rule inside a helper-only function: String as extern argument The host passes the extern call through; the compiler names lane.string.use (the bounded profile refuses every user extern first: scope.bounded_extern).
+s6_extern_arg_host_bounded	refuse	scope.bounded_extern				bounded	host	S6	String value as an extern argument, bounded profile: the bounded profile refuses every user extern block in the host check before the compiler is fed (scope.bounded_extern, no line); the default profile is the row s6_extern_arg_host
+s6_return_value	refuse	lane.string.use	4			both	run	S6	return s; -> lane.string.use
+s6_argument	refuse	lane.string.argument	7			both	run	S6	same rule inside a helper-only function: S2 slot check
+s6_receiver	refuse	lane.source.struct	4			both	run	S6	same rule inside a helper-only function: receiver check
+s6_receiver_host	refuse	lower.materialization_refused				both	host	S6	same rule inside a helper-only function: receiver check Host check names lower.materialization_refused.
+s6_admit_reads	admit				132	both	run	S3/S6	admitted shapes stay admitted in a helper-only function: 1 + 65 + 66
+s6_dead_refused	refuse	lane.string.result	3			both	run	S6	an uncalled USER function is walked: String result refused
+s6_dead_admitted_shape	refuse	lane.string.cap	4			both	run	S6	the row was a user function
+s5_unannotated_let	refuse	lane.string.binding				both	run	S5	let t = s; with no annotation and a String value -> lane.string.binding
+s5_literal_left_equality	refuse	lane.source.string	4			both	run	S5	x == a: the literal is at the smaller position than the equality operator
+s5_literal_left_equality_host	refuse	lane.call.unknown				both	host	S5	x == a: the literal is at the smaller position than the equality operator Host check names lane.call.unknown.
+s2_paren_name	admit				2	both	run	S2	parentheses are transparent: take((s)) / take(("hi")) are judged as take(s) / take("hi"), S2(b)/S2(a)
+paren_literal	admit				2	both	run	parens	take(("hi")) is judged as take("hi")
+paren_name_double	admit				3	both	run	parens	take(((s))) is judged as take(s)
+paren_int_refused	refuse	lane.string.argument	7			both	run	parens	take((5)) is judged as take(5): parentheses do not hide a non-literal-non-name
+let_infer_mut	refuse	lane.string.binding	4			both	run	let_infer	let mut t = s; (no annotation, String value)
+let_infer_in_loop	refuse	lane.string.binding	6			both	run	let_infer	let t = s; inside a loop body
+return_paren	refuse	lane.string.use	4			both	run	return_slot	return (s); is judged as return s
+i64_slot_second	refuse	lane.type.mismatch	7			both	run	return_slot	String name in the second (i64) parameter slot
+intrinsic_store	refuse	lane.type.mismatch	4			both	run	operand	String value as the address argument of a store intrinsic
+index_var	refuse	lane.source.index	7			both	run	operand	String value as an index base with a variable index
+method_addr	refuse	lane.source.method_call	4			both	run	operand	String value as a method receiver (s.addr())
+escape_unknown	refuse	lane.string.escape	7	17		both	run	escape	unknown escape \q in a literal passed to a String slot is lane.string.escape at the opening quote. A mindc build stops in the host lexer (error[parse][E1001]) before the compiler.
+tie_first_cap_then_eq	refuse	lane.string.cap	4			both	run	tie	two refused constructs: the smaller source position (.cap) wins
+tie_first_cap_then_eq_host	refuse	lane.call.unknown				both	host	tie	two refused constructs: the smaller source position (.cap) wins Host check names lane.call.unknown.
+tie_first_eq_then_cap	refuse	lane.string.equality	4			both	run	tie	two refused constructs: the smaller source position (==) wins
+tie_first_eq_then_cap_host	refuse	lane.call.unknown				both	host	tie	two refused constructs: the smaller source position (==) wins Host check names lane.call.unknown.
+tie_literal_neq_left	refuse	lane.source.string	4			both	run	tie	x != a: literal left operand is lane.source.string
+tie_literal_neq_left_host	refuse	lane.call.unknown				both	host	tie	x != a: literal left operand is lane.source.string Host check names lane.call.unknown.
+tie_literal_receiver_arg	refuse	lane.source.string	7			both	run	tie	abc.len as an argument of an i64 slot: literal receiver
+addr_cast_admit	admit					both	outside	ptr_cast	open(s.addr as *const u8, ..): .addr is a plain i64, the cast is the admitted pointer cast (needs the extern row for open: as today); holds an extern function declaration: the frozen seed refuses the program (rc 3, no key) and the string rule does not decide it; status outside until the compiler compiles it
+cast_paren	refuse	lane.source.cast	5			both	run	ptr_cast	open((s) as *const u8, ..): parentheses transparent, cast of the String value
+fcast_addr_read	admit				66	both	run	S3/ptr_cast	.addr of a String parameter cast to *const u8 and back; the byte read through the pointer is the exit status
+fcast_len_ptr	admit				42	both	run	S3/ptr_cast	.len of a String parameter in a pointer cast is the plain length: (s.len as *mut u8) as i64 is 5
+fcast_addr_arith	admit				122	both	run	S3/ptr_cast	arithmetic on .addr and .len, then the pointer cast: the last byte read through the pointer
+fcast_addr_extern	admit				42	both	run	S3/ptr_cast	readlink(p.addr as *const u8, ..) with the extern row of the tree: a link that exists is read, a missing path gives -1
+fcast_cap	refuse	lane.string.cap	4			both	run	S3/ptr_cast	.cap of a String parameter in the same pointer cast keeps the key of the walk
+fcast_i64_recv	refuse	lane.source.struct	4			both	run	S3/ptr_cast	.addr of an i64 parameter in the same pointer cast keeps the key of the walk
+fcast_i64_recv_host	refuse	lower.materialization_refused				both	host	S3/ptr_cast	.addr of an i64 parameter in the same pointer cast keeps the key of the walk Host check names lower.materialization_refused.
+fcast_shadow	refuse	lane.source.struct	5			both	run	S3/ptr_cast	a let shadows the String parameter with an i64 (resolved binding, not spelling): the same pointer cast keeps the key of the walk
+fcast_shadow_host	refuse	lower.materialization_refused				both	host	S3/ptr_cast	a let shadows the String parameter with an i64 (resolved binding, not spelling): the same pointer cast keeps the key of the walk Host check names lower.materialization_refused.
+fcast_struct_recv	by_run					both	by_run	S3/ptr_cast	.addr of a parameter of another struct in the same pointer cast: the walk names no key and the cast refuses (exit status 3, no key); the same field read as a plain value compiles
+fcast_shadow_struct	refuse	lane.source.struct	8			both	run	S2/S3/ptr_cast	a let of another struct shadows the String parameter: the name is not a String parameter in the let's scope, the field read in the pointer cast is lane.source.struct
+fcast_shadow_struct_host	refuse	lane.source.top_level	2	1		both	host	S2/S3/ptr_cast	a let of another struct shadows the String parameter: the name is not a String parameter in the let's scope, the field read in the pointer cast is lane.source.struct Host check names lane.source.top_level.
+shadow_struct_read	refuse	lane.source.struct	9			both	run	S2/S3	a let of another struct shadows the String parameter: the plain field read is lane.source.struct, not a String field and not the struct's field
+shadow_struct_read_host	refuse	lane.source.top_level	3	1		both	host	S2/S3	a let of another struct shadows the String parameter: the plain field read is lane.source.struct, not a String field and not the struct's field Host check names lane.source.top_level.
+shadow_loop_read	refuse	lane.source.struct	6			both	run	S2/S3	a loop binder shadows the String parameter: a field read of the binder is lane.source.struct
+shadow_loop_read_host	refuse	lower.materialization_refused				both	host	S2/S3	a loop binder shadows the String parameter: a field read of the binder is lane.source.struct Host check names lower.materialization_refused.
+dead_user_eq	refuse	lane.string.equality	4			both	run	dead_fn	an uncalled USER function with == on Strings is refused
+dead_user_eq_host	refuse	lane.call.unknown				both	host	dead_fn	an uncalled USER function with == on Strings is refused Host check names lane.call.unknown.
+s6_std_unreached_module	admit				0	both	carrier	dead_fn/S6	refused shape (.cap) inside a std function of a module the program does not reach: NOT judged; needs a std carrier module (see the @carrier record)
+s6_std_unreached_fn	admit				2	both	carrier	dead_fn/S6	refused shape (==) in a std function the program does not reach inside a module it does reach: NOT judged (if the seed emits whole modules this row must be re-decided: flagged unsure); needs a std carrier module (see the @carrier record)
+s6_std_reached_cap	refuse	lane.string.cap				both	run	dead_fn/S6	refused shape (.cap) inside a std function the image emits: refused, site in the std region; the @carrier record is appended to the std blob
+s6_std_reached_eq	refuse	lane.string.equality				both	run	dead_fn/S6	refused shape (==) inside a std function the image emits: refused, site in the std region; the @carrier record is appended to the std blob
+tie_str_then_bad_literal	refuse	lane.string.cap	4	12		both	run	tie	the earlier construct is .cap (lane.string.cap). The later unknown escape is not reached. A mindc build stops in the host lexer (error[parse][E1001]) before the compiler.
+tie_bad_literal_then_str	refuse	lane.string.escape	4	14		both	run	tie	the earlier construct is the unknown escape (lane.string.escape) at the opening quote. A mindc build stops in the host lexer (error[parse][E1001]) before the compiler.
+order_extern_then_string	refuse	lane.string.cap	5			both	run	order	the string family first, then the extern family: an extern refusal at an earlier position and a string refusal at a later one
+order_extern_alone	refuse	lane.extern.unknown_symbol	3			both	run	order	control of the previous row: the same extern without the string refusal is named by the extern family
+user_print	admit				3	both	run	S5	a user function named print with a String parameter is called
+user_print_lit	admit				3	both	run	S5	that user function called with a string literal
+user_print_two	admit				4	both	run	S5	a user function named print with a String and an i64 is called
+paren_recv_len	admit				3	both	run	S3	a parenthesised String receiver of .len is a plain i64
+paren_recv_cast	admit				3	both	run	S3	a parenthesised String receiver of .len cast to i64
+paren_recv_ptr	admit				42	both	run	S3/ptr_cast	a parenthesised String receiver of .len in a pointer cast is the plain length: ((s).len as *mut u8) as i64 is 5
+paren_recv_ptr_nest	admit				42	both	run	S3/ptr_cast	a twice-parenthesised String receiver of .len in a pointer cast is the plain length: (((s)).len as *mut u8) as i64 is 5
+paren_recv_ptr_nest3	admit				42	both	run	S3/ptr_cast	a String receiver under three parentheses of .len in a pointer cast is the plain length: ((((s))).len as *mut u8) as i64 is 5
+paren_recv_ptr_deep	admit				42	both	run	S3/ptr_cast	a String receiver under sixteen parentheses of .len in a pointer cast is the plain length
+paren_recv_ptr_ceiling	admit				42	both	run	S3/ptr_cast	a String receiver of .len under one parenthesis less than the nesting ceiling of the running compiler, the deepest receiver of this program shape (an outer parenthesis around the cast), in a pointer cast is the plain length
+paren_recv_ptr_ceiling_bare	admit				42	both	run	S3/ptr_cast	a String receiver of .len at the nesting ceiling of the running compiler (18022 bounded, 208076 default profile; also run on the default-profile seed), in a pointer cast is the plain length; one level deeper meets the stack budget refusal (@beyond)
+const_i64_lit	refuse	lane.source.string	3	16		both	run	S5	a string literal in a const of type i64, at the opening quote
+const_noann_lit	refuse	lane.source.string	3	11		both	run	S5	a string literal in a const with no type, at the opening quote
+else_cap	refuse	lane.string.cap	7	16		both	run	S5	.cap only in the else branch
+else_eq	refuse	lane.string.equality	7	16		both	run	S5	== of Strings only in the else branch
+while_cap	refuse	lane.string.cap	5	11		both	run	S5	.cap only in a while condition
+while_eq	refuse	lane.string.equality	4	11		both	run	S5	== of Strings only in a while condition
+while_bare	refuse	lane.type.mismatch	4	11		both	run	S5	a bare String name as a while condition
+let_shadow_init	refuse	lane.type.mismatch	4	18		both	run	S5	a let initializer is judged before the let's own binding
+for_shadow_range	admit				9	both	run	S3	a loop range is read before the binder shadows the String parameter
+lex_comment_quote	admit				3	both	run	scan	a double quote inside a line comment, before and after a literal
+lex_char_dquote	admit				36	both	run	scan	the char literal of a double quote before a string literal
+lex_char_squote	admit				75	both	run	scan	a single-quote char and an escaped double-quote char before a string literal
+tie_add_assign_i64	refuse	lane.type.mismatch	4	5		both	run	tie	at one site the inner node wins: s += 1
+tie_add_assign_str	refuse	lane.binop.non_scalar	4	5		both	run	tie	at one site the inner node wins: s += a string
+ret_trailing_comma	refuse	lane.string.result	3	18		both	run	S5	a trailing comma in the parameter list before a String result
+ret_head_comment	refuse	lane.string.result	5	5		both	run	S5	comments between the parameter list, the arrow and String
+list_array	refuse	lane.string.use	4	24		both	run	S5	a String name inside an array literal
+list_enum	refuse	lane.string.use	8	24		both	run	S5	a String name as an enum constructor payload
+list_struct	refuse	lane.string.use	7	27		both	run	S5	a String name as a struct-literal field
+list_addr	refuse	lane.string.use	4	19		both	run	S5	a String name as the operand of &
+list_deref	refuse	lane.string.use	4	13		both	run	S5	a String name as the operand of *
+list_deref_assign	refuse	lane.string.use	6	10		both	run	S5	a String name stored through *p
+ty_stringbuf_let	admit				5	both	run	exact_name	a let of a type named StringBuf
+ty_stringbuf_result	admit				5	both	run	exact_name	a result type named StringBuf
+ty_stringx_result	admit				0	both	run	exact_name	a result type named StringX
+ty_stringbuf_param	admit				5	both	run	exact_name	a parameter whose type is StringBuf
+a8_str_const	refuse	lane.source.string	30	18		both	run	S5	a const of type str holds a string literal, at the opening quote
+a8_str_i64type	refuse	lane.source.string	8	18		both	run	S5	a const of type i64 holds a string literal the body reads, at the opening quote
+std_const_lit_unread	admit				5	both	run	S6	a std const of type i64 holds a string literal and nothing reads it: the std region is not judged; the @carrier record is appended to the std blob
+std_const_string_unread	admit				5	both	run	S6	a std const of type String that nothing reads: the std region is not judged; the @carrier record is appended to the std blob

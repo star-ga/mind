@@ -219,7 +219,7 @@ the final closed form or the equivalence proof.
    existing MAP-epilogue / `trace_hash` boundary and distinguish unsigned
    tamper-evidence from authenticated signing. The witness extends RFC 0024's
    shipped `evidence_chain.collapse.*` receipt, which `mindc verify` already
-   re-derives. A new artifact MAP key needs an architecture ruling first, stays
+   re-derives. A new artifact MAP key needs an architecture decision first, stays
    outside the `trace_hash` preimage, and is written by both compiler engines in
    the same change.
 5. **PGRO-5 — Canonical optimizer integration.** Put any `mic@3 -> mic@3`
@@ -3396,7 +3396,7 @@ governance/evidence, P1 impact/repair/routing, P2 enterprise rollout.
     shapes at the GEMM blocking edges (the `MR`/`NR` remainder tails, and one
     below, at and one above `Q16_BLIS_MIN_DIM`) and narrowing cast chains;
     (c) exact equality with no tolerance for integers and Q16.16; strict f32
-    joins after a ruling on the reference operation order; a construct the
+    joins after a decision on the reference operation order; a construct the
     reference cannot run is listed as not covered, never as passing;
     (d) an AST-level reducer (remove statements, inline calls, shrink constants
     and shapes) that keeps the same failing oracle and writes a hermetic
