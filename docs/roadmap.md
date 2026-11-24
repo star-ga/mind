@@ -167,6 +167,14 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   The first concrete instance is **RFC 0028 (Deterministic Field Calculus)**, below.
 - **Ecosystem Integrations** – Official bindings for Python, Swift, and WebAssembly targets.
 - **Package Registry** – Public `mindpkg` registry with curated models.
+- **Pass-by-pass IR trace** – a debugging view for the native backend. Today
+  `--emit-ir` shows only the final IR. A proposed `--trace-passes` flag would
+  write the IR after each lowering stage, keep only the stages that change it,
+  show each change as a before/after diff, and record a hash of each stage's
+  output. Every stage is deterministic, so the trace is the same on every run;
+  when two substrates disagree, the first stage whose hash differs is where to
+  look. Text output first, which a browser viewer can read later. Off by
+  default: a build without the flag stays byte-identical.
 
 ### PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)
 
