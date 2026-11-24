@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3533 | **Est. tokens:** ~6,210,940
-**Generated:** 2026-11-24 09:22 UTC
+**Files:** 3533 | **Est. tokens:** ~6,210,960
+**Generated:** 2026-11-24 11:21 UTC
 
 ## Token Budget Guide
 
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 361 | ~1,080,168 |
+| `examples/mindc_mind/` | 361 | ~1,080,188 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -843,7 +843,7 @@
 - `native_dynamic_image.mind` (~3470 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_mutations.tsv` (~74 tok, small) — name	case	expected_detection
 - `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
-- `native_dynamic_layout_check.py` (~2967 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
+- `native_dynamic_layout_check.py` (~2975 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
 - `native_dynamic_layout_driver.mind` (~469 tok, medium) — Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
 - `native_dynamic_layout.md` (~2529 tok, huge) — Checked dynamic MIND image layout, version 1
 - `native_dynamic_layout.mind` (~1459 tok, large) — Copyright 2026 STARGA Inc.
@@ -984,7 +984,7 @@
 - `self_host_array_smoke.py` (~1425 tok, large)
 - `self_host_arridx_mic3_smoke.py` (~1883 tok, huge)
 - `self_host_body_smoke.py` (~3055 tok, huge)
-- `self_host_bounded_profile_smoke.py` (~7760 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
+- `self_host_bounded_profile_smoke.py` (~7768 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1226 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
 - `self_host_cast_mic3_smoke.py` (~4759 tok, huge)
 - `self_host_check_driver_smoke.py` (~2889 tok, huge)
@@ -1086,7 +1086,7 @@
 - `self_host_param_mutation_smoke.py` (~1342 tok, large) — CPU-as-oracle smoke for the param-mutation fix (nb_expr ident arm: consult the
 - `selfhost_so_provenance_smoke.py` (~2391 tok, huge) — Gate: `resolve_so()` must QUALIFY the `.so` it returns and REFUSE a stale one.
 - `_selfhost_so.py` (~5461 tok, huge) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
-- `selfhost_source_bundle_check.py` (~4224 tok, huge) — Captured compiler-source regression gate. Bootstrap orchestration only.
+- `selfhost_source_bundle_check.py` (~4228 tok, huge) — Captured compiler-source regression gate. Bootstrap orchestration only.
 - `selfhost_source_bundle.md` (~1570 tok, huge) — Captured compiler source bundles
 - `self_host_source_note_smoke.py` (~3307 tok, huge) — Native MIND regression for PT_NOTE tagging with trailing string rodata.
 - `_selfhost_sources.py` (~10775 tok, huge) — Immutable source views for internal compiler bootstrap orchestration.
