@@ -53,7 +53,7 @@ _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
 from self_host_loop_smoke import build_seed, is_static_elf  # noqa: E402
-from _selfhost_sources import DRIVER, compiler_feed, self_mode_image, start_child  # noqa: E402
+from _selfhost_sources import DRIVER, compiler_feed, core_limit_argv, self_mode_image, start_child  # noqa: E402
 
 AS_CAP = 2 * 1024**3
 CPU_CAP_S = 12  # consumer compiles and runs (the evaluator's child CPU ceiling)
@@ -616,9 +616,9 @@ def main(argv: list[str]) -> int:
                    "MINDC_STD_DIR": str(_REPO / "std")}
             def limit() -> None:
                 resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
-            r = subprocess.run([str(pathlib.Path(mindc).resolve()), "build", str(src),
+            r = subprocess.run(core_limit_argv([str(pathlib.Path(mindc).resolve()), "build", str(src),
                                 "--backend", "native", "--native-profile", "bounded",
-                                "--emit", "binary", "--out", str(art)],
+                                "--emit", "binary", "--out", str(art)]),
                                cwd=_REPO, env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, timeout=120, preexec_fn=limit)
             run = capped([str(art)], b"") if art.exists() else (None,) * 5

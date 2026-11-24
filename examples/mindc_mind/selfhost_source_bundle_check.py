@@ -249,7 +249,7 @@ def run_mutations(evidence):
         (directory / "source.sha256").write_text(sha(mutant.encode()) + "\n")
         command = [sys.executable, "-m", "unittest", "-v",
                    "selfhost_source_bundle_check.BundleControls." + target]
-        result = subprocess.run(command, cwd=directory, capture_output=True, timeout=30,
+        result = subprocess.run(core_limit_argv(command), cwd=directory, capture_output=True, timeout=30,
                                 preexec_fn=limits)
         (directory / "stdout").write_bytes(result.stdout)
         (directory / "stderr").write_bytes(result.stderr)

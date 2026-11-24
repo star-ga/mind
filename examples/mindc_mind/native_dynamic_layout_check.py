@@ -14,7 +14,7 @@ import resource
 import struct
 import subprocess
 import sys
-from _selfhost_sources import start_child
+from _selfhost_sources import core_limit_argv, start_child
 
 HERE = Path(__file__).resolve().parent
 LIMIT = 2 * 1024 ** 3
@@ -208,7 +208,7 @@ def main():
     writer_env = env.copy()
     writer_env.update(MIND_DYNAMIC_SEED=str(seed), MIND_DYNAMIC_SEED_SHA256=args.seed_sha256,
                       MIND_DYNAMIC_EVIDENCE=str(writer_dir))
-    result = subprocess.run([sys.executable, str(HERE / "native_dynamic_writer_check.py")],
+    result = subprocess.run(core_limit_argv([sys.executable, str(HERE / "native_dynamic_writer_check.py")]),
                             env=writer_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             timeout=300, preexec_fn=limited)
     (evidence / "writer-regression.stdout").write_bytes(result.stdout)
