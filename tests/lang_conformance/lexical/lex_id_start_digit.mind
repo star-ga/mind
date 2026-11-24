@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let 1x: i64 = 1;
+    return 0;
+}

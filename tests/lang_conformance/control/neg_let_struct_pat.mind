@@ -1,0 +1,12 @@
+struct P {
+    x: i64
+}
+
+fn get(p: P) -> i64 {
+    let P { x } = p;
+    return x;
+}
+
+fn main() -> i64 {
+    return 0;
+}

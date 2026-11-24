@@ -1,0 +1,6 @@
+fn identity(xs: &[i64]) -> &[i64] {
+    return xs;
+}
+fn main() -> i64 {
+    return identity([6, 7])[1];
+}

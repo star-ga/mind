@@ -1,0 +1,7 @@
+export fn f() -> i64 {
+    1
+}
+
+fn main() -> i64 {
+    f()
+}

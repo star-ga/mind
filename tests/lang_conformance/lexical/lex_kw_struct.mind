@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let struct: i64 = 1;
+    return 0;
+}

@@ -240,8 +240,11 @@ GATED_EVENTS = ("push", "pull_request")
 # 336 -> 337 adds examples/mindc_mind/_selfhost_identity_selftest.py, the planted self-tests of the identity
 # partitions, moved out of _selfhost_identity.py (800 -> 657 lines). The merged selftest now plants
 # one break per group-kernel reason guard.
+# 337 -> 338 adds examples/mindc_mind/lang_conformance_gate.py, the language conformance gate: the corpus of
+# tests/lang_conformance against the verdicts the specification demands, its known-gap list as a ratchet, the
+# generated status table and its freshness check, and the planted self-test, all in one file.
 # history-lines: examples/mindc_mind/_selfhost_identity.py=657 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=726 examples/mindc_mind/native_lane_value_shapes_smoke.py=800
-HARNESS_CEILING = 337  # Exact reviewed integration inventory; no spare allowance.
+HARNESS_CEILING = 338  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

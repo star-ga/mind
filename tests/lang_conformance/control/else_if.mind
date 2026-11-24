@@ -1,0 +1,11 @@
+fn main() -> i64 {
+    let x = 1;
+    let y = if x > 2 {
+        3
+    } else if x > 1 {
+        2
+    } else {
+        1
+    };
+    return y;
+}

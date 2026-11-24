@@ -57,6 +57,7 @@ fixed_point_smoke	none	tool	Scoped Phase-6.5 bootstrap reproducer: requires a ha
 full_strtab_smoke	ci	gate	
 gap_corpus_smoke	ci	gate	
 general_float_netverify	ci	gate	
+lang_conformance_gate	ci	gate	Language conformance corpus (tests/lang_conformance): check, native build and run of every row against the verdict the specification demands; green only when the differences equal KNOWN_GAPS.tsv exactly; also refuses a stale docs/lang-conformance-status.md. Requires MINDC_BIN. --self-test is the planted red control.
 lockstep_lint	ci	gate	
 match_struct_smoke	ci	gate	
 method_callee_smoke	ci	gate	

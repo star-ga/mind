@@ -877,7 +877,8 @@ jobs:
     # 6.4 min; every step runs after an early red). 2*1022+4716 = 6760s (113 min). The
     # twin-emitter mic@3 fuzzer step stopped at its sanity check there; its own
     # 25 min step limit binds once it fuzzes (nested debug `cargo test` build of the
-    # dump_ref oracle): 113 + 25 = 138 min. Slow-runner rule (see build_test): 3.5 x 47.67 min.
+    # dump_ref oracle): 113 + 25 = 138 min. The language conformance corpus gate adds about 1 min (40 s for its
+    # rows and 20 s for its self-test on a 4-worker host): 139 min. Slow-runner rule (see build_test): 3.5 x 47.67 min.
     timeout-minutes: 170
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
@@ -1219,6 +1220,17 @@ jobs:
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
           MINDC=${{ github.workspace }}/target/release/mindc \
             python3 scripts/run_gate.py --min-asserted 194 examples/mindc_mind/gap_corpus_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Language conformance corpus gate (lang_conformance_gate.py)
+        if: ${{ !cancelled() }}
+        # Measured floor: one verdict per row of tests/lang_conformance/ROWS.tsv. Green only when the
+        # rows that differ from the verdict the specification demands equal KNOWN_GAPS.tsv exactly.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 296 --timeout 3600 examples/mindc_mind/lang_conformance_gate.py
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 84 examples/mindc_mind/lang_conformance_gate.py --self-test
         working-directory: ${{ github.workspace }}
 
       - name: Self-host LOOP gate — MIND compiles MIND, Rust+LLVM out (self_host_loop_smoke.py)

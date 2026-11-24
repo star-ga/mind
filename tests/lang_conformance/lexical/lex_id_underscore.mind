@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let _x1_y2: i64 = 1;
+    return _x1_y2;
+}

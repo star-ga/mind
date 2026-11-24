@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let trait: i64 = 1;
+    return 0;
+}

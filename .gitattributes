@@ -20,3 +20,6 @@ examples/mindc_mind/native_dynamic_image_cases.tsv text eol=lf whitespace=-blank
 *.o    binary
 *.png  binary
 *.wasm binary
+
+# Line-ending probes of the language conformance corpus: their CR bytes are what they test.
+tests/lang_conformance/lexical/lex_ws_cr*.mind -text

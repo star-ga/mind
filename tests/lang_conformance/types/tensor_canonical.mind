@@ -1,0 +1,6 @@
+fn f(t: Tensor<f32, [2, 3]>) -> Tensor<f32, [2, 3]> {
+    return t;
+}
+fn main() -> i64 {
+    return 0;
+}

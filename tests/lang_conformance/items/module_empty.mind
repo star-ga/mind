@@ -1,0 +1,6 @@
+module m {
+}
+
+fn main() -> i64 {
+    0
+}

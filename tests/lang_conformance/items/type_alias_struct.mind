@@ -1,0 +1,13 @@
+struct P {
+    x: i64
+}
+
+type PP = P;
+
+fn get(p: PP) -> i64 {
+    p.x
+}
+
+fn main() -> i64 {
+    1
+}

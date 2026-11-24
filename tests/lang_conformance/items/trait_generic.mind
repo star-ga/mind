@@ -1,0 +1,7 @@
+trait Box<T> {
+    fn get() -> T;
+}
+
+fn main() -> i64 {
+    0
+}

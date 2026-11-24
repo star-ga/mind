@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3533 | **Est. tokens:** ~6,210,960
-**Generated:** 2026-11-24 11:21 UTC
+**Files:** 3834 | **Est. tokens:** ~6,251,660
+**Generated:** 2026-11-25 16:31 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~42,397 |
+| `./` | 35 | ~42,434 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~898 |
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 45 | ~130,894 |
+| `docs/` | 47 | ~141,309 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,044 |
 | `docs/compiler/` | 11 | ~30,424 |
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 361 | ~1,080,188 |
+| `examples/mindc_mind/` | 362 | ~1,092,237 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -140,7 +140,7 @@
 | `.github/workflows/` | 10 | ~23,560 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 36 | ~170,150 |
+| `scripts/` | 36 | ~170,228 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -266,6 +266,12 @@
 | `tests/fs_checked_listing/` | 13 | ~14,043 |
 | `tests/https_loopback/` | 22 | ~24,750 |
 | `tests/ir_verification/` | 2 | ~108 |
+| `tests/lang_conformance/` | 2 | ~12,329 |
+| `tests/lang_conformance/control/` | 38 | ~971 |
+| `tests/lang_conformance/expressions/` | 67 | ~1,386 |
+| `tests/lang_conformance/items/` | 49 | ~785 |
+| `tests/lang_conformance/lexical/` | 79 | ~1,258 |
+| `tests/lang_conformance/types/` | 63 | ~1,392 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindc_build_phase_a/` | 1 | ~1,173 |
 | `tests/mindcraft/` | 1 | ~408 |
@@ -333,7 +339,7 @@
 - `CONTRIBUTING.md` (~2289 tok, huge) — Contributing to MIND
 - `deny.toml` (~131 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
-- `.gitattributes` (~191 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
+- `.gitattributes` (~228 tok, medium) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
 - `.gitignore` (~8460 tok, huge) — # Rust
 - `incompatible` (~0 tok, tiny)
@@ -581,6 +587,8 @@
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1946 tok, huge) — IR stability contract
+- `lang-conformance.md` (~4797 tok, huge) — Language conformance corpus
+- `lang-conformance-status.md` (~5618 tok, huge) — Language conformance status
 - `MHS_ROADMAP.md` (~2657 tok, huge) — MHS / Governed Device I/O Roadmap — SUPERSEDED
 - `mic3-v04-draft.md` (~1928 tok, huge) — MIC3 `0x04` core codec — implementation draft
 - `migration-roadmap.md` (~1896 tok, huge) — MIND Migration Roadmap — Any Language → Pure Executing MIND
@@ -800,6 +808,7 @@
 - `h2b_exclusion_controls_check.py` (~4235 tok, huge) — H2b exclusion positive controls.
 - `h2b_fmt_identity_check.py` (~3861 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~1760 tok, huge) — Native intrinsic id table contract for main.mind (pure text analysis).
+- `lang_conformance_gate.py` (~11962 tok, huge) — Language conformance gate: the measured language status of this compiler.
 - `lockstep_lint.py` (~4258 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
 - `method_callee_smoke.py` (~1390 tok, large)
@@ -1116,7 +1125,7 @@
 - `sha256_hash_smoke.py` (~1290 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~9182 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~7512 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~7599 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~9497 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~2226 tok, huge) — Shared reader for the committed std/*.mind manifest.
@@ -2323,7 +2332,7 @@
 - `check_claims.py` (~9033 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1867 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
 - `check_gate_wiring_preflight.py` (~7817 tok, huge) — Preflight cargo-test parity checks extracted from check_gate_wiring.
-- `check_gate_wiring.py` (~9610 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9688 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~9316 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -3720,6 +3729,318 @@
 - `issue_263_use_path_import.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_usize_suffix_literal.rs` (~770 tok, large) — Copyright 2025 STARGA Inc.
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
+### `tests/lang_conformance/control/`
+
+- `block_arg.mind` (~25 tok, tiny) — fn f(x: i64) -> i64 {
+- `block_expr.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `block_expr_stmts.mind` (~23 tok, tiny) — fn main() -> i64 {
+- `block_tail.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `compound_mod.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `defer_body.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `else_if.mind` (~37 tok, tiny) — fn main() -> i64 {
+- `expr_stmt_semi.mind` (~20 tok, tiny) — fn f() -> i64 {
+- `final_expr_no_semi.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `for_literal_pat.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `if_expr.mind` (~29 tok, tiny) — fn main() -> i64 {
+- `let_infer.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `let_tuple_typed.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `let_typed.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `let_wild.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `match_binding.mind` (~25 tok, tiny) — fn main() -> i64 {
+- `match_block_arm.mind` (~37 tok, tiny) — fn main() -> i64 {
+- `match_e2301.mind` (~35 tok, tiny) — fn main() -> i64 {
+- `match_enum_multi_payload.mind` (~54 tok, small) — fn main() -> i64 {
+- `match_enum_payload.mind` (~52 tok, small) — fn main() -> i64 {
+- `match_enum_unit.mind` (~54 tok, small) — fn main() -> i64 {
+- `match_int_literal.mind` (~29 tok, tiny) — fn main() -> i64 {
+- `match_nested_tuple.mind` (~31 tok, tiny) — fn main() -> i64 {
+- `match_payload_wild.mind` (~39 tok, tiny) — fn main() -> i64 {
+- `match_struct.mind` (~43 tok, tiny) — fn sum(p: P) -> i64 {
+- `match_tuple.mind` (~28 tok, tiny) — fn main() -> i64 {
+- `match_wildcard.mind` (~24 tok, tiny) — fn main() -> i64 {
+- `neg_expr_no_semi.mind` (~19 tok, tiny) — fn f() -> i64 {
+- `neg_for_no_in.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `neg_if_no_block.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `neg_let_literal_pat.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `neg_let_no_init.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `neg_let_struct_pat.mind` (~30 tok, tiny) — fn get(p: P) -> i64 {
+- `neg_match_missing_comma.mind` (~28 tok, tiny) — fn main() -> i64 {
+- `neg_while_no_block.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `return_bare.mind` (~17 tok, tiny) — fn f() {
+- `return_early.mind` (~30 tok, tiny) — fn f(x: i64) -> i64 {
+- `return_value.mind` (~19 tok, tiny) — fn f() -> i64 {
+### `tests/lang_conformance/expressions/`
+
+- `array_card_mismatch.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `array_empty.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `array_slice_range.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `array_slice_step.mind` (~27 tok, tiny) — fn f(t: Tensor<f64, [4]>) -> Tensor<f64, [2]> {
+- `assoc_div.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `assoc_shift.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `assoc_sub.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `bit_and.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `bit_or.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `bit_xor.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `bool_true.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `char_literal.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `cmp_eq.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `cmp_ge.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `cmp_gt.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `cmp_le.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `cmp_lt.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `cmp_ne.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `compound_bitshift.mind` (~24 tok, tiny) — fn main() -> i64 {
+- `compound_logic.mind` (~24 tok, tiny) — fn main() -> i64 {
+- `compound_mixed.mind` (~23 tok, tiny) — fn main() -> i64 {
+- `ew_add.mind` (~32 tok, tiny) — fn f(a: Tensor<f64, [2]>, b: Tensor<f64, [2]>) -> Tensor<f64, [2]> {
+- `ew_mul.mind` (~32 tok, tiny) — fn f(a: Tensor<f64, [2]>, b: Tensor<f64, [2]>) -> Tensor<f64, [2]> {
+- `ew_sub.mind` (~32 tok, tiny) — fn f(a: Tensor<f64, [2]>, b: Tensor<f64, [2]>) -> Tensor<f64, [2]> {
+- `field_access.mind` (~25 tok, tiny) — fn get(p: P) -> i64 {
+- `float_plus.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `grouping.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `int_bad_empty_hex.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `int_dec.mind` (~9 tok, tiny) — fn main() -> i64 {
+- `int_neg.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `int_suffix_i64.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `int_underscore.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `lambda_expr.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `logic_and.mind` (~23 tok, tiny) — fn main() -> i64 {
+- `logic_or.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `nan_ne.mind` (~32 tok, tiny) — fn main() -> i64 {
+- `negzero_eq.mind` (~31 tok, tiny) — fn main() -> i64 {
+- `op_add.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `op_div.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `op_float_mod.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `op_mod.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `op_mul.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `op_sub.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `op_unary_neg.mind` (~26 tok, tiny) — fn main() -> i64 {
+- `op_unary_not.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `prec_bit_over_add.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `prec_cmp_over_add.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `prec_logical.mind` (~23 tok, tiny) — fn main() -> i64 {
+- `prec_mul_over_add.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `prec_mul_over_bit.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `prec_shift_bit.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `prec_shift_over_sub.mind` (~23 tok, tiny) — fn main() -> i64 {
+- `shift_left.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `shift_right.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `slice_ref.mind` (~22 tok, tiny) — fn first(xs: &[i64]) -> i64 {
+- `str_esc_bs.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `str_esc_n.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `str_esc_quote.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `str_esc_r.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `str_esc_t.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `tensor_ctor_dtype.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `tensor_index.mind` (~23 tok, tiny) — fn f(t: Tensor<f64, [4]>) -> f64 {
+- `tensor_slice_colon.mind` (~26 tok, tiny) — fn f(t: Tensor<f64, [4]>) -> Tensor<f64, [2]> {
+- `try_op.mind` (~28 tok, tiny) — fn f() -> Option<i64> {
+- `tuple_index.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `tuple_pair.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `tuple_single.mind` (~16 tok, tiny) — fn main() -> i64 {
+### `tests/lang_conformance/items/`
+
+- `attr_arg_expr.mind` (~18 tok, tiny) — fn foo() -> i64 {
+- `const_expression.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `const_missing_init.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `const_no_semi.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `const_typed.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `const_untyped.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `enum_empty.mind` (~10 tok, tiny) — fn main() -> i64 {
+- `enum_empty_payload.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `enum_generic.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `enum_payload.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `enum_payload_trailing_comma.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `enum_trailing_comma.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `enum_unit.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `export_fn.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `export_struct.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `fn_basic.mind` (~20 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
+- `fn_function_type_param.mind` (~18 tok, tiny) — fn apply(f: (i64) -> i64) -> i64 {
+- `fn_function_type_return.mind` (~18 tok, tiny) — fn make() -> (i64) -> i64 {
+- `fn_keyword_ident.mind` (~14 tok, tiny) — fn fn() -> i64 {
+- `fn_missing_param_type.mind` (~14 tok, tiny) — fn f(a) -> i64 {
+- `fn_noparams.mind` (~17 tok, tiny) — fn answer() -> i64 {
+- `fn_noreturn.mind` (~14 tok, tiny) — fn noop() {
+- `fn_trailing_param_comma.mind` (~21 tok, tiny) — fn add(a: i64, b: i64,) -> i64 {
+- `import_coloncolon.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `import_trailing_dot.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `module_block.mind` (~23 tok, tiny) — module m {
+- `module_empty.mind` (~11 tok, tiny) — module m {
+- `module_with_import.mind` (~16 tok, tiny) — module m {
+- `struct_basic.mind` (~26 tok, tiny) — fn get(p: Point) -> i64 {
+- `struct_empty.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `struct_generic.mind` (~28 tok, tiny) — fn first(p: Pair<i64>) -> i64 {
+- `struct_missing_field_type.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `struct_no_braces.mind` (~10 tok, tiny) — fn main() -> i64 {
+- `struct_trailing_comma.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `trait_empty.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `trait_generic.mind` (~16 tok, tiny) —     fn get() -> T;
+- `trait_method_body.mind` (~23 tok, tiny) —     fn area(x: i64) -> i64 {
+- `trait_multi.mind` (~22 tok, tiny) —     fn area() -> i64;
+- `trait_signature.mind` (~18 tok, tiny) —     fn area(x: i64) -> i64;
+- `trait_signature_no_semi.mind` (~20 tok, tiny) —     fn area(x: i64) -> i64
+- `trait_supertrait.mind` (~24 tok, tiny) —     fn a() -> i64;
+- `trait_supertrait_multi.mind` (~33 tok, tiny) —     fn a() -> i64;
+- `type_alias.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `type_alias_missing_rhs.mind` (~10 tok, tiny) — fn main() -> i64 {
+- `type_alias_no_semi.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `type_alias_struct.mind` (~25 tok, tiny) — fn get(p: PP) -> i64 {
+- `type_alias_tuple.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `use_dot.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `use_no_semi.mind` (~10 tok, tiny) — fn main() -> i64 {
+### `tests/lang_conformance/`
+
+- `KNOWN_GAPS.tsv` (~2512 tok, huge) — # Rows where the compiler of this tree differs from the expected verdict (see do
+### `tests/lang_conformance/lexical/`
+
+- `err_E1001_utf8.mind` (binary, 54 bytes)
+- `err_E2001_type.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `err_E2002_unknown.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `err_E2004_dtype.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `err_E2007_arity.mind` (~23 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
+- `err_E2026_struct.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `err_E2036_narrow.mind` (~29 tok, tiny) — fn f(s: S) -> i64 {
+- `err_E2037_fnval.mind` (~25 tok, tiny) — fn helper(x: i64) -> i64 {
+- `err_E2300_mut.mind` (~45 tok, tiny) — fn take(xs: array<i64>) -> i64 {
+- `err_E2301_variant.mind` (~42 tok, tiny) — fn classify(c: Color) -> i64 {
+- `err_log_of_int.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_block_comment.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_block_comment_unterminated.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `lex_bom.mind` (~10 tok, tiny)
+- `lex_bool_false.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_bool_true.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_float_exp_empty.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_float_exp_no_dot.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_float_leading_dot.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_float_trailing_dot.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_float_two_dots.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_id_ascii.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `lex_id_dollar.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_id_start_digit.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_id_underscore.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `lex_id_unicode_alpha.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_id_unicode_continue.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_binary.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_binary_us.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `lex_int_bin_bad_digit.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_dec.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_double_underscore.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_empty_binary.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_int_hex_bad_digit.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_hex_lower.mind` (~29 tok, tiny) — fn main() -> i64 {
+- `lex_int_hex.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_hex_upper_prefix.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_leading_zero.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_octal.mind` (~26 tok, tiny) — fn main() -> i64 {
+- `lex_int_oct_bad_digit.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_int_sign_neg.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_int_sign_pos.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_int_underscore.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `lex_kw_defer.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_else.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_export.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_fn.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_kw_for.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_if.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_kw_import.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_let.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_match.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_return.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_struct.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_trait.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_type.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_where.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_kw_while.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_line_comment.mind` (~19 tok, tiny) — leading comment
+- `lex_string_basic.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_string_invalid_escape.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_string_null.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_string_raw_newline.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_string_unicode_escape.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `lex_string_unterminated.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_utf8_comment.mind` (~12 tok, tiny) — café α
+- `lex_utf8_string.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `lex_ws_blank_lines.mind` (~10 tok, tiny) — fn main() -> i64 {
+- `lex_ws_crlf.mind` (~10 tok, tiny) — fn main() -> i64 {
+- `lex_ws_cr_only.mind` (~9 tok, tiny) — fn main() -> i64 {    return 0;}
+- `lex_ws_many_spaces.mind` (~18 tok, tiny) — fn main()    ->   i64 {
+- `lex_ws_tabs.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `std_core.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `std_io_import.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `std_map.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `std_math.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `std_string.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `std_tensor.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `std_vec.mind` (~13 tok, tiny) — fn main() -> i64 {
+### `tests/lang_conformance/`
+
+- `ROWS.tsv` (~9817 tok, huge) — # One row per program; see docs/lang-conformance.md for the columns.
+### `tests/lang_conformance/types/`
+
+- `array_f64.mind` (~29 tok, tiny) — fn main() -> i64 {
+- `array_i64.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `array_if_branch.mind` (~30 tok, tiny) — fn main() -> i64 {
+- `array_index.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `array_nested_ok.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `array_type_alias.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `cast_bool_i64.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `cast_f64_i64.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `cast_i64_i32.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `c_cast_i64_f64_inner.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `c_f64_inner.mind` (~18 tok, tiny) — fn g() -> f64 {
+- `c_infer_float_inner.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `c_narrow_let.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `const_array_ok.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `dyn_array.mind` (~34 tok, tiny) — fn take(xs: &[i64]) -> i64 {
+- `gap_generic_alias.mind` (~13 tok, tiny) — fn main() -> i64 {
+- `neg_array_card_high.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `neg_array_card_low.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `neg_array_card_paren.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `neg_array_elem_float.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `neg_array_loop_card.mind` (~25 tok, tiny) — fn main() -> i64 {
+- `neg_array_nested_inner.mind` (~21 tok, tiny) — fn main() -> i64 {
+- `neg_const_array_card.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `neg_infer_conflict.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `neg_option_bad_payload.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `neg_option_two_args.mind` (~19 tok, tiny) — fn main() -> i64 {
+- `neg_result_one_arg.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `neg_slice_cap_erase.mind` (~29 tok, tiny) — fn bad(xs: &[i64]) -> i64 {
+- `neg_slice_explicit_local.mind` (~26 tok, tiny) — fn f(ys: &[i64]) -> i64 {
+- `neg_slice_readonly_mutate.mind` (~26 tok, tiny) — fn f(xs: &[i64]) -> i64 {
+- `neg_slice_scalar_arg.mind` (~22 tok, tiny) — fn take(xs: &[i64]) -> i64 {
+- `neg_slice_wrong_elem.mind` (~35 tok, tiny) — fn take(xs: &[i64]) -> i64 {
+- `neg_struct_to_scalar.mind` (~31 tok, tiny) — fn f(q: P) -> i64 {
+- `neg_tensor_add_broadcast_bad.mind` (~34 tok, tiny) — fn f(a: Tensor<f32, [2, 3]>, b: Tensor<f32, [2, 4]>) -> Tensor<f32, [2, 3]> {
+- `neg_tensor_add_dtype_mismatch.mind` (~31 tok, tiny) — fn f(a: Tensor<f32, [2]>, b: Tensor<f64, [2]>) -> Tensor<f32, [2]> {
+- `neg_tensor_add_result.mind` (~31 tok, tiny) — fn f(a: Tensor<f32, [2]>, b: Tensor<f32, [2]>) -> Tensor<f32, [3]> {
+- `neg_tensor_matmul_rank1.mind` (~33 tok, tiny) — fn f(a: Tensor<f32, [3]>, b: Tensor<f32, [3]>) -> Tensor<f32, [3]> {
+- `neg_tensor_negative_dim.mind` (~22 tok, tiny) — fn f(a: Tensor<f32, [-1]>) -> i64 {
+- `neg_tensor_zero_dim.mind` (~22 tok, tiny) — fn f(t: Tensor<f32, [0]>) -> i64 {
+- `neg_tuple_arity.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `neg_tuple_elem_type.mind` (~18 tok, tiny) — fn main() -> i64 {
+- `option_none.mind` (~20 tok, tiny) — fn main() -> i64 {
+- `option_some.mind` (~31 tok, tiny) — fn main() -> i64 {
+- `prim_bool.mind` (~24 tok, tiny) — fn main() -> i64 {
+- `prim_f32.mind` (~15 tok, tiny) — fn main() -> i64 {
+- `prim_i16_ext.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `prim_i32.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `prim_i8_ext.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `prim_u16_ext.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `prim_u8_ext.mind` (~14 tok, tiny) — fn main() -> i64 {
+- `prim_unit_empty_fn.mind` (~14 tok, tiny) — fn f() -> unit {
+- `result_err.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `result_ok.mind` (~32 tok, tiny) — fn main() -> i64 {
+- `slice_mut.mind` (~52 tok, small) — fn mutate(xs: &mut [i64]) -> i64 {
+- `slice_read_literal.mind` (~28 tok, tiny) — fn inspect(xs: &[i64]) -> i64 {
+- `slice_return.mind` (~27 tok, tiny) — fn identity(xs: &[i64]) -> &[i64] {
+- `tensor_canonical.mind` (~27 tok, tiny) — fn f(t: Tensor<f32, [2, 3]>) -> Tensor<f32, [2, 3]> {
+- `tensor_dtype_i64.mind` (~25 tok, tiny) — fn f(a: Tensor<i64, [2]>) -> Tensor<i64, [2]> {
+- `tensor_rank0_canon.mind` (~25 tok, tiny) — fn f(a: Tensor<f32, []>) -> Tensor<f32, []> {
+- `tuple_destructure.mind` (~16 tok, tiny) — fn main() -> i64 {
+- `tuple_return.mind` (~20 tok, tiny) — fn f() -> (i64, i64) {
+- `tuple_type.mind` (~20 tok, tiny) — fn f(t: (i64, f64)) -> i64 {
+- `unit_param.mind` (~19 tok, tiny) — fn f(x: unit) -> i64 {
 ### `tests/lexical/`
 
 - `invalid_keywords_as_identifiers.mind` (~45 tok, tiny) — Lexical test: Keywords cannot be used as identifiers

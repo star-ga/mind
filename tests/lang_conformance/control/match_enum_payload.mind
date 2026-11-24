@@ -1,0 +1,13 @@
+enum Shape {
+    Circle(i64),
+    Square(i64)
+}
+
+fn main() -> i64 {
+    let s = Shape::Circle(3);
+    let y = match s {
+        Shape::Circle(r) => r,
+        Shape::Square(a) => a,
+    };
+    return y;
+}

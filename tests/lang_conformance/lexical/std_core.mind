@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    assert(true);
+    return 0;
+}

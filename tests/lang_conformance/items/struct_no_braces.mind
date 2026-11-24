@@ -1,0 +1,5 @@
+struct S;
+
+fn main() -> i64 {
+    0
+}

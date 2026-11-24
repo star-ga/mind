@@ -1,0 +1,298 @@
+# One row per program; see docs/lang-conformance.md for the columns.
+id	check	build	exit	stdout	code	spec	construct
+control/block_arg	accept	accept	5		-	grammar-syntax.ebnf:199 BlockExpression	block expression as call argument
+control/block_expr	accept	accept	2		-	grammar-syntax.ebnf:199 BlockExpression = Block	block expression with one expression
+control/block_expr_stmts	accept	accept	2		-	grammar-syntax.ebnf:104 Block {Statement} [Expression]	block expression with statements
+control/block_tail	accept	accept	2		-	grammar-syntax.ebnf:104 Block {Statement} [Expression]	block with statements as function tail
+control/compound_mod	reject	reject	-	-	-	grammar-syntax.ebnf:134 AssignmentOperator (no %=)	compound assignment %= (not listed)
+control/defer_body	accept	accept	0		-	grammar-syntax.ebnf:128 + 104 (Block may hold statements)	defer with a body statement
+control/else_if	accept	accept	1		-	grammar-syntax.ebnf:201 (else IfExpression)	else if chain
+control/expr_stmt_semi	accept	accept	0		-	grammar-syntax.ebnf:124 ExpressionStatement	expression statement with semicolon
+control/final_expr_no_semi	accept	accept	2		-	grammar-syntax.ebnf:104 [Expression] (final expression)	final expression without semicolon
+control/for_literal_pat	reject	reject	-	-	-	grammar-syntax.ebnf:114-122 (Pattern excludes literals)	for with literal pattern (negative)
+control/if_expr	accept	accept	1		-	grammar-syntax.ebnf:201	if as expression value
+control/let_infer	accept	accept	1		-	grammar-syntax.ebnf:112 LetStatement	let, inferred type
+control/let_tuple_typed	accept	accept	3		-	grammar-syntax.ebnf:112 + 120 (Pattern [":" Type])	let with tuple pattern and type
+control/let_typed	accept	accept	1		-	grammar-syntax.ebnf:112 LetStatement [":" Type]	let with type
+control/let_wild	accept	accept	0		-	grammar-syntax.ebnf:122 WildcardPattern	let with wildcard pattern
+control/match_binding	accept	accept	8		-	grammar-syntax.ebnf:119 IdentifierPattern, 204 MatchArm; errors.md:276 (first-match semantics)	bare identifier binding pattern
+control/match_block_arm	accept	accept	3		-	grammar-syntax.ebnf:204 MatchArm (Pattern => Block)	match arm with a block body
+control/match_e2301	reject	reject	-	-	E2301	errors.md:268-279 E2301	bare binding colliding with enum variant (E2301)
+control/match_enum_multi_payload	accept	accept	7		-	types.md:279-281 (variant pattern spellings); grammar-syntax.ebnf:229-230	enum multi-field payload pattern
+control/match_enum_payload	accept	accept	3		-	types.md:279-281 (variant pattern spellings); grammar-syntax.ebnf:229	enum single-payload pattern
+control/match_enum_unit	accept	accept	20		-	grammar-syntax.ebnf:203-204 MatchExpression, 227-229 EnumDeclaration; types.md:279-281 (variant spellings)	enum unit-variant pattern
+control/match_int_literal	reject	reject	-	-	-	grammar-syntax.ebnf:114-122,204 (Pattern excludes literals)	match integer literal pattern
+control/match_nested_tuple	accept	accept	6		-	grammar-syntax.ebnf:120-121 (PatternList of Pattern)	nested tuple pattern
+control/match_payload_wild	accept	accept	1		-	grammar-syntax.ebnf:122 WildcardPattern, 203-204 MatchExpression; types.md:279-281 (variant pattern spellings)	enum payload wildcard pattern
+control/match_struct	reject	reject	-	-	-	grammar-syntax.ebnf:114-122 (no struct pattern)	struct pattern in a match arm (not in spec grammar)
+control/match_tuple	accept	accept	3		-	grammar-syntax.ebnf:120 TuplePattern	tuple pattern
+control/match_wildcard	accept	accept	5		-	grammar-syntax.ebnf:122 WildcardPattern; errors.md:276 (first-match semantics)	match with a wildcard arm
+control/neg_expr_no_semi	reject	reject	-	-	-	grammar-syntax.ebnf:124 (Expression ";")	non-final expression statement without semicolon (negative)
+control/neg_for_no_in	reject	reject	-	-	-	grammar-syntax.ebnf:208 ("in" required)	for without `in` (negative)
+control/neg_if_no_block	reject	reject	-	-	-	grammar-syntax.ebnf:201 (Block required)	if without block (negative)
+control/neg_let_literal_pat	reject	reject	-	-	-	grammar-syntax.ebnf:114-122 (Pattern is identifier/tuple/wildcard only)	let with literal pattern (negative)
+control/neg_let_no_init	reject	reject	-	-	-	grammar-syntax.ebnf:112 ("=" Expression required)	let without initializer (negative)
+control/neg_let_struct_pat	reject	reject	-	-	-	grammar-syntax.ebnf:114-122 (no struct pattern)	let with struct pattern (negative)
+control/neg_match_missing_comma	reject	reject	-	-	-	grammar-syntax.ebnf:204 (Expression "," / Block)	match arm without comma (negative)
+control/neg_while_no_block	reject	reject	-	-	-	grammar-syntax.ebnf:206 (Block required)	while without block (negative)
+control/return_bare	accept	accept	0		-	grammar-syntax.ebnf:126 [Expression] optional	bare return in unit function
+control/return_early	accept	accept	10		-	grammar-syntax.ebnf:126	early return from nested block
+control/return_value	accept	accept	3		-	grammar-syntax.ebnf:126 ReturnStatement	return with expression
+expressions/array_card_mismatch	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:67-79 (fixed-array literal cardinality)	array cardinality mismatch
+expressions/array_empty	accept	accept	1		-	grammar-syntax.ebnf:194-195 (ArrayExpression may be empty); types.md:69-70 (exactly n elements, here none)	empty array `[]`
+expressions/array_slice_range	reject	reject	-	-	E1005	errors.md:60-63 E1005 (malformed numeric literal); grammar-syntax.ebnf:163-168 (no range operator)	index range `a[1..3]`: `1..3` is a malformed numeric literal
+expressions/array_slice_step	accept	accept	1		-	grammar-syntax.ebnf:168 (SliceExpression step); language.md:221 (slice lowers to Slice); ir.md:237-238 (shape and dtype of Slice)	slice of a tensor with a step `t[0:4:2]`
+expressions/assoc_div	accept	accept	1		-	language.md:61 (same precedence left-to-right)	left associativity of `/`
+expressions/assoc_shift	accept	accept	1		-	grammar-syntax.ebnf:268 (all left-assoc)	left associativity of `>>`
+expressions/assoc_sub	accept	accept	1		-	language.md:129-134 (left-associative subtraction)	left associativity of `-`
+expressions/bit_and	accept	accept	1		-	grammar-syntax.ebnf:263 (BitwiseAnd)	bitwise `&`
+expressions/bit_or	accept	accept	1		-	grammar-syntax.ebnf:262 (BitwiseOr); language.md:44,46 (the bitwise level binds tighter than comparison)	bitwise `|`
+expressions/bit_xor	accept	accept	1		-	grammar-syntax.ebnf:264 (BitwiseXor)	bitwise `^`
+expressions/bool_true	accept	accept	1		-	grammar-lexical.ebnf:79 (BooleanLiteral)	boolean `true`
+expressions/char_literal	reject	reject	-	-	-	grammar-lexical.ebnf:47-51 (Literal has no character literal; `'` is no token)	character literal `'a'`
+expressions/cmp_eq	accept	accept	1		-	grammar-syntax.ebnf:140 (ComparisonExpression)	comparison `==`
+expressions/cmp_ge	accept	accept	1		-	grammar-syntax.ebnf:140 (ComparisonExpression)	comparison `>=`
+expressions/cmp_gt	accept	accept	1		-	grammar-syntax.ebnf:140 (ComparisonExpression)	comparison `>`
+expressions/cmp_le	accept	accept	1		-	grammar-syntax.ebnf:140 (ComparisonExpression)	comparison `<=`
+expressions/cmp_lt	accept	accept	1		-	grammar-syntax.ebnf:140 (ComparisonExpression)	comparison `<`
+expressions/cmp_ne	accept	accept	1		-	grammar-syntax.ebnf:140 (ComparisonExpression)	comparison `!=`
+expressions/compound_bitshift	accept	accept	1		-	language.md:43-46 (bitwise and shift chain)	bitwise+shift compound
+expressions/compound_logic	accept	accept	1		-	language.md:46-48 (comparison, logical AND, logical OR); grammar-syntax.ebnf:136-141	comparison+logical compound
+expressions/compound_mixed	accept	accept	1		-	language.md:60-63 (grouping and precedence)	mixed compound expression
+expressions/ew_add	accept	accept	1		-	language.md:45 (`.+`), 214-218 (tensor arithmetic: operands share a dtype, broadcast shape)	elementwise `.+` on two tensors
+expressions/ew_mul	accept	accept	1		-	language.md:43 (`.*`), 214-218 (tensor arithmetic: operands share a dtype, broadcast shape)	elementwise `.*` on two tensors
+expressions/ew_sub	accept	accept	1		-	language.md:45 (`.-`), 214-218 (tensor arithmetic: operands share a dtype, broadcast shape)	elementwise `.-` on two tensors
+expressions/field_access	accept	accept	7		-	grammar-syntax.ebnf:48-51 (StructDeclaration), 170 (FieldAccessOperator)	struct field access on a parameter
+expressions/float_plus	accept	accept	1		-	grammar-lexical.ebnf:68 (FloatingPointLiteral Sign `+`)	`+` sign on float literal
+expressions/grouping	accept	accept	1		-	grammar-syntax.ebnf:189 (ParenthesizedExpression)	parenthesized expression
+expressions/int_bad_empty_hex	reject	reject	-	-	E1005	errors.md:60-63 E1005 (invalid numeric literal); grammar-lexical.ebnf:60 (HexDigit required)	malformed bare `0x`
+expressions/int_dec	accept	accept	42		-	grammar-lexical.ebnf:57 DecimalInteger; lexical.md:66	decimal integer literal as the value of main
+expressions/int_neg	accept	accept	1		-	grammar-lexical.ebnf:55-56 (IntegerLiteral Sign)	negative integer literal
+expressions/int_suffix_i64	reject	reject	-	-	E1005	errors.md:60-63 E1005 (malformed numeric literal); grammar-lexical.ebnf:55-60 (no suffix)	integer suffix `1i64`
+expressions/int_underscore	accept	accept	-		-	grammar-lexical.ebnf:57 (DecimalDigit underscores)	underscore in decimal integer
+expressions/lambda_expr	accept	accept	3		-	grammar-syntax.ebnf:210 FunctionExpression; types.md:65 (function abstraction)	function expression / closure
+expressions/logic_and	accept	accept	1		-	grammar-syntax.ebnf:138 (LogicalAndExpression)	logical `&&`
+expressions/logic_or	accept	accept	1		-	grammar-syntax.ebnf:136 (LogicalOrExpression)	logical `||`
+expressions/nan_ne	accept	accept	1		-	language.md:165-172 (NaN != NaN is true); security.md:64 (IEEE floating point: zero divided by zero is NaN)	NaN `!=` semantics
+expressions/negzero_eq	accept	accept	1		-	language.md:165-172 (negative zero equals zero)	-0.0 == 0.0
+expressions/op_add	accept	accept	1		-	grammar-syntax.ebnf:143 (AdditiveExpression)	binary `+` on i64
+expressions/op_div	accept	accept	1		-	grammar-syntax.ebnf:146 (MultiplicativeExpression)	binary `/` on i64
+expressions/op_float_mod	accept	accept	1		-	language.md:43 (multiplicative `%`)	binary `%` on f64
+expressions/op_mod	accept	accept	1		-	grammar-syntax.ebnf:146 (MultiplicativeExpression)	binary `%` on i64
+expressions/op_mul	accept	accept	1		-	grammar-syntax.ebnf:146 (MultiplicativeExpression)	binary `*` on i64
+expressions/op_sub	accept	accept	1		-	grammar-syntax.ebnf:143 (AdditiveExpression)	binary `-` on i64
+expressions/op_unary_neg	accept	accept	1		-	grammar-syntax.ebnf:149-150 UnaryExpression, UnaryOperator; language.md:42 (negation)	unary `-` on a name
+expressions/op_unary_not	accept	accept	1		-	grammar-syntax.ebnf:149 (UnaryExpression)	unary `!` on bool
+expressions/prec_bit_over_add	accept	accept	1		-	language.md:52-56 (bitwise binds tighter than + and -)	precedence bitwise over `+`
+expressions/prec_cmp_over_add	accept	accept	1		-	language.md:45-46 (comparison below additive); grammar-syntax.ebnf:140,143	precedence comparison below additive
+expressions/prec_logical	accept	accept	1		-	language.md:47-48 (&& tighter than ||)	precedence `&&` over `||`
+expressions/prec_mul_over_add	accept	accept	1		-	language.md:60 (higher binds tighter)	precedence `*` over `+`
+expressions/prec_mul_over_bit	accept	accept	1		-	language.md:43-44 (`*` binds tighter than the bitwise level)	precedence `*` over bitwise
+expressions/prec_shift_bit	accept	accept	1		-	grammar-syntax.ebnf:268-270 (shift and bitwise same level, left-to-right)	shift/bitwise same-level left-to-right
+expressions/prec_shift_over_sub	accept	accept	1		-	language.md:52-56 (shift binds tighter than + and -)	precedence shift over `-`
+expressions/shift_left	accept	accept	1		-	grammar-syntax.ebnf:265 (ShiftLeft); language.md:44,46 (the shift level binds tighter than comparison)	shift `<<`
+expressions/shift_right	accept	accept	1		-	grammar-syntax.ebnf:266 (ShiftRight)	shift `>>`
+expressions/slice_ref	accept	accept	1		-	types.md:339-344 (`&[T]` slice parameter)	slice parameter `&[T]`
+expressions/str_esc_bs	accept	accept	1		-	grammar-lexical.ebnf:75 (EscapeSequence backslash)	escape `\\`
+expressions/str_esc_n	accept	accept	1		-	grammar-lexical.ebnf:75 (EscapeSequence n)	escape `\n`
+expressions/str_esc_quote	accept	accept	1		-	grammar-lexical.ebnf:75 (EscapeSequence double quote)	escape `\"`
+expressions/str_esc_r	accept	accept	1		-	grammar-lexical.ebnf:75 (EscapeSequence r)	escape `\r`
+expressions/str_esc_t	accept	accept	1		-	grammar-lexical.ebnf:75 (EscapeSequence t)	escape `\t`
+expressions/tensor_ctor_dtype	accept	accept	1		-	grammar-syntax.ebnf:197 (TensorConstructor dtype argument); language.md:30 (dtype annotation, a scalar literal), 245-246 (ConstTensor with dtype and shape); types.md:243-244 (a scalar has the empty shape)	tensor constructor with dtype
+expressions/tensor_index	accept	accept	1		-	grammar-syntax.ebnf:163 (IndexOperator); language.md:221 (index lowers to Index); ir.md:226-227 (scalar result, input dtype)	tensor indexing `t[0]`
+expressions/tensor_slice_colon	accept	accept	1		-	grammar-syntax.ebnf:168 (SliceExpression `:`); language.md:221 (slice lowers to Slice); ir.md:237-238 (shape and dtype of Slice); stdlib.md:325-327 (default step one)	tensor slice `t[1:3]`
+expressions/try_op	reject	reject	-	-	-	grammar-syntax.ebnf:154-158 (PostfixOperator has no `?`)	error propagation `?`
+expressions/tuple_index	reject	reject	-	-	-	grammar-syntax.ebnf:170 (FieldAccessOperator requires an Identifier, a digit is not one)	tuple index `.1`
+expressions/tuple_pair	accept	accept	1		-	grammar-syntax.ebnf:191 (TupleExpression)	tuple `(1, 2)`
+expressions/tuple_single	accept	accept	1		-	grammar-syntax.ebnf:191 (TupleExpression comma required)	single-element tuple `(1,)`
+items/attr_arg_expr	reject	reject	-	-	-	grammar-syntax.ebnf:239-241 (AttributeArg = Identifier / Literal)	Attribute argument that is an expression `[name(a + b)]`
+items/const_expression	accept	accept	7		-	grammar-syntax.ebnf:224 ("=" Expression)	Constant initialised by an expression
+items/const_missing_init	reject	reject	-	-	-	grammar-syntax.ebnf:224 ("=" Expression)	Constant with no initialiser
+items/const_no_semi	accept	accept	5		-	grammar-syntax.ebnf:224 ([ ";" ] optional)	Typed constant without `;`
+items/const_typed	accept	accept	5		-	grammar-syntax.ebnf:224 (ConstDeclaration)	Typed module constant with `;`
+items/const_untyped	accept	accept	5		-	grammar-syntax.ebnf:224 ([ ":" Type ])	Untyped module constant
+items/enum_empty	accept	accept	0		-	grammar-syntax.ebnf:227 ([ EnumVariantList ])	Enum with an empty variant list
+items/enum_empty_payload	accept	accept	0		-	grammar-syntax.ebnf:229 ([ "(" [ EnumPayloadList ] ")" ])	Enum variant with empty payload `A()`
+items/enum_generic	accept	accept	0		-	grammar-syntax.ebnf:227 ([ TypeParameters ])	Generic enum `enum E<T>`
+items/enum_payload	accept	accept	0		-	grammar-syntax.ebnf:229-230 (EnumVariant, EnumPayloadList)	Enum with payload variants (one and several fields)
+items/enum_payload_trailing_comma	reject	reject	-	-	-	grammar-syntax.ebnf:230 (EnumPayloadList has no optional trailing comma)	Trailing comma in an enum payload list
+items/enum_trailing_comma	accept	accept	0		-	grammar-syntax.ebnf:228 ([ "," ])	Trailing comma in an enum variant list
+items/enum_unit	accept	accept	0		-	grammar-syntax.ebnf:227-229 (EnumDeclaration, EnumVariantList, EnumVariant)	Enum with unit variants
+items/export_fn	reject	reject	-	-	-	grammar-syntax.ebnf:61 (ExportDeclaration = "export" Identifier ";")	`export fn ...` form
+items/export_struct	accept	accept	0		-	grammar-syntax.ebnf:61 (Identifier)	`export` of a struct name
+items/fn_basic	accept	accept	3		-	grammar-syntax.ebnf:33-36 (FunctionDeclaration, ParameterList, Parameter); language.md:26	Function declaration with parameters and return type
+items/fn_function_type_param	accept	accept	0		-	grammar-syntax.ebnf:95 FunctionType; types.md:30 (function types)	Function type in a parameter position
+items/fn_function_type_return	accept	accept	0		-	grammar-syntax.ebnf:95 FunctionType; types.md:30 (function types)	Function type in a return position
+items/fn_keyword_ident	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-44	Reserved keyword `fn` used as a function name
+items/fn_missing_param_type	reject	reject	-	-	-	grammar-syntax.ebnf:36 (Parameter = Identifier ":" Type)	Parameter without a type annotation
+items/fn_noparams	accept	accept	42		-	grammar-syntax.ebnf:33 ([ParameterList]); :35	Function with empty parameter list
+items/fn_noreturn	accept	accept	0		-	grammar-syntax.ebnf:33 ([ "->" Type ]); :82	Function with no return type (unit)
+items/fn_trailing_param_comma	accept	accept	3		-	grammar-syntax.ebnf:35 ([ "," ])	Trailing comma in parameter list
+items/import_coloncolon	reject	reject	-	-	-	language.md:262-269 and grammar-syntax.ebnf:62-69 (normative correction to ".")	`import std::vec;` (old `::` form)
+items/import_trailing_dot	reject	reject	-	-	-	grammar-syntax.ebnf:69 (Identifier after ".")	Import path ending in `.`
+items/module_block	accept	accept	1		-	grammar-syntax.ebnf:233 ModuleBlock; types.md:318-322 (transparent inline module blocks)	Inline `module m { ... }` block
+items/module_empty	accept	accept	0		-	grammar-syntax.ebnf:233 ({ ModuleItem })	Empty module block
+items/module_with_import	accept	accept	0		-	grammar-syntax.ebnf:233 ModuleBlock; types.md:318-322 (transparent inline module blocks)	Module block containing an import
+items/struct_basic	accept	accept	1		-	grammar-syntax.ebnf:48-51 (StructDeclaration, FieldList, Field)	Struct declaration with typed fields, used as a parameter type
+items/struct_empty	accept	accept	0		-	grammar-syntax.ebnf:48 ([ FieldList ])	Struct with an empty field list
+items/struct_generic	accept	accept	1		-	grammar-syntax.ebnf:48 ([ TypeParameters ])	Generic struct `struct Pair<T>`
+items/struct_missing_field_type	reject	reject	-	-	-	grammar-syntax.ebnf:51 (Field = Identifier ":" Type)	Struct field without a type
+items/struct_no_braces	reject	reject	-	-	-	grammar-syntax.ebnf:48 ("{" [ FieldList ] "}")	Struct declaration without a body
+items/struct_trailing_comma	accept	accept	0		-	grammar-syntax.ebnf:50 ([ "," ])	Trailing comma in a struct field list
+items/trait_empty	accept	accept	0		-	grammar-syntax.ebnf:54 ({ TraitItem })	Trait with no items
+items/trait_generic	accept	accept	0		-	grammar-syntax.ebnf:54 ([ TypeParameters ])	Generic trait `trait Box<T>`
+items/trait_method_body	reject	reject	-	-	-	grammar-syntax.ebnf:56-57 (TraitItem = FunctionSignature only)	Trait method with a body
+items/trait_multi	reject	reject	-	-	-	grammar-syntax.ebnf:54,57	Trait with two method signatures, the second without `;`
+items/trait_signature	accept	accept	0		-	grammar-syntax.ebnf:54-57 (TraitDeclaration, FunctionSignature)	Trait method signature ending in `;`
+items/trait_signature_no_semi	reject	reject	-	-	-	grammar-syntax.ebnf:57 (FunctionSignature ends with ";")	Trait method signature without `;`
+items/trait_supertrait	accept	accept	0		-	grammar-syntax.ebnf:54 ([ ":" TraitBounds ])	Trait with a supertrait bound
+items/trait_supertrait_multi	accept	accept	0		-	grammar-syntax.ebnf:54 TraitDeclaration ([ ":" , TraitBounds ]), 44-45 TraitBounds	Trait with several supertrait bounds
+items/type_alias	accept	accept	3		-	grammar-syntax.ebnf:39 (TypeDeclaration)	Type alias to a primitive
+items/type_alias_missing_rhs	reject	reject	-	-	-	grammar-syntax.ebnf:39 ("=" Type)	Type alias with no right-hand type
+items/type_alias_no_semi	reject	reject	-	-	-	grammar-syntax.ebnf:39 (";")	Type alias without the required `;`
+items/type_alias_struct	accept	accept	1		-	grammar-syntax.ebnf:39,79 (IdentifierType)	Type alias to a struct type
+items/type_alias_tuple	accept	accept	0		-	grammar-syntax.ebnf:39,90	Type alias to a tuple type
+items/use_dot	accept	accept	0		-	grammar-syntax.ebnf:236 (UseDeclaration, a candidate addition); stdlib.md:501 (`use std.<name>`)	`use std.vec;`
+items/use_no_semi	accept	accept	0		-	grammar-syntax.ebnf:236 ([ ";" ] optional)	`use std.vec` without `;`
+lexical/err_E1001_utf8	reject	reject	-	-	E1001	errors.md:40-43 E1001	err_E1001_utf8
+lexical/err_E2001_type	reject	reject	-	-	E2001	errors.md:74-77 E2001; types.md:28 (bool)	a bool value bound to an i64 local (E2001)
+lexical/err_E2002_unknown	reject	reject	-	-	E2002	errors.md:79-120 E2002	err_E2002_unknown
+lexical/err_E2004_dtype	reject	reject	-	-	E2004	errors.md:127-130 E2004	an integer plus a float literal (E2004)
+lexical/err_E2007_arity	reject	reject	-	-	E2007	errors.md:142-145 E2007	err_E2007_arity
+lexical/err_E2026_struct	reject	reject	-	-	E2026	errors.md:147-157 E2026	err_E2026_struct
+lexical/err_E2036_narrow	reject	reject	-	-	E2036	errors.md:185-222 E2036	a string stored into a u8 array element (E2036)
+lexical/err_E2037_fnval	reject	reject	-	-	E2037	errors.md:224-247 E2037	err_E2037_fnval
+lexical/err_E2300_mut	reject	reject	-	-	E2300	errors.md:249-266 E2300; types.md:365-370	a push on an `array<i64>` parameter used as a call argument (E2300)
+lexical/err_E2301_variant	reject	reject	-	-	E2301	errors.md:268-279 E2301	bare enum variant name before the final arm, scrutinee is a parameter (E2301)
+lexical/err_log_of_int	reject	reject	-	-	-	errors.md:132-135 E2005 and 137-140 E2006 (both apply); stdlib.md:164 (log<T: Float>)	log of an integer (E2005 and E2006 both apply)
+lexical/lex_block_comment	accept	accept	0		-	lexical.md:79; grammar-lexical.ebnf:102 BlockComment	lex_block_comment
+lexical/lex_block_comment_unterminated	reject	reject	-	-	E1006	errors.md:65-68 E1006; lexical.md:79	lex_block_comment_unterminated
+lexical/lex_bom	accept	accept	0		-	lexical.md:29-30; grammar-lexical.ebnf:21,114 ByteOrderMark	lex_bom
+lexical/lex_bool_false	accept	accept	0		-	grammar-lexical.ebnf:79 BooleanLiteral; lexical.md:72	lex_bool_false
+lexical/lex_bool_true	accept	accept	0		-	grammar-lexical.ebnf:79 BooleanLiteral; lexical.md:72	lex_bool_true
+lexical/lex_float_exp_empty	reject	reject	-	-	E1005	errors.md:60-63 E1005; grammar-lexical.ebnf:70 (Exponent needs DecimalDigits)	lex_float_exp_empty
+lexical/lex_float_exp_no_dot	reject	reject	-	-	E1005	errors.md:60-63 E1005; grammar-lexical.ebnf:68 (FloatingPointLiteral needs `.`)	lex_float_exp_no_dot
+lexical/lex_float_leading_dot	reject	reject	-	-	-	grammar-lexical.ebnf:68 (DecimalDigits before `.`)	lex_float_leading_dot
+lexical/lex_float_trailing_dot	reject	reject	-	-	E1005	errors.md:60-63 E1005; grammar-lexical.ebnf:68 (DecimalDigits after `.`)	lex_float_trailing_dot
+lexical/lex_float_two_dots	reject	reject	-	-	E1005	errors.md:60-63 E1005 (the second catalog example)	lex_float_two_dots
+lexical/lex_id_ascii	accept	accept	1		-	lexical.md:49; grammar-lexical.ebnf:32-34 Identifier	lex_id_ascii
+lexical/lex_id_dollar	reject	reject	-	-	E1002	errors.md:45-48 E1002 (example `$`); lexical.md:49	lex_id_dollar
+lexical/lex_id_start_digit	reject	reject	-	-	E1005	errors.md:60-63 E1005; lexical.md:39,49 (an identifier starts with a letter or `_`)	lex_id_start_digit
+lexical/lex_id_underscore	accept	accept	1		-	lexical.md:49	lex_id_underscore
+lexical/lex_id_unicode_alpha	accept	accept	1		-	lexical.md:49 (XID_Start)	lex_id_unicode_alpha
+lexical/lex_id_unicode_continue	accept	accept	1		-	lexical.md:49 (XID_Continue)	lex_id_unicode_continue
+lexical/lex_int_bin_bad_digit	reject	reject	-	-	E1005	errors.md:60-63 E1005 (the first catalog example)	lex_int_bin_bad_digit
+lexical/lex_int_binary	accept	accept	10		-	grammar-lexical.ebnf:58 BinaryInteger; lexical.md:66-67	lex_int_binary
+lexical/lex_int_binary_us	accept	accept	-		-	grammar-lexical.ebnf:58 BinaryInteger (`_` allowed); lexical.md:66-67	lex_int_binary_us
+lexical/lex_int_dec	accept	accept	123		-	grammar-lexical.ebnf:57 DecimalInteger; lexical.md:66	lex_int_dec
+lexical/lex_int_double_underscore	accept	accept	-		-	grammar-lexical.ebnf:57 DecimalInteger (`_` allowed)	lex_int_double_underscore
+lexical/lex_int_empty_binary	reject	reject	-	-	E1005	errors.md:60-63 E1005 (invalid numeric literal); grammar-lexical.ebnf:58 (BinaryDigit required)	lex_int_empty_binary
+lexical/lex_int_hex	accept	accept	255		-	grammar-lexical.ebnf:60 HexInteger; lexical.md:66-67	lex_int_hex
+lexical/lex_int_hex_bad_digit	reject	reject	-	-	E1005	errors.md:60-63 E1005 (invalid numeric literal); grammar-lexical.ebnf:60	lex_int_hex_bad_digit
+lexical/lex_int_hex_lower	accept	accept	1		-	grammar-lexical.ebnf:60,65 HexInteger, HexDigit; lexical.md:66-67	lex_int_hex_lower
+lexical/lex_int_hex_upper_prefix	reject	reject	-	-	E1005	errors.md:60-63 E1005; grammar-lexical.ebnf:60 (HexInteger starts with a lower-case `x` prefix)	lex_int_hex_upper_prefix
+lexical/lex_int_leading_zero	accept	accept	7		-	grammar-lexical.ebnf:57 DecimalInteger; lexical.md:66	lex_int_leading_zero
+lexical/lex_int_oct_bad_digit	reject	reject	-	-	E1005	errors.md:60-63 E1005 (invalid numeric literal); grammar-lexical.ebnf:59	lex_int_oct_bad_digit
+lexical/lex_int_octal	accept	accept	1		-	grammar-lexical.ebnf:59 OctalInteger; lexical.md:66-67	lex_int_octal
+lexical/lex_int_sign_neg	accept	accept	251		-	grammar-lexical.ebnf:55-56 IntegerLiteral [Sign]; lexical.md:66	lex_int_sign_neg
+lexical/lex_int_sign_pos	accept	accept	5		-	grammar-lexical.ebnf:55-56 IntegerLiteral [Sign]; lexical.md:66	lex_int_sign_pos
+lexical/lex_int_underscore	accept	accept	-		-	grammar-lexical.ebnf:57 DecimalInteger (`_` allowed)	lex_int_underscore
+lexical/lex_kw_defer	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_defer
+lexical/lex_kw_else	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_else
+lexical/lex_kw_export	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_export
+lexical/lex_kw_fn	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_fn
+lexical/lex_kw_for	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_for
+lexical/lex_kw_if	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_if
+lexical/lex_kw_import	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_import
+lexical/lex_kw_let	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_let
+lexical/lex_kw_match	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_match
+lexical/lex_kw_return	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_return
+lexical/lex_kw_struct	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_struct
+lexical/lex_kw_trait	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_trait
+lexical/lex_kw_type	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_type
+lexical/lex_kw_where	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_where
+lexical/lex_kw_while	reject	reject	-	-	-	lexical.md:54-60 (keywords MAY NOT be used as identifiers); grammar-lexical.ebnf:41-43 Keyword	lex_kw_while
+lexical/lex_line_comment	accept	accept	0		-	lexical.md:78-79	lex_line_comment
+lexical/lex_string_basic	accept	accept	0		-	grammar-lexical.ebnf:73 StringLiteral; lexical.md:69	lex_string_basic
+lexical/lex_string_invalid_escape	reject	reject	-	-	E1004	errors.md:55-58 E1004 (example `\q`)	lex_string_invalid_escape
+lexical/lex_string_null	accept	accept	0		-	grammar-lexical.ebnf:75 EscapeSequence (the zero escape)	lex_string_null
+lexical/lex_string_raw_newline	reject	reject	-	-	E1003	errors.md:50-53 E1003 (closing quote missing before newline); grammar-lexical.ebnf:74	lex_string_raw_newline
+lexical/lex_string_unicode_escape	accept	accept	0		-	grammar-lexical.ebnf:76 UnicodeEscape	lex_string_unicode_escape
+lexical/lex_string_unterminated	reject	reject	-	-	E1003	errors.md:50-53 E1003 (closing quote missing before a newline)	lex_string_unterminated
+lexical/lex_utf8_comment	accept	accept	0		-	lexical.md:25	lex_utf8_comment
+lexical/lex_utf8_string	accept	accept	0		-	lexical.md:25	lex_utf8_string
+lexical/lex_ws_blank_lines	accept	accept	0		-	lexical.md:80-81	lex_ws_blank_lines
+lexical/lex_ws_cr_only	accept	accept	0		-	lexical.md:27-28; grammar-lexical.ebnf:110 CarriageReturn	lex_ws_cr_only
+lexical/lex_ws_crlf	accept	accept	0		-	lexical.md:27-28; grammar-lexical.ebnf:111 CarriageReturnLineFeed	lex_ws_crlf
+lexical/lex_ws_many_spaces	accept	accept	1		-	lexical.md:80	lex_ws_many_spaces
+lexical/lex_ws_tabs	accept	accept	1		-	lexical.md:80; grammar-lexical.ebnf:105-107 Whitespace, Tab	lex_ws_tabs
+lexical/std_core	accept	accept	0		-	stdlib.md:23 (no import needed), 59 (assert)	core `assert` without an import
+lexical/std_io_import	accept	accept	0		-	grammar-syntax.ebnf:60,69 ImportDeclaration, ImportPath; stdlib.md:499-501 (std/io.mind ships)	import of the std.io module
+lexical/std_map	accept	accept	0		-	stdlib.md:498-502,547 (std.map)	import of the std.map module
+lexical/std_math	accept	accept	3		-	stdlib.md:23 (no import needed), 136 (abs)	math `abs` without an import
+lexical/std_string	accept	accept	0		-	stdlib.md:498-502,529 (std.string)	import of the std.string module
+lexical/std_tensor	accept	accept	0		-	stdlib.md:23 (no import needed), 264-267 (zeros)	tensor `zeros` without an import
+lexical/std_vec	accept	accept	0		-	stdlib.md:499-502,507 (std.vec)	import of the std.vec module
+types/array_f64	accept	accept	-		-	types.md:29 (arrays [T; n]); grammar-syntax.ebnf:93 ArrayType, 194-195 ArrayExpression	array of f64
+types/array_i64	accept	accept	-		-	types.md:29 (arrays [T; n]); grammar-syntax.ebnf:93 ArrayType	fixed array [T; n] with exactly n elements
+types/array_if_branch	accept	accept	-		-	grammar-syntax.ebnf:201 IfExpression; types.md:29 (arrays [T; n]), 69-70	if expression with array literal branches as the initializer of [i64; 2]
+types/array_index	accept	accept	-		-	grammar-syntax.ebnf:163	indexing an array
+types/array_nested_ok	accept	accept	0		-	types.md:72-73 (each nested array literal satisfies its extent)	nested array literal satisfies each corresponding extent
+types/array_type_alias	accept	accept	-		-	grammar-syntax.ebnf:39	type alias to a fixed array
+types/c_cast_i64_f64_inner	accept	accept	0		-	grammar-syntax.ebnf:256-257 AsCast	postfix `as` cast to f64
+types/c_f64_inner	accept	accept	0		-	types.md:28 (primitive types); stdlib.md:49 (the floating-point types)	f64 is a listed primitive
+types/c_infer_float_inner	accept	accept	0		-	types.md:206-216	unannotated let infers a float
+types/c_narrow_let	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:226-229	a genuine implicit i64 to i32 assignment requires the narrowing diagnostic
+types/cast_bool_i64	accept	accept	-		-	grammar-syntax.ebnf:257 AsCast (the value of the cast is not defined)	postfix `as` cast from bool
+types/cast_f64_i64	accept	accept	-		-	grammar-syntax.ebnf:257 AsCast (the value of the cast is not defined)	postfix `as` cast to i64
+types/cast_i64_i32	accept	accept	-		-	grammar-syntax.ebnf:257 AsCast (the value of the cast is not defined); types.md:210 (a literal takes its expected type)	postfix `as` cast between integer widths
+types/const_array_ok	accept	accept	-		-	types.md:67-70; grammar-syntax.ebnf:224	const binding with matching cardinality
+types/dyn_array	accept	accept	0		-	types.md:339-341 (an `array<T>` value MAY be passed to `&[T]`)	`array<i64>` value passed to `&[i64]`
+types/gap_generic_alias	accept	accept	0		-	grammar-syntax.ebnf:39	type declarations may carry TypeParameters
+types/neg_array_card_high	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:67-79	a 5-element literal MUST NOT initialize [i64; 4]
+types/neg_array_card_low	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:67-79	a 3-element literal MUST NOT initialize [i64; 4]
+types/neg_array_card_paren	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:71-73	parentheses do not change literal cardinality
+types/neg_array_elem_float	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:29 (arrays [T; n]), 69-70	an array literal with float elements initializes [i64; 2]
+types/neg_array_loop_card	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:69-71	cardinality applies inside a while body
+types/neg_array_nested_inner	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:72-73	each nested array literal MUST satisfy its extent
+types/neg_const_array_card	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:67-79	const cardinality mismatch MUST be rejected
+types/neg_infer_conflict	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:206-216	inference failure MUST be diagnosed with conflicting types
+types/neg_option_bad_payload	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); stdlib.md:50-51	Option<i64> holds a T=i64 payload
+types/neg_option_two_args	reject	reject	-	-	-	stdlib.md:50-51	Option<T> takes exactly one type argument
+types/neg_result_one_arg	reject	reject	-	-	-	stdlib.md:53-54	Result<T,E> takes exactly two type arguments
+types/neg_slice_cap_erase	reject	reject	-	-	E2033	errors.md:171-183 E2033; types.md:358-363	capability erasure MUST produce E2033
+types/neg_slice_explicit_local	reject	reject	-	-	E2032	errors.md:159-169 E2032; types.md:350-352	an explicit slice-typed local binding MUST be refused with E2032
+types/neg_slice_readonly_mutate	reject	reject	-	-	E2033	errors.md:171-183 E2033; types.md:343-346	read-only slices do not permit indexed assignment (E2033)
+types/neg_slice_scalar_arg	reject	reject	-	-	E2032	errors.md:159-169 E2032; types.md:350-356	a scalar argument to &[T] MUST be refused with E2032
+types/neg_slice_wrong_elem	reject	reject	-	-	E2032	errors.md:159-169 E2032; types.md:350-356	an `array<f64>` parameter passed to `&[i64]` MUST be refused with E2032
+types/neg_struct_to_scalar	reject	reject	-	-	E2026	errors.md:147-157 E2026; types.md:226-229	a known struct binding replaced with a numeric scalar (E2026)
+types/neg_tensor_add_broadcast_bad	reject	reject	-	-	E3001	errors.md:285-288 E3001 (shapes incompatible for broadcasting); shapes.md:52-73	incompatible shapes MUST produce a shape error
+types/neg_tensor_add_dtype_mismatch	reject	reject	-	-	E2004	errors.md:127-130 E2004 (binary operands of different dtypes); grammar-syntax.ebnf:84 TensorType	operands MUST share a dtype
+types/neg_tensor_add_result	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); shapes.md:206-218 (the result shape of add is the broadcast shape); grammar-syntax.ebnf:84 TensorType	the result shape of add is [2], not the declared [3] (E2001)
+types/neg_tensor_matmul_rank1	reject	reject	-	-	E3002	errors.md:290-293 E3002 (operation requires specific ranks); shapes.md:262-282	matmul requires rank-2 or greater; rank 1 must be a shape error
+types/neg_tensor_negative_dim	reject	reject	-	-	E3006	errors.md:310-313 E3006 (a dimension that is not positive); shapes.md:32-45	a shape is a sequence of positive integers
+types/neg_tensor_zero_dim	reject	reject	-	-	E3006	errors.md:310-313 E3006 (a dimension that is not positive); shapes.md:32-45	the verifier rejects tensors with a zero extent
+types/neg_tuple_arity	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:29; grammar-syntax.ebnf:90	a (i64,i64) annotation requires a two-element tuple
+types/neg_tuple_elem_type	reject	reject	-	-	E2001	errors.md:74-77 E2001 (type mismatch); types.md:29; types.md:57-65	tuple element types must agree with the annotation
+types/option_none	accept	accept	-		-	stdlib.md:50-51,121-124	Option<T> None and unwrap_or
+types/option_some	accept	accept	-		-	stdlib.md:50-51 (Option, Some), 121 (is_some), 123 (unwrap)	Option<T> with Some(T)
+types/prim_bool	accept	accept	1		-	types.md:28 (bool); stdlib.md:47 (values true and false)	bool is a listed primitive, tested by an if
+types/prim_f32	accept	accept	0		-	grammar-syntax.ebnf:82; stdlib.md:49; types.md:210 (a literal takes its expected type)	f32 is a listed primitive
+types/prim_i16_ext	accept	accept	0		-	types.md:36 (MAY extend); errors.md:193-194 E2036 (names the narrow integer element types); types.md:210 (a literal takes its expected type)	i16 is a documented width extension up to 64 bits
+types/prim_i32	accept	accept	0		-	grammar-syntax.ebnf:82 PrimitiveType; stdlib.md:48 (the signed integer types); types.md:210 (a literal takes its expected type)	i32 is a listed primitive
+types/prim_i8_ext	accept	accept	0		-	types.md:36 (MAY extend); errors.md:193-194 E2036 (names the narrow integer element types); types.md:210 (a literal takes its expected type)	i8 is a documented width extension up to 64 bits
+types/prim_u16_ext	accept	accept	0		-	types.md:36 (MAY extend); errors.md:193-194 E2036 (names the narrow integer element types); types.md:210 (a literal takes its expected type)	u16 is a documented width extension up to 64 bits
+types/prim_u8_ext	accept	accept	0		-	types.md:36 (MAY extend); errors.md:193-194 E2036 (names the narrow integer element types); types.md:210 (a literal takes its expected type)	u8 is a documented width extension up to 64 bits
+types/prim_unit_empty_fn	accept	accept	1		-	stdlib.md:46; grammar-syntax.ebnf:82 (PrimitiveType includes unit)	unit function with no return expression
+types/result_err	accept	accept	-		-	stdlib.md:53-54,125-128	Result<T,E> with Err(E) and unwrap_or
+types/result_ok	accept	accept	-		-	stdlib.md:53-54,125-128	Result<T,E> with Ok(T)
+types/slice_mut	accept	accept	-		-	types.md:339-348,374-377 (`&mut [T]` takes an `array<T>` value or an array literal; `set`)	a mutable slice parameter accepts an `array<T>` value and an array literal
+types/slice_read_literal	accept	accept	-		-	types.md:339-344 (array literal to &[T], indexing)	array literal to a read-only slice parameter
+types/slice_return	accept	accept	-		-	types.md:339-344,360-361 (indexing, declared slice return)	a declared slice return may preserve a compatible slice capability
+types/tensor_canonical	accept	accept	0		-	grammar-syntax.ebnf:84-88	Tensor<dtype, [dims]> canonical annotation
+types/tensor_dtype_i64	accept	accept	0		-	grammar-syntax.ebnf:85 DType	i64 is a listed tensor dtype
+types/tensor_rank0_canon	accept	accept	0		-	grammar-syntax.ebnf:84-86 (TensorType with empty Shape); types.md:243-244 (a scalar has the empty shape)	rank-0 tensor type `Tensor<f32, []>`
+types/tuple_destructure	accept	accept	3		-	grammar-syntax.ebnf:114-121	tuple pattern binding
+types/tuple_return	accept	accept	0		-	types.md:29 (tuples); grammar-syntax.ebnf:90 TupleType	tuple return type
+types/tuple_type	accept	accept	1		-	types.md:29 (tuples); grammar-syntax.ebnf:90 TupleType	tuple type with elements of two types (parameter)
+types/unit_param	accept	accept	0		-	stdlib.md:46; grammar-syntax.ebnf:82	unit as a parameter type

@@ -1,0 +1,4 @@
+type Box<T> = T;
+fn main() -> i64 {
+    return 0;
+}

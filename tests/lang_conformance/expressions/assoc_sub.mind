@@ -1,0 +1,6 @@
+fn main() -> i64 {
+    if 10 - 3 - 2 == 5 {
+        return 1;
+    };
+    return 0;
+}

@@ -1,0 +1,9 @@
+struct S {
+    x: i64
+}
+
+export S;
+
+fn main() -> i64 {
+    0
+}

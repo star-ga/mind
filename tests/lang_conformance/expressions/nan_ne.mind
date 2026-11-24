@@ -1,0 +1,8 @@
+fn main() -> i64 {
+    let z: f64 = 0.0;
+    let nan: f64 = z / z;
+    if nan != nan {
+        return 1;
+    };
+    return 0;
+}

@@ -1,0 +1,13 @@
+enum S {
+    A(i64),
+    B
+}
+
+fn main() -> i64 {
+    let s = S::A(3);
+    let y = match s {
+        S::A(_) => 1,
+        S::B => 0,
+    };
+    return y;
+}

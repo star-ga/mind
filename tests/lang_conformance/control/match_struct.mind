@@ -1,0 +1,15 @@
+struct P {
+    x: i64,
+    y: i64
+}
+
+fn sum(p: P) -> i64 {
+    let y = match p {
+        P { x, y } => x + y,
+    };
+    return y;
+}
+
+fn main() -> i64 {
+    return 0;
+}

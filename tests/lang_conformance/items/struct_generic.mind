@@ -1,0 +1,12 @@
+struct Pair<T> {
+    a: T,
+    b: T
+}
+
+fn first(p: Pair<i64>) -> i64 {
+    p.a
+}
+
+fn main() -> i64 {
+    1
+}

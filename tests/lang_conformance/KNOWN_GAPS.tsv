@@ -1,0 +1,177 @@
+# Rows where the compiler of this tree differs from the expected verdict (see docs/lang-conformance.md).
+# The count may never grow: the gate compares it with every committed version of this file.
+id	class	key
+control/block_arg	native-only-gap	lane.source.set
+control/block_expr	native-only-gap	lane.source.set
+control/block_expr_stmts	conformance-gap	E1001
+control/block_tail	conformance-gap	E1001
+control/compound_mod	loose	check accepts
+control/defer_body	conformance-gap	E1001
+control/let_tuple_typed	conformance-gap	E1001
+control/match_binding	native-only-gap	lane.source.match
+control/match_block_arm	native-only-gap	lane.source.match
+control/match_enum_multi_payload	native-only-gap	lane.source.top_level
+control/match_enum_payload	native-only-gap	lane.source.top_level
+control/match_enum_unit	native-only-gap	lane.source.top_level
+control/match_int_literal	loose	check accepts
+control/match_nested_tuple	native-only-gap	lane.source.tuple
+control/match_payload_wild	native-only-gap	lane.source.top_level
+control/match_struct	loose	check accepts
+control/match_tuple	native-only-gap	lane.source.tuple
+control/match_wildcard	native-only-gap	lane.source.match
+control/neg_expr_no_semi	loose	check accepts
+control/neg_match_missing_comma	loose	check accepts
+control/return_bare	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+expressions/array_empty	native-only-gap	lane.source.array_element
+expressions/array_slice_range	loose	check accepts
+expressions/array_slice_step	conformance-gap	E1001
+expressions/char_literal	loose	check accepts
+expressions/ew_add	unkeyed-refusal	error[backend-native]: `ew_add.mind` is not in the frozen native profile (out-of
+expressions/ew_mul	unkeyed-refusal	error[backend-native]: `ew_mul.mind` is not in the frozen native profile (out-of
+expressions/ew_sub	unkeyed-refusal	error[backend-native]: `ew_sub.mind` is not in the frozen native profile (out-of
+expressions/field_access	native-only-gap	lane.type.named
+expressions/float_plus	conformance-gap	E1001
+expressions/int_bad_empty_hex	conformance-gap	E1001 for E1005
+expressions/int_suffix_i64	loose	check accepts
+expressions/lambda_expr	conformance-gap	E1001
+expressions/op_float_mod	native-only-gap	lane.type.mismatch
+expressions/slice_ref	native-only-gap	lane.type.slice
+expressions/str_esc_bs	native-only-gap	lane.source.string
+expressions/str_esc_n	native-only-gap	lane.source.string
+expressions/str_esc_quote	native-only-gap	lane.source.string
+expressions/str_esc_r	native-only-gap	lane.source.string
+expressions/str_esc_t	native-only-gap	lane.source.string
+expressions/tensor_ctor_dtype	conformance-gap	E1001
+expressions/tensor_index	native-only-gap	lane.type.tensor
+expressions/tensor_slice_colon	conformance-gap	E1001
+expressions/try_op	loose	check accepts
+expressions/tuple_index	loose	check accepts
+expressions/tuple_pair	native-only-gap	lane.source.tuple
+expressions/tuple_single	native-only-gap	lane.type.tuple
+items/const_expression	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+items/const_untyped	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+items/enum_empty	native-only-gap	lane.source.top_level
+items/enum_empty_payload	native-only-gap	lane.source.top_level
+items/enum_generic	conformance-gap	E1001
+items/enum_payload	native-only-gap	lane.source.top_level
+items/enum_payload_trailing_comma	loose	check accepts
+items/enum_trailing_comma	native-only-gap	lane.source.top_level
+items/enum_unit	native-only-gap	lane.source.top_level
+items/export_struct	native-only-gap	lane.source.top_level
+items/fn_function_type_param	conformance-gap	E1001
+items/fn_function_type_return	conformance-gap	E1001
+items/fn_keyword_ident	loose	check accepts
+items/module_block	native-only-gap	lane.source.top_level
+items/module_empty	native-only-gap	lane.source.top_level
+items/module_with_import	native-only-gap	lane.source.top_level
+items/struct_basic	native-only-gap	lane.type.named
+items/struct_empty	native-only-gap	lane.source.top_level
+items/struct_generic	conformance-gap	E1001
+items/struct_trailing_comma	native-only-gap	lane.source.top_level
+items/trait_empty	native-only-gap	lane.source.top_level
+items/trait_generic	conformance-gap	E1001
+items/trait_signature	conformance-gap	E1001
+items/trait_signature_no_semi	loose	check accepts
+items/trait_supertrait	conformance-gap	E1001
+items/trait_supertrait_multi	conformance-gap	E1001
+items/type_alias	native-only-gap	lane.source.top_level
+items/type_alias_no_semi	loose	check accepts
+items/type_alias_struct	unkeyed-refusal	error[backend-native]: `type_alias_struct.mind`: unsupported lowering operation
+items/type_alias_tuple	native-only-gap	lane.source.top_level
+items/use_no_semi	unkeyed-refusal	error[backend-native]: `use_no_semi.mind`: import item(s) ["use std.vec"] are no
+lexical/err_E1001_utf8	conformance-gap	check for E1001
+lexical/err_E2001_type	loose	check accepts
+lexical/err_E2004_dtype	conformance-gap	E2013 for E2004
+lexical/err_E2007_arity	conformance-gap	E2005 for E2007
+lexical/err_log_of_int	loose	check accepts
+lexical/lex_block_comment	conformance-gap	E1001
+lexical/lex_block_comment_unterminated	conformance-gap	E1001 for E1006
+lexical/lex_bom	conformance-gap	E1001
+lexical/lex_float_exp_empty	conformance-gap	E1001 for E1005
+lexical/lex_float_exp_no_dot	loose	check accepts
+lexical/lex_float_trailing_dot	conformance-gap	E1001 for E1005
+lexical/lex_float_two_dots	loose	check accepts
+lexical/lex_id_dollar	conformance-gap	E1001 for E1002
+lexical/lex_id_start_digit	conformance-gap	E1001 for E1005
+lexical/lex_id_unicode_alpha	conformance-gap	E1001
+lexical/lex_id_unicode_continue	conformance-gap	E1001
+lexical/lex_int_bin_bad_digit	conformance-gap	E1001 for E1005
+lexical/lex_int_binary	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+lexical/lex_int_binary_us	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+lexical/lex_int_double_underscore	conformance-gap	E2002
+lexical/lex_int_empty_binary	conformance-gap	E1001 for E1005
+lexical/lex_int_hex	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+lexical/lex_int_hex_bad_digit	conformance-gap	E1001 for E1005
+lexical/lex_int_hex_lower	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+lexical/lex_int_hex_upper_prefix	loose	check accepts
+lexical/lex_int_oct_bad_digit	conformance-gap	E1001 for E1005
+lexical/lex_int_octal	unkeyed-refusal	error[backend-native]: unsupported construct; use --backend=mlir
+lexical/lex_int_sign_pos	conformance-gap	E1001
+lexical/lex_kw_defer	loose	check accepts
+lexical/lex_kw_else	loose	check accepts
+lexical/lex_kw_export	loose	check accepts
+lexical/lex_kw_fn	loose	check accepts
+lexical/lex_kw_for	loose	check accepts
+lexical/lex_kw_if	loose	check accepts
+lexical/lex_kw_import	loose	check accepts
+lexical/lex_kw_let	loose	check accepts
+lexical/lex_kw_match	loose	check accepts
+lexical/lex_kw_return	loose	check accepts
+lexical/lex_kw_struct	loose	check accepts
+lexical/lex_kw_trait	loose	check accepts
+lexical/lex_kw_type	loose	check accepts
+lexical/lex_kw_where	loose	check accepts
+lexical/lex_kw_while	loose	check accepts
+lexical/lex_string_basic	native-only-gap	lane.source.string
+lexical/lex_string_invalid_escape	conformance-gap	E1001 for E1004
+lexical/lex_string_null	native-only-gap	lane.source.string
+lexical/lex_string_raw_newline	loose	check accepts
+lexical/lex_string_unicode_escape	conformance-gap	E1001
+lexical/lex_string_unterminated	conformance-gap	E1001 for E1003
+lexical/lex_utf8_string	native-only-gap	lane.source.string
+lexical/std_core	native-only-gap	lane.source.assert
+lexical/std_math	native-only-gap	lane.call.unknown
+lexical/std_tensor	conformance-gap	E2003
+types/array_f64	native-only-gap	lane.source.array_element
+types/array_if_branch	native-only-gap	lane.source.array_literal
+types/array_nested_ok	native-only-gap	lane.source.array_element
+types/array_type_alias	native-only-gap	lane.source.top_level
+types/c_narrow_let	conformance-gap	E2004 for E2001
+types/cast_i64_i32	native-only-gap	lane.type.int_width
+types/const_array_ok	native-only-gap	lane.source.array_literal
+types/dyn_array	native-only-gap	lane.type.slice
+types/gap_generic_alias	conformance-gap	E1001
+types/neg_array_elem_float	loose	check accepts
+types/neg_infer_conflict	conformance-gap	E2015 for E2001
+types/neg_option_bad_payload	loose	check accepts
+types/neg_option_two_args	loose	check accepts
+types/neg_result_one_arg	loose	check accepts
+types/neg_tensor_add_broadcast_bad	conformance-gap	E2101 for E3001
+types/neg_tensor_add_dtype_mismatch	loose	check accepts
+types/neg_tensor_add_result	loose	check accepts
+types/neg_tensor_matmul_rank1	loose	check accepts
+types/neg_tensor_negative_dim	conformance-gap	E1001 for E3006
+types/neg_tensor_zero_dim	loose	check accepts
+types/neg_tuple_arity	loose	check accepts
+types/neg_tuple_elem_type	loose	check accepts
+types/option_none	native-only-gap	lane.source.unbound
+types/option_some	native-only-gap	lane.call.unknown
+types/prim_f32	native-only-gap	lane.type.non_f64_float
+types/prim_i16_ext	native-only-gap	lane.type.int_width
+types/prim_i32	native-only-gap	lane.type.int_width
+types/prim_i8_ext	native-only-gap	lane.type.int_width
+types/prim_u16_ext	native-only-gap	lane.type.int_width
+types/prim_u8_ext	native-only-gap	lane.type.int_width
+types/prim_unit_empty_fn	native-only-gap	lane.type.named
+types/result_err	native-only-gap	lane.call.unknown
+types/result_ok	native-only-gap	lane.call.unknown
+types/slice_mut	native-only-gap	lane.type.slice
+types/slice_read_literal	native-only-gap	lane.type.slice
+types/slice_return	native-only-gap	lane.type.slice
+types/tensor_canonical	native-only-gap	lane.type.tensor
+types/tensor_dtype_i64	native-only-gap	lane.type.tensor
+types/tensor_rank0_canon	native-only-gap	lane.type.tensor
+types/tuple_destructure	native-only-gap	lane.source.tuple
+types/tuple_return	native-only-gap	lane.type.tuple
+types/tuple_type	native-only-gap	lane.type.tuple
+types/unit_param	native-only-gap	lane.type.named

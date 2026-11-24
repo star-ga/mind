@@ -1,0 +1,6 @@
+fn inspect(xs: &[i64]) -> i64 {
+    return xs[0] + xs[1];
+}
+fn main() -> i64 {
+    return inspect([3, 4]);
+}

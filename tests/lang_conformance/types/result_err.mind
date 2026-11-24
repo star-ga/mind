@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let r: Result<i64, i64> = Err(3);
+    return r.unwrap_or(7);
+}

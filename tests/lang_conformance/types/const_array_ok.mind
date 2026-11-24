@@ -1,0 +1,4 @@
+const A: [i64; 2] = [1, 2];
+fn main() -> i64 {
+    return A[0];
+}

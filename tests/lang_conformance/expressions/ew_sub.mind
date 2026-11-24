@@ -1,0 +1,6 @@
+fn f(a: Tensor<f64, [2]>, b: Tensor<f64, [2]>) -> Tensor<f64, [2]> {
+    return a .- b;
+}
+fn main() -> i64 {
+    return 1;
+}

@@ -1,0 +1,15 @@
+enum Color {
+    Red,
+    Green
+}
+
+fn classify(c: Color) -> i64 {
+    return match c {
+        Red => 1,
+        _ => 3,
+    };
+}
+
+fn main() -> i64 {
+    return 0;
+}

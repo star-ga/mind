@@ -1,0 +1,8 @@
+fn main() -> i64 {
+    let x: i64 = 0xdeadbeef;
+    if x == 3735928559 {
+        1
+    } else {
+        0
+    }
+}

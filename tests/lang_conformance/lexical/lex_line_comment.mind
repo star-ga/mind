@@ -1,0 +1,5 @@
+// leading comment
+fn main() -> i64 {
+    // inner comment
+    return 0;
+}

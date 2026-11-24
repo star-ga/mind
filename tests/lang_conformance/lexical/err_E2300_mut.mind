@@ -1,0 +1,12 @@
+import std.vec;
+
+fn take(xs: array<i64>) -> i64 {
+    return 0;
+}
+fn grow(a: array<i64>) -> i64 {
+    let n = take(a.push(3));
+    return n;
+}
+fn main() -> i64 {
+    return 0;
+}

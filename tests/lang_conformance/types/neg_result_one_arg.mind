@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let r: Result<i64> = Ok(3);
+    return 0;
+}

@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let c = 'a';
+    return 0;
+}

@@ -1,0 +1,9 @@
+struct P {
+    x: i64
+}
+fn get(p: P) -> i64 {
+    return p.x;
+}
+fn main() -> i64 {
+    return 7;
+}

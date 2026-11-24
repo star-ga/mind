@@ -1,0 +1,7 @@
+fn f() -> Option<i64> {
+    let x: Option<i64> = Some(1);
+    return x?;
+}
+fn main() -> i64 {
+    return 1;
+}

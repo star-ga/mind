@@ -1,0 +1,5 @@
+fn f() -> unit {
+}
+fn main() -> i64 {
+    return 1;
+}

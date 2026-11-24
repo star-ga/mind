@@ -1,0 +1,5 @@
+use std.vec;
+
+fn main() -> i64 {
+    0
+}

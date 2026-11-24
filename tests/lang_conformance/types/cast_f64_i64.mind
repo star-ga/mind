@@ -1,0 +1,4 @@
+fn main() -> i64 {
+    let y: i64 = 1.9 as i64;
+    return y;
+}

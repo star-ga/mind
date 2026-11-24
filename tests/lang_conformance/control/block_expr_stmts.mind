@@ -1,0 +1,7 @@
+fn main() -> i64 {
+    let x = {
+        let a = 1;
+        a + 1
+    };
+    return x;
+}

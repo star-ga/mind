@@ -1,0 +1,6 @@
+trait Shape {
+}
+
+fn main() -> i64 {
+    0
+}

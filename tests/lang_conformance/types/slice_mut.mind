@@ -1,0 +1,11 @@
+fn mutate(xs: &mut [i64]) -> i64 {
+    xs[0] = 4;
+    xs.set(1, 2);
+    return xs[0] * 10 + xs[1];
+}
+fn via(xs: array<i64>) -> i64 {
+    return mutate(xs);
+}
+fn main() -> i64 {
+    return mutate([1, 1]);
+}

@@ -1,0 +1,9 @@
+fn take(xs: &[i64]) -> i64 {
+    return 0;
+}
+fn via(xs: array<i64>) -> i64 {
+    return take(xs);
+}
+fn main() -> i64 {
+    return 0;
+}

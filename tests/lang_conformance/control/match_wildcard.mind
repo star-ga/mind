@@ -1,0 +1,7 @@
+fn main() -> i64 {
+    let x = 1;
+    let y = match x {
+        _ => 5,
+    };
+    return y;
+}

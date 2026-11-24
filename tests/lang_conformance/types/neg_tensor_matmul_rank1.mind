@@ -1,0 +1,6 @@
+fn f(a: Tensor<f32, [3]>, b: Tensor<f32, [3]>) -> Tensor<f32, [3]> {
+    return matmul(a, b);
+}
+fn main() -> i64 {
+    return 0;
+}

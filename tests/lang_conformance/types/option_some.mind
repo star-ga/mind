@@ -1,0 +1,7 @@
+fn main() -> i64 {
+    let o: Option<i64> = Some(3);
+    if o.is_some() {
+        return o.unwrap();
+    };
+    return 0;
+}

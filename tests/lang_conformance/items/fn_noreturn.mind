@@ -1,0 +1,7 @@
+fn noop() {
+}
+
+fn main() -> i64 {
+    noop();
+    0
+}

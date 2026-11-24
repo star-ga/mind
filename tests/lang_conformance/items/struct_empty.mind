@@ -1,0 +1,6 @@
+struct Empty {
+}
+
+fn main() -> i64 {
+    0
+}

@@ -1,0 +1,7 @@
+module m {
+    import std.vec;
+}
+
+fn main() -> i64 {
+    0
+}
