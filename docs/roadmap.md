@@ -175,6 +175,16 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   when two substrates disagree, the first stage whose hash differs is where to
   look. Text output first, which a browser viewer can read later. Off by
   default: a build without the flag stays byte-identical.
+- **Identity coverage list** – a list that shows what the cross-substrate
+  identity suite does not cover. Today `tests/cross_substrate_identity/` pins
+  36 workloads to committed hashes, but no file names the `std/` modules and
+  `__mind_blas_*` kernels that no workload pins. A proposed
+  `docs/identity_coverage.toml` would name each `std/` module and each
+  exported `__mind_blas_*` kernel exactly once: as covered, with the workload
+  that pins it, or as not covered, with a one-line reason. A docs check fails
+  when an item is on neither side, is on both, or names a workload that does
+  not exist, so a new module or kernel cannot land unlisted. The list records
+  coverage only. It is not a correctness proof.
 
 ### PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)
 
