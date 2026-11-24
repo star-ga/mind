@@ -51,6 +51,7 @@ _HERE = pathlib.Path(__file__).parent
 _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 MARKER = 42
 
@@ -97,7 +98,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     p = tmp / "mind_narrowwrap.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)]).returncode
+    return subprocess.run(core_limit_argv([str(p)])).returncode
 
 
 def main() -> int:

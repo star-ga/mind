@@ -40,6 +40,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _HERE = pathlib.Path(__file__).parent
 _REPO = _HERE.parents[1]
@@ -55,7 +56,7 @@ def _is_elf(p: pathlib.Path) -> bool:
 
 def _run(p: pathlib.Path) -> int:
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)], timeout=30).returncode
+    return subprocess.run(core_limit_argv([str(p)]), timeout=30).returncode
 
 
 def _mlir_leg(tmp: pathlib.Path, canary: pathlib.Path) -> bool:

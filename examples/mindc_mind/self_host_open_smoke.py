@@ -30,6 +30,7 @@ _REPO = _HERE.parent.parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
 from _selfhost_sources import compiler_library  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 
@@ -104,7 +105,7 @@ def main() -> int:
         for content, first in [("Zhello", ord("Z")), ("apple", ord("a")), ("7up", ord("7"))]:
             f = tmp / "data.txt"
             f.write_text(content)
-            code = subprocess.run([str(p), str(f)]).returncode
+            code = subprocess.run(core_limit_argv([str(p), str(f)])).returncode
             good = code == first
             ok = ok and good
             print(f"  {'PASS' if good else 'FAIL'}  read {content!r} by path -> exit {code} "
@@ -113,13 +114,13 @@ def main() -> int:
         # (2) multi-byte content read correctly (verify it's the file's real first byte)
         big = tmp / "big.txt"
         big.write_text("X" + "y" * 5000)
-        code = subprocess.run([str(p), str(big)]).returncode
+        code = subprocess.run(core_limit_argv([str(p), str(big)])).returncode
         good = code == ord("X")
         ok = ok and good
         print(f"  {'PASS' if good else 'FAIL'}  read 5001-byte file -> exit {code} (expected {ord('X')})")
 
         # (3) nonexistent path -> sane error (read_file_native returns -1 -> exit 200), no crash
-        code = subprocess.run([str(p), str(tmp / "does_not_exist.txt")]).returncode
+        code = subprocess.run(core_limit_argv([str(p), str(tmp / "does_not_exist.txt")])).returncode
         good = code == 200
         ok = ok and good
         print(f"  {'PASS' if good else 'FAIL'}  nonexistent path -> exit {code} "
@@ -128,7 +129,7 @@ def main() -> int:
         # (4) empty file -> exit 201
         empty = tmp / "empty.txt"
         empty.write_text("")
-        code = subprocess.run([str(p), str(empty)]).returncode
+        code = subprocess.run(core_limit_argv([str(p), str(empty)])).returncode
         good = code == 201
         ok = ok and good
         print(f"  {'PASS' if good else 'FAIL'}  empty file -> exit {code} (expected 201)")

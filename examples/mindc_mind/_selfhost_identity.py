@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from _selfhost_sources import COMPILER_UNIT_DRIVERS  # drivers that call compiler fns: compiler source, in self mode
-from _selfhost_sources import _REPO, SELF_MAGIC, capture_bundle, core_limit_check, core_limit_one, direct_compile_cli, mint_stage2, self_mode_image, start_child
+from _selfhost_sources import _REPO, SELF_MAGIC, capture_bundle, core_limit_check, core_limit_argv, direct_compile_cli, mint_stage2, self_mode_image, start_child
 from _selfhost_string_rows import _tsv_rows, add_string_rows_args, load_string_rows, string_rows_main
 from _w8_native import _libc_admitted, group_accrows_admitted, group_kernel_change, group_kernel_reason  # admission rows; kinds 87-89
 
@@ -71,7 +71,7 @@ def elf_note(image: bytes) -> bytes:
 
 
 def run_image(image: bytes, timeout: int = 20, args: tuple = (), env: dict | None = None) -> tuple[int, bytes] | None:
-    """(exit status, stdout) of an image run with `args` (default none), no stdin and the soft core limit 1 (core_limit_one:
+    """(exit status, stdout) of an image run with `args` (default none), no stdin and the soft core limit 1 (core_limit_argv:
     a trap starts no dump handler); None on a timeout. `env` is added to the parent environment (a row's own variables)."""
     penv = None if not env else {**os.environ, **{str(k): str(v) for k, v in env.items()}}
     with tempfile.TemporaryDirectory() as td:
@@ -80,8 +80,8 @@ def run_image(image: bytes, timeout: int = 20, args: tuple = (), env: dict | Non
         exe.chmod(0o755)
         for attempt in range(8):
             try:
-                r = subprocess.run([str(exe), *args], stdin=subprocess.DEVNULL, capture_output=True,
-                                   timeout=timeout, env=penv, preexec_fn=core_limit_one())
+                r = subprocess.run(core_limit_argv([str(exe), *args]), stdin=subprocess.DEVNULL, capture_output=True,
+                                   timeout=timeout, env=penv)
                 return r.returncode, r.stdout
             except subprocess.TimeoutExpired:
                 return None

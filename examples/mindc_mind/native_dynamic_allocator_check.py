@@ -17,7 +17,6 @@ OWNERSHIP_SHA='ee86ffb3f57d28fad3a5e7cb69bf259aaa6919231a76690aa3ac09e9c929a323'
 def sha(data): return hashlib.sha256(data).hexdigest()
 def limit():
     resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30))
-    resource.setrlimit(resource.RLIMIT_CORE,(0,0))
     resource.setrlimit(resource.RLIMIT_CPU,(180,200))
 def main():
     p=argparse.ArgumentParser();p.add_argument('--seed',type=Path,required=True);p.add_argument('--seed-sha256',required=True)

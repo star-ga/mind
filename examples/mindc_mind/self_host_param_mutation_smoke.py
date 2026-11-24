@@ -33,6 +33,7 @@ import tempfile
 # lets this gate report green about a tree that never built one.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _selfhost_so import resolve_mindc  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAIN_MIND = os.path.join(HERE, "main.mind")
@@ -111,7 +112,7 @@ def main() -> int:
             p = tmp / "m.elf"
             p.write_bytes(elf)
             p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-            rc = subprocess.run([str(p)]).returncode
+            rc = subprocess.run(core_limit_argv([str(p)])).returncode
             exp = arg + iters
             ok = rc == exp
             all_ok = all_ok and ok

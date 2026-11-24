@@ -49,7 +49,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 import gate_assert  # noqa: E402
-
+from _selfhost_sources import core_limit_argv  # noqa: E402
 SEED = 20261021
 MARK = b"\x48\xb8nblane02"
 TRAP_EXIT = 79
@@ -548,7 +548,7 @@ def _observe_build(rc: int, err: str, exe: pathlib.Path, env_run: dict[str, str]
         return Obs("build_fail", rc, b"", "build status 0 but no artifact")
     try:
         r = subprocess.run(
-            ["/usr/bin/prlimit", "--as=2147483648", "--", str(exe)],
+            core_limit_argv(["/usr/bin/prlimit", "--as=2147483648", "--", str(exe)]),
             capture_output=True, timeout=60, env=env_run,
         )
     except subprocess.TimeoutExpired:
@@ -561,7 +561,7 @@ def _observe_eval(mind: str, source: str, env: dict[str, str]) -> Obs:
     text += "main()\n"
     try:
         r = subprocess.run(
-            ["/usr/bin/prlimit", "--as=2147483648", "--", mind, "eval", text],
+            core_limit_argv(["/usr/bin/prlimit", "--as=2147483648", "--", mind, "eval", text]),
             capture_output=True, text=True, timeout=60, env=env,
         )
     except subprocess.TimeoutExpired:

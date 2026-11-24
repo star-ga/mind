@@ -38,6 +38,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _HERE = pathlib.Path(__file__).parent
 _REPO = _HERE.parent.parent
@@ -117,7 +118,7 @@ def native_run_mod(lib) -> int:
         p = pathlib.Path(td) / "mod.elf"
         p.write_bytes(elf)
         p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        code = subprocess.run([str(p)]).returncode
+        code = subprocess.run(core_limit_argv([str(p)])).returncode
     if code == WANT_REM:
         print(f"  PASS  native %: pure-MIND ELF runs {DIVIDEND} % {DIVISOR} -> exits {code} (remainder)")
         return 0
@@ -203,7 +204,7 @@ def mlir_emit_mod(lib) -> int:
             print(f"  FAIL  mlir % runtime cross-check: link failed "
                   f"(rc={lk.returncode}, exe {exe}) — {_tail(lk.stderr)}")
             return 1
-        code = subprocess.run([str(exep)]).returncode
+        code = subprocess.run(core_limit_argv([str(exep)])).returncode
     if code != WANT_REM:
         why = {QUOTIENT: "QUOTIENT (divsi)", PRODUCT: "PRODUCT (imul)"}.get(code, "wrong")
         print(f"  FAIL  mlir % runtime: {DIVIDEND} % {DIVISOR} -> {code}, expected {WANT_REM} — {why}")

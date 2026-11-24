@@ -32,6 +32,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 SO = os.environ.get("MINDC_SO", str(HERE / "libmindc_mind.so"))
@@ -59,7 +60,7 @@ def run_bytes(elf: bytes, tmp: pathlib.Path) -> int:
     p = tmp / "m.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)]).returncode
+    return subprocess.run(core_limit_argv([str(p)])).returncode
 
 
 def live_rc(src: bytes, tmp: pathlib.Path) -> int:
@@ -70,7 +71,7 @@ def live_rc(src: bytes, tmp: pathlib.Path) -> int:
                         "--out=" + str(o)], capture_output=True)
     if r.returncode != 0:
         return -999
-    return subprocess.run([str(o)]).returncode
+    return subprocess.run(core_limit_argv([str(o)])).returncode
 
 
 P3 = ("fn h(a: i64, b: i64, c: i64) -> i64 {{ if {e} {{ return 1; }} else {{ return 0; }} }} "

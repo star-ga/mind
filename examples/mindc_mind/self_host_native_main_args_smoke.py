@@ -41,6 +41,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent.parent / "scripts"))
 from gate_assert import check  # noqa: E402  (one [PASS]/[FAIL] line per case)
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _STDLIB_MODULES = [
     "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
@@ -106,7 +107,7 @@ def write_exec(path: pathlib.Path, data: bytes) -> pathlib.Path:
 
 def run(path: pathlib.Path, tail):
     try:
-        r = subprocess.run([str(path), *tail], capture_output=True, timeout=20)
+        r = subprocess.run(core_limit_argv([str(path), *tail]), capture_output=True, timeout=20)
         return r.returncode, r.stdout
     except subprocess.TimeoutExpired:
         return "timeout", b""

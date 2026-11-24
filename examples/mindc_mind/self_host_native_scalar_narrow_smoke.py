@@ -31,6 +31,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _HERE = pathlib.Path(__file__).parent
 _REPO = _HERE.parents[1]
@@ -95,7 +96,7 @@ def _run_elf(elf: bytes, tmp: pathlib.Path) -> bytes:
     p = tmp / "narrow.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)], capture_output=True).stdout
+    return subprocess.run(core_limit_argv([str(p)]), capture_output=True).stdout
 
 
 def _live_exit(value_src: str, ity: str) -> int:
@@ -113,7 +114,7 @@ def _live_exit(value_src: str, ity: str) -> int:
         if r.returncode != 0 or not b.exists():
             return -1
         b.chmod(b.stat().st_mode | stat.S_IEXEC)
-        return subprocess.run([str(b)], timeout=30).returncode
+        return subprocess.run(core_limit_argv([str(b)]), timeout=30).returncode
 
 
 def main() -> int:

@@ -43,6 +43,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 from _selfhost_so import resolve_mindc  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 MINDC = pathlib.Path(resolve_mindc())
 STAGE1 = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 
@@ -221,7 +222,7 @@ def mlir_exit(name, src, td):
         tail = r.stderr.decode(errors="replace").strip().splitlines()[-1:]
         return None, f"MLIR build rc={r.returncode} {tail}"
     outf.chmod(0o755)
-    return subprocess.run([str(outf)]).returncode, None
+    return subprocess.run(core_limit_argv([str(outf)])).returncode, None
 
 
 def toolchain_hits(execs):
@@ -281,7 +282,7 @@ def main() -> int:
             runf = td / f"{name}.run.elf"
             runf.write_bytes(art)
             runf.chmod(0o755)
-            got = subprocess.run([str(runf)]).returncode
+            got = subprocess.run(core_limit_argv([str(runf)])).returncode
             if got != expect_exit:
                 fails.append(f"in/{name}: emitted ELF exit={got} expected {expect_exit}")
                 continue

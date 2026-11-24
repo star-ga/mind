@@ -42,6 +42,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = os.environ.get("MINDC_SO")
 if not SO or not pathlib.Path(SO).exists():
@@ -73,7 +74,7 @@ def run(src: str):
     p.write_bytes(e)
     p.chmod(p.stat().st_mode | stat.S_IEXEC)
     try:
-        return ("OK", subprocess.run([str(p)], timeout=10).returncode)
+        return ("OK", subprocess.run(core_limit_argv([str(p)]), timeout=10).returncode)
     finally:
         try:
             p.unlink()

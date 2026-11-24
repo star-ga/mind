@@ -27,6 +27,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _HERE = pathlib.Path(__file__).parent
 _DEFAULT_SO = _HERE / "libmindc_mind.so"
@@ -71,7 +72,7 @@ def _run(elf: bytes, tmp: pathlib.Path, name: str) -> bytes:
     p = tmp / name
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)], capture_output=True).stdout
+    return subprocess.run(core_limit_argv([str(p)]), capture_output=True).stdout
 
 
 def main() -> int:

@@ -67,7 +67,7 @@ def cases():
 
 def limits(oracle=False):
  n=(1536<<20) if oracle else (2<<30)
- resource.setrlimit(resource.RLIMIT_AS,(n,n));resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_CPU,(90,95))
+ resource.setrlimit(resource.RLIMIT_AS,(n,n));resource.setrlimit(resource.RLIMIT_CPU,(90,95))
 def oracle_child(so):
  limits(True)
  src=sys.stdin.buffer.read();buf=ctypes.create_string_buffer(src+b'\0'*8);out=(ctypes.c_int64*4)()

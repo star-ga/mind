@@ -44,6 +44,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 MINDC = os.environ.get("MINDC_BIN", str(_HERE.parents[1] / "target" / "release" / "mindc"))
@@ -95,7 +96,7 @@ def run_elf(elf: bytes) -> int:
     f.write(elf)
     f.close()
     os.chmod(f.name, os.stat(f.name).st_mode | stat.S_IEXEC)
-    rc = subprocess.run([f.name]).returncode
+    rc = subprocess.run(core_limit_argv([f.name])).returncode
     os.unlink(f.name)
     return rc
 

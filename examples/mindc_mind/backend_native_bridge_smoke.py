@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 from _selfhost_sources import start_child
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -295,7 +296,7 @@ def main() -> int:
             rp = td / f"run_{name}.elf"
             rp.write_bytes(bd)
             rp.chmod(0o755)
-            rc = subprocess.run([str(rp)]).returncode
+            rc = subprocess.run(core_limit_argv([str(rp)])).returncode
             if rc != row["expect_exit"]:
                 fails.append(f"{name} functional: exit={rc} expected {row['expect_exit']}")
             else:

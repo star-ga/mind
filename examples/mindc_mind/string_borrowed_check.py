@@ -138,7 +138,6 @@ def embedded(source):
 
 def limits():
     resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30))
-    resource.setrlimit(resource.RLIMIT_CORE,(0,0))
 
 def run(ev,name,args,data=None):
     t=time.monotonic()

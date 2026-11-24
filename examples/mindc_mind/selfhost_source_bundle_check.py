@@ -27,6 +27,7 @@ import _selfhost_sources as sources
 from _selfhost_so import build_captured_so
 from self_host_loop_smoke import build_seed
 from _selfhost_sources import start_child  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 MANIFEST = b'[package]\nname="bundle-fixture"\nversion="1.0.0"\n[build]\ntarget="cpu"\nemit="cdylib"\nentry="examples/mindc_mind/main.mind"\n'
 COMPONENT = "examples/mindc_mind/a.mind"
@@ -213,7 +214,6 @@ class BundleControls(unittest.TestCase):
 
 def limits():
     resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def _compiles(text):
@@ -290,7 +290,7 @@ def real_build(args):
     exe = ev / "native.elf"
     exe.write_bytes(result.stdout)
     exe.chmod(0o500)
-    run = subprocess.run([str(exe)], capture_output=True, timeout=30, preexec_fn=limits)
+    run = subprocess.run(core_limit_argv([str(exe)]), capture_output=True, timeout=30, preexec_fn=limits)
     for suffix, data in (("stdout", run.stdout), ("stderr", run.stderr), ("exit", (str(run.returncode) + "\n").encode())):
         (ev / ("native-run." + suffix)).write_bytes(data)
     assert (run.returncode, run.stdout, run.stderr) == (0, b"", b""), "native component result differs"

@@ -15,6 +15,7 @@ from _stdlib_manifest import seed_blob
 from _selfhost_sources import self_mode_image
 from self_host_loop_smoke import build_seed, _FROZEN
 from self_host_native_sys_smoke import run_elf, c_string
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -212,7 +213,7 @@ def check(stage1, mindc, tmp):
                     child = work / 'child'
                     child.write_bytes(run_elf(stage1, struct.pack('<qq', len(prefix), len(child_source)) + child_source))
                     child.chmod(0o755)
-                proc = subprocess.run([str(exe)], cwd=work, capture_output=True, timeout=20)
+                proc = subprocess.run(core_limit_argv([str(exe)]), cwd=work, capture_output=True, timeout=20)
                 value = (proc.returncode, proc.stdout, proc.stderr)
                 results.append(value)
                 checked += 1

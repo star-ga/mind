@@ -44,6 +44,7 @@ _HERE = pathlib.Path(__file__).parent
 _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()  # MINDC_SO verbatim, else fresh build (never stale)
 
@@ -160,7 +161,7 @@ def run_case(lib, name, src, want, why) -> int:
         p = pathlib.Path(td) / f"{name}.elf"
         p.write_bytes(elf)
         p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        code = subprocess.run([str(p)]).returncode
+        code = subprocess.run(core_limit_argv([str(p)])).returncode
     if code == want:
         print(f"  PASS  {name}: exit {code} -- {why}")
         return 0

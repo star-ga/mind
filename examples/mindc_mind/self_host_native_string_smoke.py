@@ -66,6 +66,7 @@ sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
 from _selfhost_sources import (start_child, BOUNDED_LAYOUT, COMPILER_COMPONENTS, FROZEN_SEED, LAYOUT_MAGIC,  # noqa: E402
                                _run_compiler, capture_bundle, driver_compile, self_mode_image)
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 # A dummy 32-byte PT_NOTE trace hash. This smoke gates runtime behavior +
 # determinism of the CODE + rodata regions, not the note (there is no oracle to
@@ -167,7 +168,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     p = tmp / "mind.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)]).returncode
+    return subprocess.run(core_limit_argv([str(p)])).returncode
 
 
 def so_section() -> tuple[int, int] | None:

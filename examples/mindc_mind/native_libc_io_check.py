@@ -73,7 +73,7 @@ def mutation_sources(product):
     return result
 
 def limits(size_limit=0):
-    resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30));resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_CPU,(600,620))
+    resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30));resource.setrlimit(resource.RLIMIT_CPU,(600,620))
     if size_limit:resource.setrlimit(resource.RLIMIT_FSIZE,(size_limit,size_limit))
 
 def main():

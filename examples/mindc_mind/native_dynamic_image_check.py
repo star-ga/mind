@@ -25,7 +25,6 @@ def digest(data):
 
 def limited():
     resource.setrlimit(resource.RLIMIT_AS, (LIMIT, LIMIT))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def inspect(blob, mode):

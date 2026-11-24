@@ -36,6 +36,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 MINDC = pathlib.Path(
@@ -101,7 +102,7 @@ def run_binary(src):
         if r.returncode != 0 or not op.exists():
             return None
         os.chmod(op, 0o755)
-        return subprocess.run([str(op)], capture_output=True).returncode
+        return subprocess.run(core_limit_argv([str(op)]), capture_output=True).returncode
 
 
 # ── chain builders (statement form; each arm returns its int) ──────────────────

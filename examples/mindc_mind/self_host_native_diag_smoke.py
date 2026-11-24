@@ -64,7 +64,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).resolve().parent
 _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
-from _selfhost_sources import HOOK_MAGIC, SELF_MAGIC, capture_bundle, lane_key_table, start_child  # noqa: E402
+from _selfhost_sources import HOOK_MAGIC, SELF_MAGIC, capture_bundle, core_limit_argv, lane_key_table, start_child  # noqa: E402
 MINDC = pathlib.Path(os.environ.get("MINDC_BIN", str(_REPO / "target" / "release" / "mindc")))
 STAGE1 = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 
@@ -98,7 +98,7 @@ def run_elf_bytes(elf: bytes):
         p = f.name
     os.chmod(p, 0o755)
     try:
-        return subprocess.run([p], timeout=10).returncode
+        return subprocess.run(core_limit_argv([p]), timeout=10).returncode
     finally:
         os.unlink(p)
 
@@ -488,7 +488,7 @@ def main() -> int:
             p = f.name
         os.chmod(p, 0o755)
         try:
-            ran = subprocess.run([p], timeout=10).returncode
+            ran = subprocess.run(core_limit_argv([p]), timeout=10).returncode
         finally:
             os.unlink(p)
     ok = (ec == 0 and art is not None and art[:4] == b"\x7fELF" and ran == 42)

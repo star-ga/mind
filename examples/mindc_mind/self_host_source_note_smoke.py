@@ -134,7 +134,6 @@ def supplemental_cases() -> list[tuple[str, bytes, bytes, int, int]]:
 
 def limits(cpu_seconds: int = 120) -> None:
     resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 5))
 
 

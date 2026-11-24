@@ -17,6 +17,7 @@ import os
 # want_rc; "0B" = must refuse (zero bytes). A wrong rc or an emitted ELF on a
 # 0B case is a fail-OPEN miscompile and MUST be reported FAIL, never PASS.
 import ctypes, pathlib, subprocess, tempfile, sys, os
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 so = os.environ.get("MINDC_SO")
 if not so:
@@ -38,7 +39,7 @@ def run(s):
         return ("0B", None)
     p = pathlib.Path(os.path.join(tempfile.mkdtemp(), "artifact")); p.write_bytes(e); p.chmod(0o755)
     try:
-        return ("OK", subprocess.run([str(p)], timeout=8).returncode)
+        return ("OK", subprocess.run(core_limit_argv([str(p)]), timeout=8).returncode)
     except Exception as ex:
         return ("ERR", str(ex))
 

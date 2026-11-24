@@ -88,6 +88,7 @@ _MANIFEST = _DATA / "MANIFEST.txt"
 
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _TRACE, _BLOCKED, _REFUSE, _EVALUATOR = "trace", "blocked", "refuse", "evaluator"
 
@@ -255,7 +256,7 @@ def _reference_consumes(mindc: pathlib.Path, source: bytes, path: pathlib.Path) 
 def _run(elf: bytes, path: pathlib.Path) -> int:
     path.write_bytes(elf)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return subprocess.run([str(path)], timeout=30, check=False).returncode
+    return subprocess.run(core_limit_argv([str(path)]), timeout=30, check=False).returncode
 
 
 def _evaluator(mindc: pathlib.Path, name: str, expected: int) -> None:

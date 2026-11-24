@@ -33,6 +33,7 @@ _HERE = pathlib.Path(__file__).parent
 _DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 # Single-precision inputs (mirror the f64 rung's SCALAR_F64_INPUTS).
 INPUTS = (1.5, 2.25, 0.5, 3.125)
@@ -74,7 +75,7 @@ def run_elf_capture(elf: bytes, tmp: pathlib.Path) -> bytes:
     p = tmp / "mind_scalar_f32.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)], capture_output=True).stdout
+    return subprocess.run(core_limit_argv([str(p)]), capture_output=True).stdout
 
 
 def main() -> int:

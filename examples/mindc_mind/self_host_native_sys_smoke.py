@@ -26,6 +26,7 @@ from _selfhost_so import resolve_mindc
 from _stdlib_manifest import seed_blob
 from _selfhost_sources import compiler_library, self_mode_image, start_child
 from self_host_loop_smoke import build_seed, _FROZEN
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -322,7 +323,7 @@ def seed_neutral(stage1: pathlib.Path, tmp: pathlib.Path, mindc) -> list[str]:
         fails.append(f"sentinel_mixed: MLIR build exit={build.returncode}: {build.stderr[-500:]!r}")
     else:
         for backend, exe in [("native", native), ("mlir", mlir)]:
-            proc = subprocess.run([str(exe)], cwd=tmp, capture_output=True, timeout=15)
+            proc = subprocess.run(core_limit_argv([str(exe)]), cwd=tmp, capture_output=True, timeout=15)
             if (proc.returncode, proc.stdout, proc.stderr) != (0, b"ABCDE", b""):
                 fails.append(f"sentinel_mixed/{backend}: exit={proc.returncode} stdout={proc.stdout!r}")
             else:
@@ -400,7 +401,7 @@ def main() -> int:
                     work = tmp / f"{name}-{backend}"
                     work.mkdir()
                     (work / "input").write_bytes(b"ABCD")
-                    proc = subprocess.run([str(exe)], cwd=work, capture_output=True, timeout=15)
+                    proc = subprocess.run(core_limit_argv([str(exe)]), cwd=work, capture_output=True, timeout=15)
                     checked += 1
                     results.append((proc.returncode, proc.stdout, proc.stderr))
                     ok = results[-1] == (0, expected, b"") and not (work / "data").exists() and not (work / "renamed").exists()

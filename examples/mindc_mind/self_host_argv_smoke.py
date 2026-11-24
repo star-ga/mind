@@ -32,6 +32,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 
@@ -59,7 +60,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path, argv_tail: list[str]) -> int:
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     # argv[0] is the path; argv_tail are the extra args the child sees.
-    return subprocess.run([str(p), *argv_tail]).returncode
+    return subprocess.run(core_limit_argv([str(p), *argv_tail])).returncode
 
 
 # `main` returns argc directly -> exit code == argc.

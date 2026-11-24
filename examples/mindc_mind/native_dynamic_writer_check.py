@@ -29,7 +29,6 @@ def digest(data):
 
 def limited():
     resource.setrlimit(resource.RLIMIT_AS, (LIMIT, LIMIT))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def run(argv, *, data=None, timeout=120):

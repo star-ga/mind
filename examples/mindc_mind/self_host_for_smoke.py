@@ -59,6 +59,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 SO = os.environ.get("MINDC_SO", str(HERE / "libmindc_mind.so"))
@@ -102,7 +103,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> "int | str":
     # (an infinite loop) fails LOUD instead of hanging the battery. Any real case
     # here terminates in well under a second.
     try:
-        rc = subprocess.run([str(p)], timeout=10).returncode
+        rc = subprocess.run(core_limit_argv([str(p)]), timeout=10).returncode
     except subprocess.TimeoutExpired:
         return "HANG"
     if rc < 0:

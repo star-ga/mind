@@ -64,7 +64,7 @@ def freeze():
  print('FROZEN',len(rows),sha(payload))
 
 def limits():
- resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30));resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_CPU,(180,180))
+ resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30));resource.setrlimit(resource.RLIMIT_CPU,(180,180))
 
 def run(label,argv,*,data=None,cwd=None):
  env=os.environ.copy()

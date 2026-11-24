@@ -46,6 +46,7 @@ sys.path.insert(0, str(HERE))
 from _stdlib_manifest import seed_blob  # noqa: E402
 from _selfhost_sources import compiler_library, self_mode_image, start_child  # noqa: E402
 from mindfuzz_self_host import RustRef, note_of_elf  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 FROZEN_SEED = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 DRIVER = HERE / "selfhost_driver.mind"
@@ -172,7 +173,7 @@ def run_exe(path: pathlib.Path) -> tuple[int, bytes]:
     # child execs. Retry that one error only.
     for attempt in range(50):
         try:
-            r = subprocess.run([str(path)], capture_output=True, timeout=120)
+            r = subprocess.run(core_limit_argv([str(path)]), capture_output=True, timeout=120)
             return r.returncode, r.stdout
         except OSError as e:
             if e.errno != errno.ETXTBSY or attempt == 49:

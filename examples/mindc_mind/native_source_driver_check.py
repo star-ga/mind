@@ -202,7 +202,6 @@ def main():
 
     def limits(ignored=False):
         resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         resource.setrlimit(resource.RLIMIT_CPU, (600, 605))
         signal.signal(signal.SIGPIPE, signal.SIG_IGN if ignored else signal.SIG_DFL)
 

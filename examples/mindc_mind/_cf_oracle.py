@@ -45,7 +45,6 @@ ORACLE_AS_LIMIT = 1792 << 20
 def child_limits():
     os.nice(15)
     resource.setrlimit(resource.RLIMIT_AS, (ORACLE_AS_LIMIT, ORACLE_AS_LIMIT))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def strip_comments(src: str) -> str:

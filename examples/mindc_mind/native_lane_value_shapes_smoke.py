@@ -61,7 +61,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from _selfhost_sources import capture_bundle, core_limit_check, core_limit_one, direct_compile, driver_compile  # noqa: E402
+from _selfhost_sources import capture_bundle, core_limit_argv, core_limit_check, direct_compile, driver_compile  # noqa: E402
 from _selfhost_identity import add_selfhost_args, run_image, selfhost_modes_main  # noqa: E402
 from _w8_native import cast_edges_oracle, cast_exprs_oracle, cast_words, extern_key_rows, group_accrows_rows, group_probe_skip_rows, mint_stage1  # noqa: E402
 FIXTURES = HERE / "testdata" / "native_lane_values"
@@ -549,8 +549,8 @@ def _build(mindc: str, src: pathlib.Path, out: pathlib.Path, native: bool, env: 
 
 
 def _run(exe: pathlib.Path, argv: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["/usr/bin/prlimit", "--as=2147483648", "--", str(exe), *argv],
-                          capture_output=True, timeout=60, env={"LC_ALL": "C"}, preexec_fn=core_limit_one())
+    return subprocess.run(core_limit_argv(["/usr/bin/prlimit", "--as=2147483648", "--", str(exe), *argv]),
+                          capture_output=True, timeout=60, env={"LC_ALL": "C"})
 
 
 def _tool(argv: list[str], controls: tuple[str, ...]) -> tuple[str, list[str]]:
@@ -594,8 +594,8 @@ def _check_elf(row: dict, exe: pathlib.Path, tmp: pathlib.Path) -> list[str]:
     env = dict(os.environ, LC_ALL="C", **row.get("env", {}))
     env.update(_fake_driver(tmp) if row.get("fake_driver") else {})
     try:
-        r = subprocess.run([*row.get("runner_prefix", []), str(exe), *row.get("args", [])], capture_output=True, env=env,
-                           timeout=row.get("timeout_s", 60), preexec_fn=core_limit_one(),  # a trap starts no dump handler
+        r = subprocess.run(core_limit_argv([*row.get("runner_prefix", []), str(exe), *row.get("args", [])]),
+                           capture_output=True, env=env, timeout=row.get("timeout_s", 60),  # a trap starts no dump handler
                            cwd=exe.parent if row.get("runner_prefix") else None)  # the emulator's 1-byte core: row dir
     except subprocess.TimeoutExpired:  # a hang is this row's failure, never a harness crash
         return bad + [f"timeout >{row.get('timeout_s', 60)}s (the process outlived its exit)"]
@@ -623,7 +623,7 @@ def _encoder_table(row: dict, compiler: str, case_dir: pathlib.Path) -> list[str
     r = direct_compile(prog, pathlib.Path(compiler), exe)
     if not exe.exists():
         return [f"table driver: no ELF rc={r.returncode}"]
-    out, recs = subprocess.run([str(exe)], capture_output=True, timeout=120).stdout, []
+    out, recs = subprocess.run(core_limit_argv([str(exe)]), capture_output=True, timeout=120).stdout, []
     while out:
         recs.append(out[1:1 + out[0]].hex())
         out = out[1 + out[0]:]
@@ -791,9 +791,10 @@ def main() -> int:
             passed = seen == ["ok", "ok"]
             fail += not passed
             print(f"  {'PASS' if passed else 'FAIL'}  {cid}: native={seen[0]} mlir={seen[1]}")
+    cores = [p for d in (REPO, pathlib.Path.cwd()) for p in d.glob("qemu_*.core")]
+    if cores: print(f"FAIL  emulator core file: {cores[0]}"); fail += 1
     print(f"SDLC-GATE native_lane_value_shapes ran={ran} fail={fail}")
     return 1 if fail or ran == 0 else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

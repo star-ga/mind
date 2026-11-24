@@ -85,6 +85,7 @@ def nfn_mic3(src):
 
 
 import stat
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 # stdlib blob in the FIXED self-host module order — the native-ELF entry expects
 # `combined = std_blob ++ user_src` with user_lo = len(std_blob) (mind-runtime NOT
@@ -129,7 +130,7 @@ def run_native(prog: str, run_timeout: int = 8):
         p = f.name
     os.chmod(p, 0o755)
     try:
-        return subprocess.run([p], timeout=run_timeout).returncode
+        return subprocess.run(core_limit_argv([p]), timeout=run_timeout).returncode
     except subprocess.TimeoutExpired:
         return "HANG"
     finally:

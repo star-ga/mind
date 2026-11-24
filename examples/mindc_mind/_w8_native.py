@@ -25,7 +25,7 @@ import tempfile
 HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
 from _stdlib_manifest import seed_blob  # noqa: E402
-from _selfhost_sources import compiler_library, self_mode_image, start_child  # noqa: E402
+from _selfhost_sources import compiler_library, core_limit_argv, self_mode_image, start_child  # noqa: E402
 from self_host_native_diag_smoke import HEAD as FRAME_HEAD, TAIL as FRAME_TAIL  # noqa: E402
 
 FROZEN_SEED = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
@@ -90,7 +90,7 @@ def native_compile(stage1: pathlib.Path, src: str, blob: bytes | None = None) ->
 
 def run_elf_bytes(elf: bytes, workdir: pathlib.Path, name: str) -> tuple[int, bytes]:
     p = _write_exec(workdir / name, elf)
-    r = subprocess.run([str(p)], capture_output=True, timeout=120)
+    r = subprocess.run(core_limit_argv([str(p)]), capture_output=True, timeout=120)
     return r.returncode, r.stdout
 
 
@@ -110,7 +110,7 @@ def mlir_build_run(src: str, workdir: pathlib.Path, name: str) -> tuple[str, int
                        capture_output=True, timeout=900, cwd=str(workdir))
     if b.returncode != 0 or not out.exists():
         return "build-failed", b.returncode, (b.stdout + b.stderr)[-600:]
-    r = subprocess.run([str(out)], capture_output=True, timeout=120)
+    r = subprocess.run(core_limit_argv([str(out)]), capture_output=True, timeout=120)
     return "ok", r.returncode, r.stdout
 
 

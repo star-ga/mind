@@ -17,6 +17,7 @@ _DATA = _HERE / "testdata" / "native_record_array"
 
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 
 def _compile(lib: ctypes.CDLL, source: bytes, trace_hash: bytes = bytes(32)) -> bytes:
@@ -40,7 +41,7 @@ def _compile(lib: ctypes.CDLL, source: bytes, trace_hash: bytes = bytes(32)) -> 
 def _run(elf: bytes, path: pathlib.Path) -> int:
     path.write_bytes(elf)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return subprocess.run([str(path)], check=False).returncode
+    return subprocess.run(core_limit_argv([str(path)]), check=False).returncode
 
 
 def _source(name: str) -> bytes:

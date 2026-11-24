@@ -21,6 +21,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import _stdlib_manifest  # noqa: E402
 from _selfhost_sources import start_child  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = pathlib.Path(os.environ["MINDC_SO"])
 SEED = pathlib.Path(os.environ.get(
@@ -64,7 +65,7 @@ def run_elf(blob):
         f.write(blob)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     try:
-        return subprocess.run([str(path)], timeout=8, check=False).returncode
+        return subprocess.run(core_limit_argv([str(path)]), timeout=8, check=False).returncode
     finally:
         path.unlink(missing_ok=True)
 

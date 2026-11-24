@@ -51,6 +51,7 @@ import os
 import tempfile
 import sys
 from _selfhost_sources import start_child
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -88,7 +89,7 @@ def compile_and_run(compiler: pathlib.Path, prog: str, run_timeout: int = 6):
         p = f.name
     os.chmod(p, 0o755)
     try:
-        rc = subprocess.run([p], timeout=run_timeout).returncode
+        rc = subprocess.run(core_limit_argv([p]), timeout=run_timeout).returncode
         return ("exit", rc, None)
     except subprocess.TimeoutExpired:
         return ("HANG", None, None)

@@ -364,13 +364,15 @@ def _argv_images(items: list, cwd) -> list[bytes]:
     return images
 
 
-def start_child(argv, payload=None, *, popen: bool = False, refusal_control: bool = False, **kwargs):
+def start_child(argv, payload=None, *, popen: bool = False, refusal_control: bool = False, core_limit: bool = True,
+                **kwargs):
     """THE one start of a harness child that gets bytes on stdin or an image file on argv; a seed or candidate
     compiler reads its source only there. Any other process start in a tracked Python file is a row of
     PROCESS_STARTS (_process_starts.py). `payload` is the whole stdin (None: no bytes). Before the start,
     raw_compiler_source_error raises RawCompilerSourceError. popen=True: a started Popen that reads the payload from a
     file (for a caller that samples the child). refusal_control=True: the one raw send of compiler source, a control
-    that the lane rules refuse it; a run that is not refused by a `lane.` key raises, so it never gives an image."""
+    that the lane rules refuse it; a run that is not refused by a `lane.` key raises, so it never gives an image.
+    core_limit=True (default): core_limit_argv wraps the program, so every child gets the one core limit."""
     if "input" in kwargs or kwargs.get("stdin") not in (None, subprocess.DEVNULL):
         raise ValueError("start_child: stdin bytes go only through `payload`")
     program = argv if isinstance(argv, (str, bytes, os.PathLike)) else argv[0]
@@ -378,6 +380,8 @@ def start_child(argv, payload=None, *, popen: bool = False, refusal_control: boo
                                       path=(kwargs.get("env") or os.environ).get("PATH"))
     if error and not refusal_control:
         raise RawCompilerSourceError(error)
+    if core_limit:
+        argv = core_limit_argv(argv)
     if not popen:
         result = subprocess.run(argv, input=payload, **kwargs)
         if refusal_control and (result.returncode == 0 or b"(lane." not in (result.stderr or b"")):
@@ -393,25 +397,48 @@ def start_child(argv, payload=None, *, popen: bool = False, refusal_control: boo
         return subprocess.Popen(argv, stdin=feed, **kwargs)
 
 
-def core_limit_one():
-    """The preexec_fn of an image run: the soft core size limit 1, the hard limit unchanged (soft 0 when the hard limit
-    is 0). Never min(1, hard): RLIM_INFINITY is -1 on some Python versions, and that min gave an unlimited soft limit.
-    At a soft limit of exactly 1 Linux aborts a dump to a core_pattern pipe, and it writes no core file under one page:
-    a trap starts no dump handler, and the exit status (a trap is -4) does not change. qemu-user writes its own 1-byte
-    core file of a trapped guest into its working directory, so an emulator child runs in a temporary directory.
-    The child only sets it; core_limit_check proves the value on one real child."""
+def _core_limit_target(argv) -> bool:
+    """True when argv[0] is a bare name or a plausible executable (an ELF header or a script), so prlimit can exec it.
+    False for a path that is absent or not executable: subprocess then raises its OSError, as an image that does not
+    start did before the wrapper, instead of prlimit turning that into its own exit status."""
+    first = os.fsdecode(argv[0]) if argv else ""
+    if os.sep not in first and not (os.altsep and os.altsep in first):
+        return True
+    try:
+        head = pathlib.Path(first).read_bytes()[:64]
+    except OSError:
+        return False
+    return head.startswith(b"#!") or (head.startswith(b"\x7fELF") and len(head) == 64)
+
+
+def core_limit_argv(argv):
+    """The argv of an image run through util-linux `prlimit`: the soft core size limit 1, the hard limit unchanged
+    (soft 0 when the hard limit is 0). Never min(1, hard): RLIM_INFINITY is -1 on some Python versions, and that min
+    gave an unlimited soft limit. At a soft limit of exactly 1 Linux aborts a dump to a core_pattern pipe, and it
+    writes no core file under one page: a trap starts no dump handler, and the exit status (a trap is -4) does not
+    change. prlimit execs the program, so the caller still reads that status, and the start is safe with threads
+    (unlike a preexec_fn). qemu-user writes its own 1-byte core file of a trapped guest into its working directory,
+    so an emulator child runs in a temporary directory."""
     import resource  # POSIX only: the images are Linux programs
     hard = resource.getrlimit(resource.RLIMIT_CORE)[1]
-    return lambda: resource.setrlimit(resource.RLIMIT_CORE, (0 if hard == 0 else 1, hard))
+    program = [argv] if isinstance(argv, (str, bytes, os.PathLike)) else list(argv)
+    if not _core_limit_target(program):
+        return program
+    return [shutil.which("prlimit") or "/usr/bin/prlimit", f"--core={0 if hard == 0 else 1}:", "--", *program]
 
 
 def core_limit_check(run_image) -> bool:
     """True when one real child, a script started by `run_image` (the image runner of _selfhost_identity.py, which
-    applies core_limit_one), reads the soft core limit 1 (0 when the hard limit is 0); else False after a named FAIL
-    line. A gate runs it before its first row: a wrong limit sends every trap to the dump handler of the host."""
+    applies core_limit_argv), reads the soft core limit 1 (0 when the hard limit is 0); else False after a named FAIL
+    line. A gate runs it before its first row: a wrong limit sends every trap to the dump handler of the host. A
+    runner that raises prints the same named FAIL line and returns False, not a traceback."""
     import resource
     want = 0 if resource.getrlimit(resource.RLIMIT_CORE)[1] == 0 else 1
-    got = run_image(f"#!{sys.executable} -I\nimport resource\nprint(resource.getrlimit(resource.RLIMIT_CORE)[0])\n".encode(), 60)
+    try:
+        got = run_image(f"#!{sys.executable} -I\nimport resource\nprint(resource.getrlimit(resource.RLIMIT_CORE)[0])\n".encode(), 60)
+    except Exception as error:  # the runner failed before a child read a limit: this check fails, not the harness
+        print(f"FAIL  core limit start check: the image runner raised {type(error).__name__}: {error}")
+        return False
     if got is None or got[0] != 0 or got[1].strip() != str(want).encode():
         print(f"FAIL  core limit start check: the child read the soft core limit {got}, not {want}")
         return False
@@ -692,7 +719,7 @@ def bounded_native_builds(capture: pathlib.Path, seed: pathlib.Path, seed_sha256
     import resource  # POSIX only: the manual native checks run on Linux
 
     def limits() -> None:
-        for kind, value in ((resource.RLIMIT_AS, 2 << 30), (resource.RLIMIT_CORE, 0), (resource.RLIMIT_CPU, 180)):
+        for kind, value in ((resource.RLIMIT_AS, 2 << 30), (resource.RLIMIT_CPU, 180)):
             resource.setrlimit(kind, (value, value))
     native = capture / "native"
     native.mkdir()

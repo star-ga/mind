@@ -109,7 +109,6 @@ def cases():
 def limited():
     resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
     resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def build_drivers(args):
@@ -143,7 +142,6 @@ def build_drivers(args):
     def compiler_limits():
         resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
         resource.setrlimit(resource.RLIMIT_CPU, (180, 180))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
     def build(label, argv, data=None, cwd=None):
         r = start_child(list(map(str, argv)), data, capture_output=True,

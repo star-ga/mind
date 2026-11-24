@@ -179,7 +179,6 @@ def sha(b):
 
 def limited():
     resource.setrlimit(resource.RLIMIT_AS,(2<<30,2<<30))
-    resource.setrlimit(resource.RLIMIT_CORE,(0,0))
 
 def packet(mode=0,arg=0,arg2=0,source=b'',user=0,route=0,request=None):
     return struct.pack('<16q',mode,arg,arg2,len(source),user,route,*(request or [0]*10))+source+hashlib.sha256(source).digest()

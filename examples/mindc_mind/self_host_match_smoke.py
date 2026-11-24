@@ -45,6 +45,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 
@@ -113,7 +114,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     p = tmp / "mind.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)]).returncode
+    return subprocess.run(core_limit_argv([str(p)])).returncode
 
 
 # arm sets: 2-arm, 3-arm, 4-arm (pattern -> value); wildcard yields 99.

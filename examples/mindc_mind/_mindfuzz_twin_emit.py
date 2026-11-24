@@ -13,6 +13,7 @@ import os
 import pathlib
 import re
 import subprocess
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _RUST_REF_TEST = "_ref_mic3_dump"
 _RUST_REF_FEATURES = "std-surface cross-module-imports"
@@ -241,7 +242,7 @@ class RuntimeCheck:
     @staticmethod
     def _run(path: pathlib.Path):
         try:
-            return subprocess.run([str(path)], capture_output=True, timeout=20).returncode
+            return subprocess.run(core_limit_argv([str(path)]), capture_output=True, timeout=20).returncode
         except subprocess.TimeoutExpired:
             return "timeout"
         except OSError as e:

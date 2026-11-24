@@ -90,6 +90,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 if not SO or not pathlib.Path(str(SO)).exists():
@@ -121,7 +122,7 @@ def run(src: str):
     p.write_bytes(e)
     p.chmod(p.stat().st_mode | stat.S_IEXEC)
     try:
-        return ("OK", subprocess.run([str(p)], timeout=10).returncode)
+        return ("OK", subprocess.run(core_limit_argv([str(p)]), timeout=10).returncode)
     finally:
         try:
             p.unlink()

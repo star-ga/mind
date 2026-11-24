@@ -43,6 +43,7 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 MARKER = 42
 
@@ -88,7 +89,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> tuple:
     p = tmp / "case.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    r = subprocess.run([str(p)], capture_output=True)
+    r = subprocess.run(core_limit_argv([str(p)]), capture_output=True)
     return r.returncode, r.stdout
 
 

@@ -218,8 +218,8 @@ GATED_EVENTS = ("push", "pull_request")
 # _selfhost_identity.py is 657 lines (the identity tool, its partitions and the compiler-only mode dispatch; its
 # self-tests are in _selfhost_identity_selftest.py).
 # _selfhost_string_rows.py is 721 lines (the string-rows runner).
-# _selfhost_sources.py is 714 lines (capture, the compile helpers, the one stdin start helper and the core limit of an image run; 327 at e52217f4).
-# native_lane_value_shapes_smoke.py is 799 lines (800 at e52217f4).
+# _selfhost_sources.py is 741 lines (capture, the compile helpers, the one stdin start helper and the core limit of an image run; 327 at e52217f4).
+# native_lane_value_shapes_smoke.py is 800 lines (800 at e52217f4).
 # The bodies run only through that smoke.
 # 331 -> 332 adds examples/mindc_mind/_selfhost_alloc_rows.py, the rows of the allocator-class
 # smoke (its generated default-profile programs and its planted changes), moved unchanged out of the

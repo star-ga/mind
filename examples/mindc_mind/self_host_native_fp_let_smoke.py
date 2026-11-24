@@ -34,6 +34,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 _HERE = pathlib.Path(__file__).parent
 _DEFAULT_SO = _HERE / "libmindc_mind.so"
@@ -54,7 +55,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     p = tmp / "mind_fp_let.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)]).returncode
+    return subprocess.run(core_limit_argv([str(p)])).returncode
 
 
 def main() -> int:

@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 SO = os.environ.get("MINDC_SO", str(HERE / "libmindc_mind.so"))
@@ -52,7 +53,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
     p = tmp / "mind.elf"
     p.write_bytes(elf)
     p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return subprocess.run([str(p)]).returncode
+    return subprocess.run(core_limit_argv([str(p)])).returncode
 
 
 # (name, source, expected exit code). Each program's main()->i64 return IS the

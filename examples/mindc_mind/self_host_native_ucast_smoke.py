@@ -47,6 +47,7 @@ _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
 from _selfhost_so import resolve_so  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 MINDC = os.environ.get("MINDC_BIN", str(_REPO / "target" / "release" / "mindc"))
@@ -108,7 +109,7 @@ def _run_elf(elf: bytes) -> int:
         path = f.name
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
     try:
-        return subprocess.run([path], timeout=30).returncode
+        return subprocess.run(core_limit_argv([path]), timeout=30).returncode
     finally:
         os.unlink(path)
 
@@ -126,7 +127,7 @@ def _run_live(src: bytes) -> int:
         if r.returncode != 0 or not b.exists():
             return -1
         b.chmod(b.stat().st_mode | stat.S_IEXEC)
-        return subprocess.run([str(b)], timeout=30).returncode
+        return subprocess.run(core_limit_argv([str(b)]), timeout=30).returncode
 
 
 def main() -> int:

@@ -70,6 +70,7 @@ from _selfhost_sources import compiler_library, self_mode_image, start_child  # 
 # Reuse the loop's EXACT source-combining so the headline compiles the identical
 # bytes the frozen stage1.elf was minted from.
 from self_host_loop_smoke import build_seed  # noqa: E402
+from _selfhost_sources import core_limit_argv  # noqa: E402
 
 SO = resolve_so()
 
@@ -224,7 +225,7 @@ def main() -> int:
             print(f"  FAIL  small-fixture: driver ELF (exit {rc2}, {len(out2)}B) != "
                   f"direct selftest_native_elf_u ({len(direct)}B) — driver miscompiled")
             return 1
-        code = subprocess.run([str(_write_exec(td, "add.elf", out2))]).returncode
+        code = subprocess.run(core_limit_argv([str(_write_exec(td, "add.elf", out2))])).returncode
         if code != 5:
             print(f"  FAIL  small-fixture ELF ran but exited {code} (expected 5)")
             return 1
@@ -234,7 +235,7 @@ def main() -> int:
         # --------------------------------------------------------------
         # 4. NEGATIVE: no input-path arg -> usage exit 2 (fail-closed CLI).
         # --------------------------------------------------------------
-        r_noarg = subprocess.run([str(drv)], stdout=subprocess.PIPE,
+        r_noarg = subprocess.run(core_limit_argv([str(drv)]), stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, timeout=30)
         if r_noarg.returncode != 2 or r_noarg.stdout:
             print(f"  FAIL  no-arg invocation exited {r_noarg.returncode} with "
