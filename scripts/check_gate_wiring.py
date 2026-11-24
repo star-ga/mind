@@ -218,7 +218,7 @@ GATED_EVENTS = ("push", "pull_request")
 # _selfhost_identity.py is 657 lines (the identity tool, its partitions and the compiler-only mode dispatch; its
 # self-tests are in _selfhost_identity_selftest.py).
 # _selfhost_string_rows.py is 721 lines (the string-rows runner).
-# _selfhost_sources.py is 741 lines (capture, the compile helpers, the one stdin start helper and the core limit of an image run; 327 at e52217f4).
+# _selfhost_sources.py is 726 lines (capture, the compile helpers, the one stdin start helper and the core limit of an image run; 327 at e52217f4).
 # native_lane_value_shapes_smoke.py is 800 lines (800 at e52217f4).
 # The bodies run only through that smoke.
 # 331 -> 332 adds examples/mindc_mind/_selfhost_alloc_rows.py, the rows of the allocator-class
@@ -240,7 +240,7 @@ GATED_EVENTS = ("push", "pull_request")
 # 336 -> 337 adds examples/mindc_mind/_selfhost_identity_selftest.py, the planted self-tests of the identity
 # partitions, moved out of _selfhost_identity.py (800 -> 657 lines). The merged selftest now plants
 # one break per group-kernel reason guard.
-# history-lines: examples/mindc_mind/_selfhost_identity.py=657 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=714 examples/mindc_mind/native_lane_value_shapes_smoke.py=799
+# history-lines: examples/mindc_mind/_selfhost_identity.py=657 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=726 examples/mindc_mind/native_lane_value_shapes_smoke.py=800
 HARNESS_CEILING = 337  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would

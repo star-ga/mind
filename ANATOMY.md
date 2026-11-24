@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3531 | **Est. tokens:** ~6,208,165
-**Generated:** 2026-11-24 08:06 UTC
+**Files:** 3533 | **Est. tokens:** ~6,210,940
+**Generated:** 2026-11-24 09:22 UTC
 
 ## Token Budget Guide
 
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 359 | ~1,077,549 |
+| `examples/mindc_mind/` | 361 | ~1,080,168 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -140,7 +140,7 @@
 | `.github/workflows/` | 10 | ~23,560 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 2 | ~24,954 |
-| `scripts/` | 36 | ~169,994 |
+| `scripts/` | 36 | ~170,150 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -771,30 +771,31 @@
 - `mandelbrot_strict.mind` (~982 tok, large) — Strict-f64 Mandelbrot escape-count checksum — a determinism-wedge demo.
 ### `examples/mindc_mind/`
 
-- `backend_native_bridge_smoke.py` (~3993 tok, huge) — RI-D slice 1 gate (task #110): `mindc build --backend native` is a byte-faithful
+- `backend_native_bridge_smoke.py` (~4013 tok, huge) — RI-D slice 1 gate (task #110): `mindc build --backend native` is a byte-faithful
 - `bootstrap_smoke.py` (~2473 tok, huge)
 - `branch_shadow_crossbackend_smoke.py` (~2050 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
 - `_cf_corpus.py` (~5962 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `_cf_giant.py` (~9117 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
-- `_cf_oracle.py` (~2024 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
+- `_cf_harness.py` (~2041 tok, huge) — Low-level helpers of self_host_native_cf_smoke.py: the stdin image, the
+- `_cf_oracle.py` (~2027 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
 - `check_driver.mind` (~9782 tok, huge) — ===========================================================================
-- `closure_netverify.py` (~1423 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
+- `closure_netverify.py` (~1442 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1215 tok, large)
 - `cutover_coverage_measure.py` (~3255 tok, huge)
 - `_diagnostic_project.py` (~376 tok, medium) — Owned CLI projects for diagnostic smoke fixtures."""
-- `div_shift_cmp_edge_smoke.py` (~2106 tok, huge)
-- `enum_netverify.py` (~1957 tok, huge) — # Canonical independent net-verify harness for C-LIKE ENUMS in the native-ELF backend.
-- `_exec_retry.py` (~1166 tok, large) — Retry of a busy exec (ETXTBSY) for a smoke that writes a program file and runs
+- `div_shift_cmp_edge_smoke.py` (~2126 tok, huge)
+- `enum_netverify.py` (~1977 tok, huge) — # Canonical independent net-verify harness for C-LIKE ENUMS in the native-ELF backend.
+- `_exec_retry.py` (~1169 tok, large) — Retry of a busy exec (ETXTBSY) for a smoke that writes a program file and runs
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `fast_keystone.sh` (~3913 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
-- `field_store_netverify.py` (~1413 tok, large) — # Canonical independent value harness for struct field STORES (`p.x = v`) in the
+- `field_store_netverify.py` (~1433 tok, large) — # Canonical independent value harness for struct field STORES (`p.x = v`) in the
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3337 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `_frozen_native_oracle.py` (~384 tok, medium) — Integrity-checked frozen references for the native ELF smoke."""
 - `full_strtab_smoke.py` (~1663 tok, huge)
 - `gap_corpus_smoke.py` (~5789 tok, huge)
-- `general_float_netverify.py` (~2001 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
+- `general_float_netverify.py` (~2020 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `h2b_exclusion_controls_check.py` (~4235 tok, huge) — H2b exclusion positive controls.
 - `h2b_fmt_identity_check.py` (~3861 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
@@ -807,16 +808,16 @@
 - `mic3_oracle_smoke.py` (~1060 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22585 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `mindfuzz_self_host.py` (~11993 tok, huge)
-- `_mindfuzz_twin_emit.py` (~4697 tok, huge) — Twin-emitter half of the self-host differential fuzzer.
-- `mod_operator_smoke.py` (~2871 tok, huge)
+- `_mindfuzz_twin_emit.py` (~4717 tok, huge) — Twin-emitter half of the self-host differential fuzzer.
+- `mod_operator_smoke.py` (~2894 tok, huge)
 - `multi_let_smoke.py` (~1539 tok, huge)
 - `native_cabi_driver.mind` (~308 tok, medium) — Author: STARGA Inc. Diagnostic stdin wrapper; no C imports or lane admission.
 - `native_cabi_registry.md` (~1708 tok, huge) — Typed native C ABI registry (candidate metadata slice)
-- `native_cabi_registry_smoke.py` (~1999 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
-- `native_c_call_emit_check.py` (~3687 tok, huge) — Fixed scalar call emission: frozen metadata refusals and real ABI execution.
+- `native_cabi_registry_smoke.py` (~1987 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
+- `native_c_call_emit_check.py` (~3683 tok, huge) — Fixed scalar call emission: frozen metadata refusals and real ABI execution.
 - `native_c_call_emit_driver.mind` (~618 tok, large) — Copyright 2026 STARGA Inc.
 - `native_c_call_emit.mind` (~1514 tok, huge) — Copyright 2026 STARGA Inc.
-- `native_c_call_plan_check.py` (~2839 tok, huge) — Frozen scalar SysV plan cases, compared with native and fresh MLIR drivers.
+- `native_c_call_plan_check.py` (~2812 tok, huge) — Frozen scalar SysV plan cases, compared with native and fresh MLIR drivers.
 - `native_c_call_plan_driver.mind` (~499 tok, medium) — Copyright 2026 STARGA Inc.
 - `native_c_call_plan.mind` (~1394 tok, large) — Copyright 2026 STARGA Inc.
 - `native_c_variadic_emit_check.py` (~1675 tok, huge) — Capture bytes or delegate transport. All call assertions execute in MIND."""
@@ -827,7 +828,7 @@
 - `native_c_variadic_plan.mind` (~1624 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_c_variadic_verify.mind` (~381 tok, medium) — Copyright 2026 STARGA Inc.
 - `native_dynamic_allocator_cases.tsv` (~336 tok, medium) — # Frozen before implementation/build; exact expected stdout is empty. exit70 std
-- `native_dynamic_allocator_check.py` (~3477 tok, huge) — External diagnostic transport for the MIND allocator emitter/runtime.
+- `native_dynamic_allocator_check.py` (~3465 tok, huge) — External diagnostic transport for the MIND allocator emitter/runtime.
 - `native_dynamic_allocator_driver.mind` (~176 tok, small) — Copyright 2026 STARGA Inc. Standalone diagnostic, no compiler admission.
 - `native_dynamic_allocator.md` (~2366 tok, huge) — Bounded dynamic allocator component
 - `native_dynamic_allocator.mind` (~5402 tok, huge) — Copyright 2026 STARGA Inc.
@@ -835,14 +836,14 @@
 - `native_dynamic_allocator_ownership_cases.tsv` (~122 tok, small) — # Supplemental ownership-before-size contract; original39-case catalogue unchang
 - `native_dynamic_fixture.mind` (~1736 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_cases.tsv` (~760 tok, large) — id	name	category	runtime_exit	stdout_hex
-- `native_dynamic_image_check.py` (~6717 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
+- `native_dynamic_image_check.py` (~6704 tok, huge) — Bounded standalone image-extension diagnostics, never compiler qualification."""
 - `native_dynamic_image_expectation_corrections.tsv` (~44 tok, tiny) — id	field	original	corrected	reason
 - `native_dynamic_image_fixture.mind` (~3446 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image.md` (~3173 tok, huge) — Dynamic image writer with checked runtime mappings
 - `native_dynamic_image.mind` (~3470 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_dynamic_image_mutations.tsv` (~74 tok, small) — name	case	expected_detection
 - `native_dynamic_layout_cases.tsv` (~2646 tok, huge) — id	request_i64	expected_exit	output_delta	expected_i64
-- `native_dynamic_layout_check.py` (~2980 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
+- `native_dynamic_layout_check.py` (~2967 tok, huge) — Diagnostic transport for the standalone MIND layout planner, not admission.
 - `native_dynamic_layout_driver.mind` (~469 tok, medium) — Copyright 2026 STARGA Inc. Diagnostic wrapper, not a compiler entry point.
 - `native_dynamic_layout.md` (~2529 tok, huge) — Checked dynamic MIND image layout, version 1
 - `native_dynamic_layout.mind` (~1459 tok, large) — Copyright 2026 STARGA Inc.
@@ -852,26 +853,26 @@
 - `native_dynamic_mic_fixture.mind` (~1033 tok, large) — Copyright 2026 STARGA Inc.
 - `native_dynamic_mic_mutations.tsv` (~75 tok, small) — name	function	case	expected_detection
 - `native_dynamic.mind` (~4642 tok, huge) — Copyright 2026 STARGA Inc.
-- `native_dynamic_writer_check.py` (~3669 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
+- `native_dynamic_writer_check.py` (~3656 tok, huge) — Native MIND dynamic ELF writer diagnostics; not compiler qualification.
 - `native_emission_context.md` (~3874 tok, huge) — Explicit target context and source-lowered module parts
 - `native_emission_context.mind` (~1271 tok, large) — Copyright 2026 STARGA Inc.
 - `native_fixed_scope_manifest.mind` (~4926 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1400 tok, large) — Four-argument native I/O parity
-- `native_lane_op_differential_smoke.py` (~7746 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
-- `native_lane_value_shapes_smoke.py` (~14734 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
+- `native_lane_op_differential_smoke.py` (~7769 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
+- `native_lane_value_shapes_smoke.py` (~14771 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 - `native_libc_abi_rows.tsv` (~644 tok, large) — # selfhost column: the native self-host route verdict, the seed's own. accept = 
-- `native_libc_binding_check.py` (~7880 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
+- `native_libc_binding_check.py` (~7867 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret
 - `native_libc_binding_fixture.mind` (~1063 tok, large) — Copyright 2026 STARGA Inc. Diagnostic binary transport, never admission.
 - `native_libc_binding.md` (~3820 tok, huge) — Source-bound libc declaration metadata
 - `native_libc_binding.mind` (~16144 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_binding_mutations.tsv` (~147 tok, small) — name	source_change	required_detection
-- `native_libc_io_check.py` (~5547 tok, huge) — Source-bound fixed libc I/O thunk diagnostics; no production admission."""
+- `native_libc_io_check.py` (~5536 tok, huge) — Source-bound fixed libc I/O thunk diagnostics; no production admission."""
 - `native_libc_io_fixture.mind` (~2121 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_io.md` (~2089 tok, huge) — Fixed libc intrinsic I/O component
 - `native_libc_io.mind` (~3137 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_startup_cases.tsv` (~362 tok, medium) — # Predeclared standalone startup contract. stderr empty except documented loader
-- `native_libc_startup_check.py` (~6426 tok, huge) — Actual dynamic-loader diagnostics for the standalone MIND startup adapter."""
+- `native_libc_startup_check.py` (~6413 tok, huge) — Actual dynamic-loader diagnostics for the standalone MIND startup adapter."""
 - `native_libc_startup_fixture.mind` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_startup.md` (~2589 tok, huge) — Standalone libc startup adapter
 - `native_libc_startup.mind` (~1864 tok, huge) — Copyright 2026 STARGA Inc.
@@ -882,7 +883,7 @@
 - `native_scoped_source_image.md` (~1925 tok, huge) — Scoped fixed C calls: NSF/1 candidate
 - `native_scoped_source_image.mind` (~5023 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_source_driver_check.md` (~2601 tok, huge) — Reproducing the source-input adapter diagnostic
-- `native_source_driver_check.py` (~5828 tok, huge) — Explicit-instrument NSI_STDIN_V1 diagnostic, not compiler qualification.
+- `native_source_driver_check.py` (~5814 tok, huge) — Explicit-instrument NSI_STDIN_V1 diagnostic, not compiler qualification.
 - `native_source_driver.md` (~906 tok, large) — Native source-input adapter
 - `native_source_driver.mind` (~2228 tok, huge) — STARGA Inc. NSI_STDIN_V1 source compiler transport.
 - `native_source_image.md` (~2374 tok, huge) — Source-lowered Linux libc image candidate
@@ -891,7 +892,7 @@
 - `native_stream_io_cases.json` (~3715 tok, huge) — Keys: contract, cases
 - `native_stream_io_cases_v2.json` (~4374 tok, huge) — Keys: contract, cases
 - `native_stream_io_cases_v3.json` (~4377 tok, huge) — Keys: contract, cases
-- `native_stream_io_check.py` (~1426 tok, large) — Source-lowered MIND stream-I/O diagnostic transport, not compiler admission.
+- `native_stream_io_check.py` (~1413 tok, large) — Source-lowered MIND stream-I/O diagnostic transport, not compiler admission.
 - `native_stream_io.md` (~2162 tok, huge) — Source-lowered stream I/O candidate
 - `native_stream_io_mutation_observations.json` (~2000 tok, huge) — Keys: candidate_main_sha256, recipe_sha256, results, limitations
 - `native_stream_io_mutations.json` (~459 tok, medium)
@@ -958,7 +959,7 @@
 - `nbx_cuda_rows2.mind` (~3233 tok, huge) — Copyright 2026 STARGA Inc.
 - `nbx_libc_rows.mind` (~736 tok, large) — Copyright 2026 STARGA Inc.
 - `now_ns_smoke.py` (~1013 tok, large) — # Copyright 2025 STARGA Inc.
-- `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
+- `option_netverify.py` (~2340 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4516 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
 - `PARTS.md` (~6464 tok, huge) — Compiler part files
@@ -966,131 +967,132 @@
 - `_ref_add.note` (~16 tok, tiny) — 5de995a99c75ea86bf680d8369bf903c8ced86c144b92eeae4664078225b98e1
 - `_ref_if_ret.note` (~16 tok, tiny) — 37fdad11eeb3d8763df53419f13dd9031ada3df2308374e1b62ee547685c74ce
 - `_ref_main.note` (~16 tok, tiny) — 9b0cb46e1365e85979120f49caf6fdf5cadcd29a8a7a29f8859e94cc4024e2cc
-- `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
+- `ref_netverify.py` (~1493 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — a7fc331ef6d24dd69ff9c0aa2720e3dbfe1d7f472ef3872ba0d22f9b2fa53f20
 - `_ref_struct_field.note` (~16 tok, tiny) — d73ada9d0a64d7fe0b2e8f2ec58bbe469a0a9a94ec493b2ac45b6933e6e03162
 - `_ref_value_if.note` (~16 tok, tiny) — 0dcc62ae9e1f2b72eafa8814156504d627d541f2d5feabe12cf2b9a28947787a
-- `rh_f64_aggregate_canary_smoke.py` (~1603 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
-- `ri_d1_frozen_profile_gate.py` (~4885 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
-- `self_host_alias_controls_smoke.py` (~1458 tok, large) — Focused native alias-environment controls.
+- `rh_f64_aggregate_canary_smoke.py` (~1622 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
+- `ri_d1_frozen_profile_gate.py` (~4909 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
+- `self_host_alias_controls_smoke.py` (~1478 tok, large) — Focused native alias-environment controls.
 - `_selfhost_alloc_rows.py` (~5636 tok, huge) — Rows of the allocator-class smoke (self_host_native_alloc_bounded_smoke.py): the default-profile
-- `self_host_andor_precedence_smoke.py` (~1685 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
-- `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
+- `self_host_andor_precedence_smoke.py` (~1709 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
+- `self_host_andor_smoke.py` (~2161 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
 - `self_host_arena_growth_smoke.py` (~1413 tok, large)
-- `self_host_args_from_os_smoke.py` (~1356 tok, large)
+- `self_host_args_from_os_smoke.py` (~1375 tok, large)
 - `selfhost_argv_driver.mind` (~1320 tok, large) — ===========================================================================
-- `self_host_argv_smoke.py` (~1136 tok, large)
+- `self_host_argv_smoke.py` (~1156 tok, large)
 - `self_host_array_smoke.py` (~1425 tok, large)
-- `self_host_arridx_mic3_smoke.py` (~1864 tok, huge)
+- `self_host_arridx_mic3_smoke.py` (~1883 tok, huge)
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `self_host_bounded_profile_smoke.py` (~7760 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1226 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
-- `self_host_cast_mic3_smoke.py` (~4740 tok, huge)
+- `self_host_cast_mic3_smoke.py` (~4759 tok, huge)
 - `self_host_check_driver_smoke.py` (~2889 tok, huge)
-- `self_host_continue_smoke.py` (~4688 tok, huge) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
+- `self_host_continue_smoke.py` (~4707 tok, huge) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
 - `selfhost_driver.mind` (~7395 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
-- `self_host_else_if_smoke.py` (~1715 tok, huge)
-- `self_host_failclosed_smoke.py` (~9980 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
+- `self_host_else_if_smoke.py` (~1735 tok, huge)
+- `self_host_failclosed_smoke.py` (~9999 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
 - `self_host_float_lit_exact_smoke.py` (~1368 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
-- `self_host_for_smoke.py` (~11122 tok, huge) — Permanent battery for the self-host range-`for` loop.
-- `_selfhost_identity.py` (~11772 tok, huge) — Two-compiler identity of the native-lane smokes (`--identity-vs`), its partitions and their self-tests,
-- `self_host_if_region_carry_smoke.py` (~5264 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
-- `self_host_ifret_chain_mic3_smoke.py` (~1730 tok, huge)
+- `self_host_for_smoke.py` (~11141 tok, huge) — Permanent battery for the self-host range-`for` loop.
+- `_selfhost_identity.py` (~9099 tok, huge) — Two-compiler identity of the native-lane smokes (`--identity-vs`), its partitions and their self-tests,
+- `_selfhost_identity_selftest.py` (~2926 tok, huge) — Self-tests of the identity partition rules (`--identity-vs`): the merged partition and the allocator
+- `self_host_if_region_carry_smoke.py` (~5284 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
+- `self_host_ifret_chain_mic3_smoke.py` (~1749 tok, huge)
 - `self_host_letpath_failclose_smoke.py` (~2243 tok, huge) — Self-host LET-PATH fail-closed smoke — pins the S1-collapse fail-open wall.
-- `self_host_lockstep_smoke.py` (~2241 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
+- `self_host_lockstep_smoke.py` (~2260 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `_selfhost_loop_reseed.py` (~4296 tok, huge) — Seed-provenance support for the LOOP harness: the legacy Rust-seeded
 - `self_host_loop_smoke.md` (~2809 tok, huge) — Self-host LOOP gate contract
 - `self_host_loop_smoke.py` (~9669 tok, huge) — Self-host LOOP reproduction and advancement gate.
-- `self_host_matchscalar_mic3_smoke.py` (~1725 tok, huge)
-- `self_host_match_smoke.py` (~1893 tok, huge)
-- `self_host_mic3_float_valueif_smoke.py` (~1803 tok, huge)
+- `self_host_matchscalar_mic3_smoke.py` (~1744 tok, huge)
+- `self_host_match_smoke.py` (~1912 tok, huge)
+- `self_host_mic3_float_valueif_smoke.py` (~1822 tok, huge)
 - `self_host_mlir_smoke.py` (~1954 tok, huge)
-- `self_host_narrow_let_mic3_smoke.py` (~1612 tok, huge)
-- `self_host_narrow_param_smoke.py` (~12044 tok, huge) — Native-ELF smoke for narrow-width (i8/i16/i32) function PARAMETERS carried by a loop.
+- `self_host_narrow_let_mic3_smoke.py` (~1631 tok, huge)
+- `self_host_narrow_param_smoke.py` (~12063 tok, huge) — Native-ELF smoke for narrow-width (i8/i16/i32) function PARAMETERS carried by a loop.
 - `self_host_native_alloc_bounded_smoke.py` (~9548 tok, huge) — Bounded-profile allocator gate (W11c): grow-on-demand arena, C-runtime
-- `self_host_native_autowrap_smoke.py` (~2442 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
-- `self_host_native_avx2_dot_f32_smoke.py` (~1663 tok, huge) — RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM) STRICT-FP DOT.
-- `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
-- `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
-- `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
-- `self_host_native_cf_smoke.py` (~10126 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
-- `self_host_native_diag_smoke.py` (~7857 tok, huge) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
+- `self_host_native_autowrap_smoke.py` (~2461 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
+- `self_host_native_avx2_dot_f32_smoke.py` (~1682 tok, huge) — RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM) STRICT-FP DOT.
+- `self_host_native_blas_dot_i16_smoke.py` (~2899 tok, huge)
+- `self_host_native_blas_dot_q16_smoke.py` (~1793 tok, huge)
+- `self_host_native_cast_conv_smoke.py` (~1392 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
+- `self_host_native_cf_smoke.py` (~8299 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
+- `self_host_native_diag_smoke.py` (~7870 tok, huge) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_div_trap_smoke.py` (~10002 tok, huge)
-- `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
-- `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
-- `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
+- `self_host_native_dot_f32_smoke.py` (~1455 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
+- `self_host_native_dot_l1_q16_smoke.py` (~1207 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
+- `self_host_native_elf_alignment_smoke.py` (~1921 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
 - `self_host_native_elf_smoke.py` (~11024 tok, huge)
-- `self_host_native_emission_context_smoke.py` (~8881 tok, huge) — Independent diagnostic transport for native emission contexts.
+- `self_host_native_emission_context_smoke.py` (~8868 tok, huge) — Independent diagnostic transport for native emission contexts.
 - `self_host_native_f64_intrinsics_smoke.py` (~4928 tok, huge) — W8c smoke: float builtins/intrinsics in the pure-MIND native compiler.
 - `self_host_native_f64_lit_smoke.py` (~3084 tok, huge) — W8b smoke: correctly rounded decimal -> binary64 float literals in the pure-MIND
-- `self_host_native_fp_binop_smoke.py` (~1201 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
-- `self_host_native_fp_call_smoke.py` (~5469 tok, huge) — RI-D2 S-C1: FLOAT call-RETURN dtype through the native-ELF general nb_expr lowering.
-- `self_host_native_fp_expr_smoke.py` (~1125 tok, large) — RI-B1 nb_expr float-scalar routing gate (zero MLIR/LLVM).
-- `self_host_native_fp_field_smoke.py` (~1997 tok, huge) — RI-D2 S-D FLOAT struct-FIELD READ dtype through native-ELF general lowering (zero MLIR).
-- `self_host_native_fp_let_smoke.py` (~1313 tok, large) — RI-B1 (#107 follow-up) FLOAT dtype propagation ACROSS a LET binding (zero MLIR/LLVM).
-- `self_host_native_fp_param_smoke.py` (~1508 tok, huge) — RI-D2 S-B: FLOAT fn-param dtype classification + SysV SSE-spill ABI (zero MLIR/LLVM).
-- `self_host_native_fp_smoke.py` (~1142 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
-- `self_host_native_gemm_i8_smoke.py` (~1154 tok, large) — RI-B2-S7 (#108) — native-ELF scalar int8 GEMM (matrix x matrix), byte-identity rung.
-- `self_host_native_gemm_q16_smoke.py` (~1157 tok, large) — RI-B2-S7 (#108) — native-ELF scalar GEMM Q16.16 (matrix x matrix), byte-identity rung.
-- `self_host_native_gemv_i16_smoke.py` (~1148 tok, large) — RI-B2-S6 (#108) — native-ELF scalar GEMV int16 (matrix x vector), byte-identity rung.
-- `self_host_native_gemv_q16_smoke.py` (~1142 tok, large) — RI-B2-S6 (#108) — native-ELF scalar GEMV Q16.16 (matrix x vector), byte-identity rung.
-- `self_host_native_genf32_smoke.py` (~1066 tok, large) — RI-B2-S8 STEP B (#108) — isolate the LCG f32 rounding BEFORE the dot.
-- `self_host_native_intdot_i16_smoke.py` (~1121 tok, large) — RI-B2-S2 (#108) — native-ELF scalar int16 DOT-PRODUCT, FIRST byte-identity rung.
-- `self_host_native_intdot_q16_smoke.py` (~1111 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
-- `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
-- `self_host_native_io_smoke.py` (~2595 tok, huge) — Author: STARGA Inc. Exact four-argument I/O parity and raw-ABI controls.
-- `self_host_native_main_args_smoke.py` (~2423 tok, huge)
-- `self_host_native_matmul_f32_v_smoke.py` (~1718 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
-- `self_host_native_misc_census_smoke.py` (~3313 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
-- `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
-- `self_host_native_narrow_arith_batch_smoke.py` (~2554 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
-- `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
-- `self_host_native_narrow_paramret_smoke.py` (~2029 tok, huge) — Byte-behavior smoke for narrow-int (i8/i16/i32) PARAM + RETURN auto-wrap in the
-- `self_host_native_narrowwrap_smoke.py` (~1673 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 two's-complement
-- `self_host_native_process_smoke.py` (~2483 tok, huge) — Linux x86-64 process/clock/directory syscall parity, in disposable directories.
-- `self_host_native_record_array_smoke.py` (~2437 tok, huge) — Focused pure-MIND native fixed-array record-field gate."""
-- `self_host_native_record_trace_smoke.py` (~4806 tok, huge) — Canonical-trace contract for record-field reads, incl. the fixed-array case.
-- `self_host_native_scalar_f32_smoke.py` (~1548 tok, huge) — Phase C1-remainder f32 rung — native-ELF scalar SINGLE-precision chain.
-- `self_host_native_scalar_f64_smoke.py` (~1301 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
-- `self_host_native_scalar_narrow_smoke.py` (~1805 tok, huge) — RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
-- `self_host_native_scast_smoke.py` (~1699 tok, huge)
+- `self_host_native_fp_binop_smoke.py` (~1220 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
+- `self_host_native_fp_call_smoke.py` (~5488 tok, huge) — RI-D2 S-C1: FLOAT call-RETURN dtype through the native-ELF general nb_expr lowering.
+- `self_host_native_fp_expr_smoke.py` (~1145 tok, large) — RI-B1 nb_expr float-scalar routing gate (zero MLIR/LLVM).
+- `self_host_native_fp_field_smoke.py` (~2016 tok, huge) — RI-D2 S-D FLOAT struct-FIELD READ dtype through native-ELF general lowering (zero MLIR).
+- `self_host_native_fp_let_smoke.py` (~1333 tok, large) — RI-B1 (#107 follow-up) FLOAT dtype propagation ACROSS a LET binding (zero MLIR/LLVM).
+- `self_host_native_fp_param_smoke.py` (~1528 tok, huge) — RI-D2 S-B: FLOAT fn-param dtype classification + SysV SSE-spill ABI (zero MLIR/LLVM).
+- `self_host_native_fp_smoke.py` (~1161 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
+- `self_host_native_gemm_i8_smoke.py` (~1173 tok, large) — RI-B2-S7 (#108) — native-ELF scalar int8 GEMM (matrix x matrix), byte-identity rung.
+- `self_host_native_gemm_q16_smoke.py` (~1176 tok, large) — RI-B2-S7 (#108) — native-ELF scalar GEMM Q16.16 (matrix x matrix), byte-identity rung.
+- `self_host_native_gemv_i16_smoke.py` (~1168 tok, large) — RI-B2-S6 (#108) — native-ELF scalar GEMV int16 (matrix x vector), byte-identity rung.
+- `self_host_native_gemv_q16_smoke.py` (~1161 tok, large) — RI-B2-S6 (#108) — native-ELF scalar GEMV Q16.16 (matrix x vector), byte-identity rung.
+- `self_host_native_genf32_smoke.py` (~1085 tok, large) — RI-B2-S8 STEP B (#108) — isolate the LCG f32 rounding BEFORE the dot.
+- `self_host_native_intdot_i16_smoke.py` (~1140 tok, large) — RI-B2-S2 (#108) — native-ELF scalar int16 DOT-PRODUCT, FIRST byte-identity rung.
+- `self_host_native_intdot_q16_smoke.py` (~1130 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
+- `self_host_native_intdot_smoke.py` (~1184 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
+- `self_host_native_io_smoke.py` (~2582 tok, huge) — Author: STARGA Inc. Exact four-argument I/O parity and raw-ABI controls.
+- `self_host_native_main_args_smoke.py` (~2442 tok, huge)
+- `self_host_native_matmul_f32_v_smoke.py` (~1737 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
+- `self_host_native_misc_census_smoke.py` (~3332 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
+- `self_host_native_narrow_add_i8_smoke.py` (~2279 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
+- `self_host_native_narrow_arith_batch_smoke.py` (~2574 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
+- `self_host_native_narrowint_smoke.py` (~1675 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
+- `self_host_native_narrow_paramret_smoke.py` (~2049 tok, huge) — Byte-behavior smoke for narrow-int (i8/i16/i32) PARAM + RETURN auto-wrap in the
+- `self_host_native_narrowwrap_smoke.py` (~1692 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 two's-complement
+- `self_host_native_process_smoke.py` (~2502 tok, huge) — Linux x86-64 process/clock/directory syscall parity, in disposable directories.
+- `self_host_native_record_array_smoke.py` (~2456 tok, huge) — Focused pure-MIND native fixed-array record-field gate."""
+- `self_host_native_record_trace_smoke.py` (~4825 tok, huge) — Canonical-trace contract for record-field reads, incl. the fixed-array case.
+- `self_host_native_scalar_f32_smoke.py` (~1568 tok, huge) — Phase C1-remainder f32 rung — native-ELF scalar SINGLE-precision chain.
+- `self_host_native_scalar_f64_smoke.py` (~1320 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
+- `self_host_native_scalar_narrow_smoke.py` (~1829 tok, huge) — RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
+- `self_host_native_scast_smoke.py` (~1722 tok, huge)
 - `self_host_native_shadow_scope_smoke.py` (~10698 tok, huge) — Lexical scoping of nested bindings in the native seed (block / loop-body shadows).
-- `self_host_native_simd_dot_f32_smoke.py` (~1606 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
-- `self_host_native_simd_dot_i16_smoke.py` (~1234 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
-- `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
-- `self_host_native_string_escape_smoke.py` (~3313 tok, huge) — Source-bound native/MLIR string values and bounded decoder diagnostics.
-- `self_host_native_string_smoke.py` (~7049 tok, huge)
-- `self_host_native_sys_smoke.py` (~4877 tok, huge) — Linux x86-64 filesystem parity: current-source stage1 versus Rust/MLIR.
-- `self_host_native_tensor_batchsum_smoke.py` (~2372 tok, huge) — C4-T6 — native-ELF 3-D BATCHED SUM (i64), zero MLIR/LLVM. The FIRST N-D
-- `self_host_native_tensor_bcastadd_smoke.py` (~1700 tok, huge) — C4-T5 — native-ELF tensor ROW-VECTOR BROADCAST ADD (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_colsum_smoke.py` (~2094 tok, huge) — C4-T5 — native-ELF tensor COLUMN REDUCTION (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_dot_smoke.py` (~1197 tok, large) — C4-T2 — native-ELF tensor DOT PRODUCT (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_ewadd_f64_smoke.py` (~1794 tok, huge) — C4-T4 — native-ELF float64 TENSOR element-wise-add + STRICT-SEQUENTIAL reduce.
-- `self_host_native_tensor_ewadd_smoke.py` (~1118 tok, large) — C4-T1 — native-ELF tensor ELEMENT-WISE ADD (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_ewmul_smoke.py` (~2047 tok, huge) — C4-T5 — native-ELF tensor ELEMENT-WISE MULTIPLY (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_matmul_smoke.py` (~1723 tok, huge) — C4-T3 — native-ELF tensor MATMUL (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_maxrowmax_smoke.py` (~2453 tok, huge) — C4-T6 — native-ELF tensor ROW MAX-REDUCTION (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_relu_smoke.py` (~2194 tok, huge) — C4-T6 — native-ELF tensor ELEMENTWISE RELU (max(x,0)), zero MLIR/LLVM.
-- `self_host_native_tensor_rowmin_smoke.py` (~2353 tok, huge) — C4-T6 — native-ELF tensor ROW MIN-REDUCTION (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_rowsum_smoke.py` (~1958 tok, huge) — C4-T4 — native-ELF tensor ROW REDUCTION (i64), zero MLIR/LLVM.
-- `self_host_native_tensor_transpose_smoke.py` (~2224 tok, huge) — C4-T4 — native-ELF tensor TRANSPOSE (i64), zero MLIR/LLVM.
-- `self_host_native_toplevel_assign_smoke.py` (~5550 tok, huge) — INDEPENDENCE_ROADMAP Phase-C follow-up — TOP-LEVEL STRAIGHT-LINE i64 REASSIGN
-- `self_host_native_ucast_smoke.py` (~1449 tok, large)
-- `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
-- `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
+- `self_host_native_simd_dot_f32_smoke.py` (~1625 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
+- `self_host_native_simd_dot_i16_smoke.py` (~1253 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
+- `self_host_native_simd_dot_q16_smoke.py` (~1506 tok, huge) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
+- `self_host_native_string_escape_smoke.py` (~3318 tok, huge) — Source-bound native/MLIR string values and bounded decoder diagnostics.
+- `self_host_native_string_smoke.py` (~7073 tok, huge)
+- `self_host_native_sys_smoke.py` (~4900 tok, huge) — Linux x86-64 filesystem parity: current-source stage1 versus Rust/MLIR.
+- `self_host_native_tensor_batchsum_smoke.py` (~2391 tok, huge) — C4-T6 — native-ELF 3-D BATCHED SUM (i64), zero MLIR/LLVM. The FIRST N-D
+- `self_host_native_tensor_bcastadd_smoke.py` (~1720 tok, huge) — C4-T5 — native-ELF tensor ROW-VECTOR BROADCAST ADD (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_colsum_smoke.py` (~2114 tok, huge) — C4-T5 — native-ELF tensor COLUMN REDUCTION (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_dot_smoke.py` (~1216 tok, large) — C4-T2 — native-ELF tensor DOT PRODUCT (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_ewadd_f64_smoke.py` (~1814 tok, huge) — C4-T4 — native-ELF float64 TENSOR element-wise-add + STRICT-SEQUENTIAL reduce.
+- `self_host_native_tensor_ewadd_smoke.py` (~1137 tok, large) — C4-T1 — native-ELF tensor ELEMENT-WISE ADD (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_ewmul_smoke.py` (~2066 tok, huge) — C4-T5 — native-ELF tensor ELEMENT-WISE MULTIPLY (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_matmul_smoke.py` (~1742 tok, huge) — C4-T3 — native-ELF tensor MATMUL (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_maxrowmax_smoke.py` (~2473 tok, huge) — C4-T6 — native-ELF tensor ROW MAX-REDUCTION (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_relu_smoke.py` (~2214 tok, huge) — C4-T6 — native-ELF tensor ELEMENTWISE RELU (max(x,0)), zero MLIR/LLVM.
+- `self_host_native_tensor_rowmin_smoke.py` (~2373 tok, huge) — C4-T6 — native-ELF tensor ROW MIN-REDUCTION (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_rowsum_smoke.py` (~1977 tok, huge) — C4-T4 — native-ELF tensor ROW REDUCTION (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_transpose_smoke.py` (~2243 tok, huge) — C4-T4 — native-ELF tensor TRANSPOSE (i64), zero MLIR/LLVM.
+- `self_host_native_toplevel_assign_smoke.py` (~5569 tok, huge) — INDEPENDENCE_ROADMAP Phase-C follow-up — TOP-LEVEL STRAIGHT-LINE i64 REASSIGN
+- `self_host_native_ucast_smoke.py` (~1473 tok, large)
+- `self_host_native_write8_smoke.py` (~948 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
+- `self_host_native_write_f32_smoke.py` (~834 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
 - `self_host_not_smoke.py` (~1481 tok, large)
-- `self_host_open_smoke.py` (~1321 tok, large)
-- `self_host_param_mutation_smoke.py` (~1323 tok, large) — CPU-as-oracle smoke for the param-mutation fix (nb_expr ident arm: consult the
+- `self_host_open_smoke.py` (~1353 tok, large)
+- `self_host_param_mutation_smoke.py` (~1342 tok, large) — CPU-as-oracle smoke for the param-mutation fix (nb_expr ident arm: consult the
 - `selfhost_so_provenance_smoke.py` (~2391 tok, huge) — Gate: `resolve_so()` must QUALIFY the `.so` it returns and REFUSE a stale one.
 - `_selfhost_so.py` (~5461 tok, huge) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
-- `selfhost_source_bundle_check.py` (~4218 tok, huge) — Captured compiler-source regression gate. Bootstrap orchestration only.
+- `selfhost_source_bundle_check.py` (~4224 tok, huge) — Captured compiler-source regression gate. Bootstrap orchestration only.
 - `selfhost_source_bundle.md` (~1570 tok, huge) — Captured compiler source bundles
-- `self_host_source_note_smoke.py` (~3320 tok, huge) — Native MIND regression for PT_NOTE tagging with trailing string rodata.
-- `_selfhost_sources.py` (~10535 tok, huge) — Immutable source views for internal compiler bootstrap orchestration.
-- `self_host_standalone_driver_smoke.py` (~3305 tok, huge)
+- `self_host_source_note_smoke.py` (~3307 tok, huge) — Native MIND regression for PT_NOTE tagging with trailing string rodata.
+- `_selfhost_sources.py` (~10775 tok, huge) — Immutable source views for internal compiler bootstrap orchestration.
+- `self_host_standalone_driver_smoke.py` (~3328 tok, huge)
 - `_selfhost_string_rows.py` (~12355 tok, huge) — Runner of the string-rule acceptance rows (tests/fixtures/native_lane_string_rows, README.md there):
-- `self_host_struct_return_smoke.py` (~4122 tok, huge) — self_host_struct_return_smoke.py — regression lock for STRUCT-BY-VALUE
+- `self_host_struct_return_smoke.py` (~4142 tok, huge) — self_host_struct_return_smoke.py — regression lock for STRUCT-BY-VALUE
 - `self_host_tc_classify_error_code_smoke.py` (~2486 tok, huge) — CPU-as-oracle smoke for the pure-MIND classify_error_code router.
 - `self_host_tc_class_mismatch_smoke.py` (~1167 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 int<->float class-mismatch rule.
 - `self_host_tc_class_rules_smoke.py` (~1889 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2010/E2011/E2013/E2016 class rules.
@@ -1110,16 +1112,16 @@
 - `self_host_tc_unknown_call_smoke.py` (~8550 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2003 rule — unknown call.
 - `self_host_tc_unknown_ident_smoke.py` (~11390 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
 - `self_host_tc_unknown_variant_smoke.py` (~2233 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2008 unknown-enum-variant rule.
-- `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
+- `self_host_value_if_expr_smoke.py` (~1576 tok, huge)
 - `sha256_hash_smoke.py` (~1290 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~9182 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~7397 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~7512 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~9497 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~2226 tok, huge) — Shared reader for the committed std/*.mind manifest.
 - `string_borrowed_check.md` (~937 tok, large) — Borrowed String append checks
-- `string_borrowed_check.py` (~2807 tok, huge) — Source-bound borrowed String gate. MIND body and C shim are separate legs."""
+- `string_borrowed_check.py` (~2794 tok, huge) — Source-bound borrowed String gate. MIND body and C shim are separate legs."""
 - `string_escape_driver.mind` (~531 tok, large)
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~2240 tok, huge)
@@ -2119,7 +2121,7 @@
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
 - `validate_real_fns_smoke.py` (~2734 tok, huge)
 - `VERDICT_SHAPE_RESIDUAL.txt` (~1052 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
-- `_w8_native.py` (~13025 tok, huge) — Shared harness for the W8 float smokes (self_host_native_f64_*_smoke.py).
+- `_w8_native.py` (~13038 tok, huge) — Shared harness for the W8 float smokes (self_host_native_f64_*_smoke.py).
 - `while_struct_smoke.py` (~1031 tok, large)
 ### `examples/mind_mirror_v04/`
 
@@ -2321,7 +2323,7 @@
 - `check_claims.py` (~9033 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1867 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
 - `check_gate_wiring_preflight.py` (~7817 tok, huge) — Preflight cargo-test parity checks extracted from check_gate_wiring.
-- `check_gate_wiring.py` (~9454 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9610 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~9316 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
