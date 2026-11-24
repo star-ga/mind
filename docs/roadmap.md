@@ -185,6 +185,29 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   when an item is on neither side, is on both, or names a workload that does
   not exist, so a new module or kernel cannot land unlisted. The list records
   coverage only. It is not a correctness proof.
+- **Float corner-case fixtures** – the first slice of D-3 in the tracked items
+  below. Today the cross-substrate gate pins three strict f32/f64 output
+  fixtures, and RFC 0015 lists NaN payloads, subnormals and rounding modes as
+  out of scope. A proposed set of avx2-vs-neon byte-identity fixtures would pin
+  the subnormal boundaries (the smallest and largest subnormal, the smallest
+  normal, and an operation that underflows from normal to subnormal), +0 and -0
+  (for example `x - x` and `-0.0 + 0.0`), plus and minus infinity, and quiet-NaN
+  payloads through `+ - * /` and copies. One order case is included: in f32,
+  2^24, then one hundred adds of 1.0, then minus 2^24 gives 0, not 100,
+  because each 1.0 is lost at that size. Fixed source order must give 0 on
+  every substrate, and a reordered sum gives 100, so the fixture also catches
+  reassociation. Each fixture gets its verdict (bit-exact, normalized or
+  refused) in the `docs/determinism.md` §2 table. No code in `src/` reads or
+  sets MXCSR or FPCR today. A native ELF starts with the Linux default
+  (flush-to-zero off), but a MIND library called through the C ABI runs with
+  the caller's state, and a host built with fast-math options can turn
+  flush-to-zero on. So the item also adds: a written environment contract
+  (strict f32/f64 results hold only with flush-to-zero and
+  denormals-are-zero off and round-to-nearest-even); a test that runs the
+  subnormal fixtures through the C ABI from a host with flush-to-zero on and
+  shows that the output changes, so the fixtures can see this failure; and an
+  opt-in entry check that reads the control register and refuses a different
+  state. Off by default: a build without it stays byte-identical.
 
 ### PGRO — Proof-Guided Recurrence Optimization (proposed, 2026-10-29)
 
