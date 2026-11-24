@@ -107,7 +107,7 @@ def main():
   assert path and digest and sha(path.read_bytes())==digest,'COMPILER_IDENTITY'
  rows=[]
  std=HERE.parents[1]/'std'
- deps=[HERE/'main.mind',HERE/'nb_emit_core.mind',HERE/'string_escape_driver.mind',Path(__file__).resolve(),args.native,args.mlir,HERE/'self_host_native_cf_smoke.py',HERE/'native_dynamic_writer_check.py',HERE/'_stdlib_manifest.py']
+ deps=[HERE/'main.mind',HERE/'nb_emit_core.mind',HERE/'string_escape_driver.mind',Path(__file__).resolve(),args.native,args.mlir,HERE/'self_host_native_cf_smoke.py',HERE/'_cf_harness.py',HERE/'_cf_giant.py',HERE/'_selfhost_sources.py',HERE/'native_dynamic_writer_check.py',HERE/'_stdlib_manifest.py']
  deps.extend(std/(name+'.mind') for name in STD_MODULES)
  inputs={str(path.resolve()):sha(path.read_bytes()) for path in deps}
  (out/'INPUTS.json').write_text(json.dumps(inputs,indent=2)+'\n')

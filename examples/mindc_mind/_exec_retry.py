@@ -5,8 +5,8 @@ A fork in a sibling thread holds a copy of the write descriptor of a file that
 was just written until its child execs. An exec of that file in this window
 fails with ETXTBSY ("Text file busy"). The window closes within milliseconds, so
 the exec is retried. Any other OSError, or a writer that never lets go, still
-fails the caller. Same rule as exec_run of self_host_native_cf_smoke.py and
-run_exe of self_host_native_misc_census_smoke.py.
+fails the caller. Same rule as exec_run of _cf_harness.py (the control-flow smoke)
+and run_exe of self_host_native_misc_census_smoke.py.
 
 Not a gate: running it directly is a no-op.
 """
