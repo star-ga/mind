@@ -233,7 +233,11 @@ GATED_EVENTS = ("push", "pull_request")
 # 334 -> 335 adds examples/formal_verification/run_all.sh, the build-and-run driver of the seven bounded
 # example programs in that directory (manual, not CI-wired): every check is in the MIND programs.
 # history-lines: examples/mindc_mind/_selfhost_identity.py=800 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=714 examples/mindc_mind/native_lane_value_shapes_smoke.py=799
-HARNESS_CEILING = 335  # Exact reviewed integration inventory; no spare allowance.
+# 335 -> 336 adds examples/mindc_mind/_cf_harness.py, the low-level helpers of
+# self_host_native_cf_smoke.py (stdin image, frozen-seed derivations, native/MLIR runners,
+# exec retry, verdict counter, fixture header) moved unchanged out of that gate (800 -> 630
+# lines, the 800-line ceiling); the sections and rows stay in the gate.
+HARNESS_CEILING = 336  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

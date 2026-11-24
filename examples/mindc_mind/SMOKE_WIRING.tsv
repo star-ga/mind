@@ -25,6 +25,7 @@
 # gate to make this list look tidy, and do not delete a red gate to make CI green.
 _cf_corpus	none	helper	Generator + independent interpreter of the control-flow corpus imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
 _cf_giant	none	helper	Capacity program generators (giant flat lists, deep trees, many functions, giant tokens) with independently computed expectations, imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
+_cf_harness	none	helper	Low-level stdin-image, compiler-derivation, native/MLIR-run, exec-retry and fixture-header helpers imported by self_host_native_cf_smoke; moved unchanged out of that gate so it has room to grow; not a gate — running it directly is a no-op.
 _cf_oracle	none	helper	Oracle .so heap checks (main.mind free contract, malloc-checked .so child, self-emit) imported by self_host_native_cf_smoke; not a gate — running it directly is a no-op.
 _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refusal control imported by self_host_tc_unknown_call_smoke.
 _exec_retry	none	helper	Retry of a busy exec (ETXTBSY) plus its three controls, imported by self_host_native_shadow_scope_smoke; not a gate — running it directly is a no-op.
