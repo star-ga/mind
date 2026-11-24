@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs
+
+- Native lane profile: state that kind 89 `desc[7]` bit 1 alone (value 2) is valid and starts the accumulator row from zero.
+
 ## [0.10.4] - 2026-11-23
 
 ### Added

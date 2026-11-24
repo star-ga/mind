@@ -36,7 +36,7 @@
 | Component | mic format consumed |
 |---|---|
 | `~/mind-law/src/spec_hash.mind` | `canonical_ir.serialize_mic_b` (MIC-B = mic@2) |
-| `~/mind-mem/src/mind_mem/mic_map.py` | `MICB_VERSION = 0x02` |
+| `star-ga/mind-mem/src/mind_mem/mic_map.py` | `MICB_VERSION = 0x02` |
 
 **Assessment:** RFC 0021 §4.5 identifies this as a **byte-preserving cross-repo
 migration** requirement: the mic@2 / MIC-B wire format must not change bytes during

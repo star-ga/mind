@@ -8,7 +8,7 @@ MIND demonstrates **extremely fast compilation performance** across all tested w
 
 ### Frontend-latency snapshot: v0.2.0-hardened (February 17, 2026)
 
-> Current release is **v0.7.1**. The frontend latency numbers below were measured at the v0.2.0-hardened snapshot and carry forward as the locked bench-gate baseline; they are not re-labelled to the current version because they are point-in-time measurements.
+> Current release is **v0.10.4**. The frontend latency numbers below were measured at the v0.2.0-hardened snapshot and carry forward as the locked bench-gate baseline; they are not re-labelled to the current version because they are point-in-time measurements.
 
 **Features**: Hand-written recursive descent parser, IR-first compilation, shape ops, MIC emission, full typed tensors, AOT pipeline, hardened IR verifier, intern_str memory safety, diagnostic preservation
 
