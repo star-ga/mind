@@ -1,0 +1,76 @@
+// Pure MIND finite Goldbach pair search for even n in [4,100].
+// WARNING: Checking 49 even values does NOT prove Goldbach's conjecture.
+fn is_prime(n: i64) -> i64 {
+    if n < 2 {
+        return 0;
+    }
+    let mut d: i64 = 2;
+    while d <= n / d {
+        if n % d == 0 {
+            return 0;
+        }
+        d = d + 1;
+    }
+    return 1;
+}
+
+fn first_goldbach_prime(even: i64) -> i64 {
+    if even < 4 || even > 100 || even % 2 != 0 {
+        return -1;
+    }
+    let mut p: i64 = 2;
+    while p <= even / 2 {
+        if is_prime(p) == 1 && is_prime(even - p) == 1 {
+            return p;
+        }
+        p = p + 1;
+    }
+    return -2;
+}
+
+fn count_checked_even() -> i64 {
+    let mut n: i64 = 4;
+    let mut count: i64 = 0;
+    while n <= 100 {
+        let p: i64 = first_goldbach_prime(n);
+        if p < 2 {
+            return -1;
+        }
+        // Negative control: reject any pair whose terms are not both prime.
+        if is_prime(p) != 1 || is_prime(n - p) != 1 {
+            return -2;
+        }
+        count = count + 1;
+        n = n + 2;
+    }
+    return count;
+}
+
+// Writes the result lines to stdout. The text comes in as a String parameter,
+// the form of a string literal that the native backend accepts.
+fn report_success(message: String) -> i64 {
+    let written: i64 = __mind_write(1, message.addr, message.len, 0 - 1);
+    if written != message.len {
+        return 90;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    if first_goldbach_prime(4) != 2 {
+        return 1;
+    }
+    if first_goldbach_prime(28) != 5 {
+        return 2;
+    }
+    if first_goldbach_prime(100) != 3 {
+        return 3;
+    }
+    if first_goldbach_prime(3) != -1 || first_goldbach_prime(101) != -1 {
+        return 4;
+    }
+    if count_checked_even() != 49 {
+        return 5;
+    }
+    return report_success("EXAMPLE=GOLDBACH_BOUNDED\nSCOPE=FINITE_EXAMPLE\n");
+}

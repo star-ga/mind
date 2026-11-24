@@ -1,0 +1,12 @@
+// Scalar twin of group_bank_wide_group. Both calls touch nothing: 832 bytes of 42.
+
+fn main() -> i64 {
+    let b: i64 = __mind_alloc(832);
+    let mut i: i64 = 0;
+    while i < 104 {
+        __mind_store_i64(b + i * 8, 42);
+        i = i + 1;
+    }
+    __mind_write(1, b, 832, 0 - 1);
+    0
+}

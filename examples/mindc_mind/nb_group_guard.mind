@@ -1,0 +1,56 @@
+// Copyright 2026 STARGA Inc.
+// Kind 89 entry guard. One owner of the reserved desc[7] mask.
+// r11 holds the checked desc[7]. Bit 8 (value 256) is the u32 tail.
+// Bit 8 with neither bit 5 nor bit 7 traps. With bit 8, desc[10] must fit in 32 bits.
+// Bit 6 stays reserved. Bits 9..31 trap. The mask is 0xFFFFFE40.
+// Scratch for the lim check is r9. The success path stores the checked
+// desc[7], the entry out pointer, out step and rows, and the unsigned-compare
+// sign bit, in the 48-byte slot under rsp. The tail tests that copy.
+// llvm-mc (x86_64, intel):
+// test r11d, 256 = 41 f7 c3 00 01 00 00
+// test r11b, 160 = 41 f6 c3 a0
+// mov r9, [rax+80] = 4c 8b 48 50
+// shr r9, 32 = 49 c1 e9 20
+// test r11d, 0xFFFFFE40 = 41 f7 c3 40 fe ff ff
+// ud2 = 0f 0b
+// A jump cell holds one site, so each jump to a trap has its own cell.
+
+import std.string;
+import nb_group_sum_enc;
+
+pub fn nbw_snap(code: String) -> String {
+    let c1: String = nbg_b4(code, 76, 137, 28, 36);
+    let c2: String = nbg_b5(c1, 76, 137, 100, 36, 16);
+    let c3: String = nbg_b5(c2, 76, 137, 124, 36, 24);
+    let c4: String = nbg_b5(c3, 76, 137, 84, 36, 32);
+    let c5: String = nbg_u32(nbg_u32(nbg_b2(c4, 73, 185), 0), 2147483648);
+    nbg_b5(c5, 76, 137, 76, 36, 40)
+}
+
+// r11 = desc[7]. rax = desc. rsp is 48 below the entry saves. Reserved values die by ud2
+// before any store. Bit 1 is a mode bit nowhere. Bits 63..32 of desc[7] are the bound only
+// with bit 2 set, else they must be 0. Bits 0, 5 and 7 are valid on every path.
+pub fn nbw_guard(code: String) -> String {
+    let plain: i64 = nbg_cell();
+    let trap: i64 = nbg_cell();
+    let trap2: i64 = nbg_cell();
+    let ok: i64 = nbg_cell();
+    let ok2: i64 = nbg_cell();
+    let no8: i64 = nbg_cell();
+    let trap8a: i64 = nbg_cell();
+    let trap8b: i64 = nbg_cell();
+    let mut c: String = nbg_jcc(nbg_u32(nbg_b3(code, 65, 247, 195), 256), 132, no8);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 160), 132, trap8a);
+    c = nbg_b4(c, 76, 139, 72, 80);
+    c = nbg_jcc(nbg_b4(c, 73, 193, 233, 32), 133, trap8b);
+    c = nbg_here(c, no8);
+    c = nbg_jcc(nbg_u32(nbg_b3(c, 65, 247, 195), 4294966848), 133, trap);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 28), 132, plain);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 2), 133, trap2);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 4), 133, ok);
+    c = nbg_rr(nbg_here(c, plain), 137, 0, 11);
+    c = nbg_jcc(nbg_b4(c, 72, 193, 232, 32), 132, ok2);
+    c = nbg_b2(nbg_here(nbg_here(nbg_here(nbg_here(c, trap), trap2), trap8a), trap8b), 15, 11);
+    c = nbg_here(nbg_here(c, ok), ok2);
+    nbw_snap(c)
+}

@@ -1,0 +1,163 @@
+// Copyright 2026 STARGA Inc.
+// Kind 89 epilogue tail (nbf_tail). Bit 5 of desc[7] (value 32). One AVX2 path.
+// The kind 89 entry guard covers AVX2. ymm0-14 only. No call. rsp stays balanced.
+// Registers: rbx desc, r12 out0, r15 out_step, r10 rows, r11 flags, r13 epi,
+// r14 out row, rdx src, rdi dst, rsi lane pointer, rcx groups, rax scratch.
+// ymm7 um, ymm8 nm, ymm9 bq, ymm10 one, ymm11 lim, xmm12 cl, xmm13 cr1,
+// xmm14 cr2, ymm4 trip. ymm0-3, ymm5, ymm6 are the group temps.
+// Add and xor are commutative, so a ymm8-14 source is the NDS operand. The
+// bytes then match llvm-mc. The value is the same.
+// Semantics, word for word:
+// With bit 5 set desc is i64[11]. desc[8] = epi, the address of `rows` records of 64 bytes: um, nm, cl, cr1, cr2, bq, src, dst (i64 each). desc[9] is WRITTEN by the call: 0 when no lane trips, -1 when one or more lanes trip. desc[10] = lim. rows <= 0: nothing is read and nothing is written (desc[9] included).
+// W = 64 lanes per row when bit 2 is set, else 32. After the last row of the walk is stored, for r in 0..rows, for i in 0..W, with a = the i64 at out0 + r*out_step + 8*i (out0 = desc[0] as given) and all arithmetic wrapping in 64 bits, all shifts logical, a shift count above 63 gives 0:
+//   sg = (a < 0) ? -1 : 0;  ua = (a ^ sg) - sg;
+//   x = lo32(ua >> 32) * lo32(um);  lo = lo32(ua) * lo32(um)      (unsigned 32 x 32 -> 64, vpmuludq)
+//   q = ((x << cl) + (lo >> cr1)) >> cr2
+//   v = (q + 1) >> 1;  n = sg ^ nm;  v = (v ^ n) - n;  v = v + bq;  if v < 0 (signed) then v = 0
+//   nv = v + (the i64 at src + 8*i);  trip when nv > lim (signed);  the i64 at dst + 8*i = nv
+// Every row and every lane is written, a trip does not stop the loop. Lanes go in groups of 4 in rising i; each group reads a and src before it writes dst (dst may be the same address as the out row or the src row; any other overlap is the caller's error). nm is 0 or -1. The walk before it keeps out when (desc[7] & 3) == 1 and starts from zero otherwise (bit 1 is reserved, init 3 is a zero start).
+// Equal to the loop body of the fixed-point row finisher of the f_fr4.mind fixture (arguments acc, m, sh, bq) on the domain that it states: |a| < 2^50, |m| < 2^24, sh >= 16, with um = |m|, nm = (m < 0) ? -1 : 0, s = sh - 1, (cl, cr1, cr2) = (0, 32, s - 32 <= 62 ? s - 32 : 64) for s >= 32 and (32 - s, s, 0) for s < 32, lim = act_limit - 1 = 2^40 - 1. When a lane trips, desc[9] = -1 exactly when that finisher returns -1. Outside that domain (for example sh < 16 with a large x, where x << (32 - s) wraps) the finisher itself is not exact and the tail follows the semantics above.
+// llvm-mc --triple=x86_64 -x86-asm-syntax=intel -mattr=+avx2 -show-encoding
+// test byte ptr [rax+56], 32                 f6 40 38 20
+// mov r12, [rax]                             4c 8b 20
+// mov r15, [rax+8]                           4c 8b 78 08
+// mov r10, [rax+48]                          4c 8b 50 30
+// mov r11, [rax+56]                          4c 8b 58 38
+// mov r13, [rax+64]                          4c 8b 68 40
+// mov rbx, rax                               48 89 c3
+// test r10, r10                              4d 85 d2
+// mov rax, 1                                 48 c7 c0 01 00 00 00
+// push rax                                   50
+// vpbroadcastq ymm10, qword ptr [rsp]        c4 62 7d 59 14 24
+// pop rax                                    58
+// vpbroadcastq ymm11, qword ptr [rbx+80]     c4 62 7d 59 5b 50
+// vpxor ymm4, ymm4, ymm4                     c5 dd ef e4
+// mov r14, r12                               4d 89 e6
+// vpbroadcastq ymm7, qword ptr [r13]         c4 c2 7d 59 7d 00
+// vpbroadcastq ymm8, qword ptr [r13+8]       c4 42 7d 59 45 08
+// vmovq xmm12, qword ptr [r13+16]            c4 41 7a 7e 65 10
+// vmovq xmm13, qword ptr [r13+24]            c4 41 7a 7e 6d 18
+// vmovq xmm14, qword ptr [r13+32]            c4 41 7a 7e 75 20
+// vpbroadcastq ymm9, qword ptr [r13+40]      c4 42 7d 59 4d 28
+// mov rdx, [r13+48]                          49 8b 55 30
+// mov rdi, [r13+56]                          49 8b 7d 38
+// mov ecx, 8                                 b9 08 00 00 00
+// test r11b, 4                               41 f6 c3 04
+// mov ecx, 16                                b9 10 00 00 00
+// mov rsi, r14                               4c 89 f6
+// vmovdqu ymm0, ymmword ptr [rsi]            c5 fe 6f 06
+// vpxor ymm1, ymm1, ymm1                     c5 f5 ef c9
+// vpcmpgtq ymm1, ymm1, ymm0                  c4 e2 75 37 c8
+// vpxor ymm2, ymm0, ymm1                     c5 fd ef d1
+// vpsubq ymm2, ymm2, ymm1                    c5 ed fb d1
+// vpsrlq ymm3, ymm2, 32                      c5 e5 73 d2 20
+// vpmuludq ymm3, ymm3, ymm7                  c5 e5 f4 df
+// vpmuludq ymm2, ymm2, ymm7                  c5 ed f4 d7
+// vpsllq ymm3, ymm3, xmm12                   c4 c1 65 f3 dc
+// vpsrlq ymm2, ymm2, xmm13                   c4 c1 6d d3 d5
+// vpaddq ymm3, ymm3, ymm2                    c5 e5 d4 da
+// vpsrlq ymm3, ymm3, xmm14                   c4 c1 65 d3 de
+// vpaddq ymm3, ymm10, ymm3                   c5 ad d4 db
+// vpsrlq ymm3, ymm3, 1                       c5 e5 73 d3 01
+// vpxor ymm1, ymm8, ymm1                     c5 bd ef c9
+// vpxor ymm3, ymm3, ymm1                     c5 e5 ef d9
+// vpsubq ymm3, ymm3, ymm1                    c5 e5 fb d9
+// vpaddq ymm3, ymm9, ymm3                    c5 b5 d4 db
+// vpxor ymm6, ymm6, ymm6                     c5 cd ef f6
+// vpcmpgtq ymm6, ymm6, ymm3                  c4 e2 4d 37 f3
+// vpandn ymm3, ymm6, ymm3                    c5 cd df db
+// vmovdqu ymm5, ymmword ptr [rdx]            c5 fe 6f 2a
+// vpaddq ymm5, ymm3, ymm5                    c5 e5 d4 ed
+// vpcmpgtq ymm6, ymm5, ymm11                 c4 c2 55 37 f3
+// vpor ymm4, ymm4, ymm6                      c5 dd eb e6
+// vmovdqu ymmword ptr [rdi], ymm5            c5 fe 7f 2f
+// add rsi, 32                                48 83 c6 20
+// add rdx, 32                                48 83 c2 20
+// add rdi, 32                                48 83 c7 20
+// sub ecx, 1                                 83 e9 01
+// add r14, r15                               4d 01 fe
+// add r13, 64                                49 83 c5 40
+// sub r10, 1                                 49 83 ea 01
+// xor eax, eax                               31 c0
+// vmovmskpd ecx, ymm4                        c5 fd 50 cc
+// test ecx, ecx                              85 c9
+// or rax, -1                                 48 83 c8 ff
+// mov [rbx+72], rax                          48 89 43 48
+
+import std.string;
+import nb_group_sum_enc;
+import nb_x86_vex;
+import nb_group_tail32;
+
+pub fn nbf_reload(code: String) -> String {
+    let c1: String = nbg_b3(code, 76, 139, 32);
+    let c2: String = nbg_b4(c1, 76, 139, 120, 8);
+    let c3: String = nbg_b4(c2, 76, 139, 80, 48);
+    let c4: String = nbg_b4(c3, 76, 139, 88, 56);
+    let c5: String = nbg_b4(c4, 76, 139, 104, 64);
+    nbg_rr(c5, 137, 3, 0)
+}
+
+pub fn nbf_consts(code: String) -> String {
+    let c1: String = nbg_u32(nbg_b3(code, 72, 199, 192), 1);
+    let c2: String = nbg_push(c1, 80);
+    let c3: String = nbf_b6(c2, 196, 98, 125, 89, 20, 36);
+    let c4: String = nbg_push(c3, 88);
+    let c5: String = nbf_b6(c4, 196, 98, 125, 89, 91, 80);
+    let c6: String = nbg_b4(c5, 197, 221, 239, 228);
+    nbg_rr(c6, 137, 14, 12)
+}
+
+pub fn nbf_lane_step(code: String) -> String {
+    let c1: String = nbg_add_rsi(code, 32);
+    let c2: String = nbg_b4(c1, 72, 131, 194, 32);
+    let c3: String = nbg_b4(c2, 72, 131, 199, 32);
+    nbg_b3(c3, 131, 233, 1)
+}
+
+pub fn nbf_flag(code: String, store_at: i64) -> String {
+    let c1: String = nbg_b2(code, 49, 192);
+    let c2: String = nbg_b4(c1, 197, 253, 80, 204);
+    let c3: String = nbg_b2(c2, 133, 201);
+    let c4: String = nbg_jcc(c3, 132, store_at);
+    nbg_b4(c4, 72, 131, 200, 255)
+}
+
+// The checked desc[7] is the copy under rsp. Bit 8 selects the u32 rows, once per call.
+pub fn nbf_tail(code: String, slot: i64) -> String {
+    let skip_bit: i64 = nbg_cell();
+    let skip_rows: i64 = nbg_cell();
+    let lane_at: i64 = nbg_cell();
+    let lane_back: i64 = nbg_cell();
+    let row_back: i64 = nbg_cell();
+    let store_at: i64 = nbg_cell();
+    let u32_at: i64 = nbg_cell();
+    let tail_join: i64 = nbg_cell();
+    let mut c: String = nbg_slot(code, slot, 0);
+    c = nbg_jcc(nbg_b4(nbg_b4(c, 76, 139, 28, 36), 65, 246, 195, 32), 132, skip_bit);
+    c = nbf_reload(c);
+    c = nbt32_restore(c);
+    c = nbg_jcc(nbg_rr(c, 133, 10, 10), 142, skip_rows);
+    c = nbf_consts(c);
+    c = nbg_jcc(nbg_u32(nbg_b3(c, 65, 247, 195), 256), 133, u32_at);
+    let row_head: i64 = string_len(c);
+    c = nbf_row_open(c, lane_at);
+    c = nbg_u32(nbg_push(c, 185), 16);
+    c = nbg_here(c, lane_at);
+    c = nbg_rr(c, 137, 6, 14);
+    let lane_head: i64 = string_len(c);
+    c = nbf_group(c, 0);
+    c = nbf_lane_step(c);
+    c = nbg_jcc(c, 133, lane_back);
+    c = nbg_link(c, lane_back, lane_head);
+    c = nbf_row_step(c);
+    c = nbg_jcc(c, 133, row_back);
+    c = nbg_link(c, row_back, row_head);
+    c = nbg_jmp(c, tail_join);
+    c = nbt32_bit5_rows(nbg_here(c, u32_at));
+    c = nbf_flag(nbg_here(c, tail_join), store_at);
+    c = nbg_here(c, store_at);
+    c = nbg_b4(c, 72, 137, 67, 72);
+    c = nbg_here(c, skip_rows);
+    nbg_here(c, skip_bit)
+}

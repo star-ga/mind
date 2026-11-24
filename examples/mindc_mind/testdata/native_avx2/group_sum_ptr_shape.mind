@@ -1,0 +1,47 @@
+// Copyright 2026 STARGA Inc.
+// Timing shape (not a stdout row): the bank call of a pixel program, group 3 over 96 pixels with
+// a 768 byte plane (13 rows), 2000000 calls. Stdout = one i64 checksum that the
+// base compiler and the running-pointer compiler must print alike.
+
+fn ps_setup(a: i64, b: i64, c: i64) -> i64 {
+    let mut p: i64 = 0;
+    while p < 96 {
+        __mind_store_i64(a + p * 8, p * 3 + 1);
+        __mind_store_i64(b + p * 8, p * 5 - 7);
+        __mind_store_i64(c + p * 8, 11 - p);
+        p = p + 1;
+    }
+    0
+}
+
+fn ps_sum(buf: i64, words: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < words {
+        s = s * 31 + __mind_load_i64(buf + i * 8);
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(768);
+    let b: i64 = __mind_alloc(768);
+    let c: i64 = __mind_alloc(768);
+    let bank: i64 = __mind_alloc(13 * 768);
+    ps_setup(a, b, c);
+    let ptrs: i64 = __mind_alloc(32);
+    __mind_store_i64(ptrs, a);
+    __mind_store_i64(ptrs + 8, b);
+    __mind_store_i64(ptrs + 16, c);
+    let mut r: i64 = 0;
+    let mut round: i64 = 0;
+    while round < 2000000 {
+        r = r + __mind_group_bank_i64(ptrs, bank, 768, 96, 3);
+        round = round + 1;
+    }
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, ps_sum(bank, 13 * 96) + r);
+    __mind_write(1, w, 8, 0 - 1);
+    0
+}

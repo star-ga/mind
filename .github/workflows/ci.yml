@@ -1261,13 +1261,13 @@ jobs:
         # defined 0 on a dirtied stack, full-width i64<->f64 conversion edges,
         # diverging-branch merges and main(argc, argv) behind the explicit-layout
         # runtime prefix, each built natively AND with MLIR and checked against
-        # values computed independently of both backends. Floor 442 = the
+        # values computed independently of both backends. Floor 512 = the
         # verdicts this exact command reports on the release head (measured);
         # a row that leaves the default run (pending_seed, compiler_driver)
         # drops the count below it and turns this step red.
         run: |
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
-            python3 scripts/run_gate.py --min-asserted 442 \
+            python3 scripts/run_gate.py --min-asserted 512 \
               examples/mindc_mind/native_lane_value_shapes_smoke.py \
               --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
           # Fail-closed control: with no llvm-mc beside $MLIR_OPT, stage B must fail by name, never skip.
@@ -1307,8 +1307,9 @@ jobs:
         if: ${{ !cancelled() }}
         # The runner self-test needs a compiler without the string rule, and the
         # merged identity judge needs a reference without the lane rules. The
-        # frozen seed carries both since its advance, so the step reads the seed
-        # as it was before its last change from history (fetch-depth 0). It mints
+        # frozen seed carries both since its 0.10.4 advance, and a later advance
+        # keeps them, so the step reads the seed of commit e52217f4 (the last seed
+        # without them, 00e9c2d9) from history (fetch-depth 0). It mints
         # a stage2 from the sources of this tree and runs the string-rule rows
         # against it (the host rows through the release mindc; a host row that
         # is not run fails), the runner self-test against that older seed (a
@@ -1317,13 +1318,13 @@ jobs:
         run: |
           set -eo pipefail
           SEED=examples/mindc_mind/testdata/selfhost_loop/stage1.elf
-          git show "$(git log -1 --format=%H -- "$SEED")^:$SEED" > /tmp/seed_before_advance.elf
+          git show "e52217f407d793a9afc4f2be10ffbab46579f6fb:$SEED" > /tmp/seed_before_advance.elf
           chmod +x /tmp/seed_before_advance.elf
           # run_gate-exempt-line: examples/mindc_mind/native_lane_value_shapes_smoke.py - the stage2 mint writes an ELF and prints no verdict token; a fixed-point miss raises (stage2 != stage3) and set -e ends the step; the run_gate lines below assert the rows
           python3 examples/mindc_mind/native_lane_value_shapes_smoke.py --mint-stage2 /tmp/string_rows_stage2.elf --assert-fixed-point
           python3 scripts/run_gate.py --min-asserted 499 --timeout 3600 examples/mindc_mind/native_lane_value_shapes_smoke.py --string-rows /tmp/string_rows_stage2.elf --string-rows-mindc ${{ github.workspace }}/target/release/mindc
           python3 scripts/run_gate.py --min-asserted 140 --timeout 1800 examples/mindc_mind/native_lane_value_shapes_smoke.py --string-rows-selftest /tmp/seed_before_advance.elf
-          MIND_IDENTITY_PARTITION=merged python3 scripts/run_gate.py --min-asserted 557 --timeout 7200 examples/mindc_mind/native_lane_value_shapes_smoke.py --identity-vs /tmp/seed_before_advance.elf --compiler /tmp/string_rows_stage2.elf
+          MIND_IDENTITY_PARTITION=merged python3 scripts/run_gate.py --min-asserted 615 --timeout 7200 examples/mindc_mind/native_lane_value_shapes_smoke.py --identity-vs /tmp/seed_before_advance.elf --compiler /tmp/string_rows_stage2.elf
         working-directory: ${{ github.workspace }}
 
       - name: Native-lane operator differential (native_lane_op_differential_smoke.py)

@@ -1,0 +1,74 @@
+// Pure MIND Farey fractions: enumerates each Farey sequence F_n
+// (0/1 through 1/1) using its exact neighboring-fraction recurrence.
+// This is a finite computation, not an asymptotic result about Farey sequences.
+fn gcd_positive(a: i64, b: i64) -> i64 {
+    let mut x: i64 = a;
+    let mut y: i64 = b;
+    while y != 0 {
+        let r: i64 = x % y;
+        x = y;
+        y = r;
+    }
+    return x;
+}
+
+fn farey_count(n: i64) -> i64 {
+    if n < 1 || n > 8 {
+        return -1;
+    }
+    let mut a: i64 = 0;
+    let mut b: i64 = 1;
+    let mut c: i64 = 1;
+    let mut d: i64 = n;
+    let mut count: i64 = 2;
+    while c != 1 || d != 1 {
+        // Every adjacent Farey pair has bc-ad=1 and is strictly ordered.
+        if b * c - a * d != 1 || a * d >= b * c {
+            return -2;
+        }
+        if gcd_positive(c, d) != 1 {
+            return -3;
+        }
+        let k: i64 = (n + b) / d;
+        let e: i64 = k * c - a;
+        let f: i64 = k * d - b;
+        if f < 1 || f > n || e < 0 || e > f {
+            return -4;
+        }
+        a = c;
+        b = d;
+        c = e;
+        d = f;
+        count = count + 1;
+        if count > n * n + 2 {
+            return -5;
+        }
+    }
+    return count;
+}
+
+// Writes the result lines to stdout. The text comes in as a String parameter,
+// the form of a string literal that the native backend accepts.
+fn report_success(message: String) -> i64 {
+    let written: i64 = __mind_write(1, message.addr, message.len, 0 - 1);
+    if written != message.len {
+        return 90;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    if farey_count(1) != 2 || farey_count(2) != 3 {
+        return 1;
+    }
+    if farey_count(3) != 5 || farey_count(5) != 11 {
+        return 2;
+    }
+    if farey_count(8) != 23 {
+        return 3;
+    }
+    if farey_count(0) != -1 || farey_count(9) != -1 {
+        return 4;
+    }
+    return report_success("EXAMPLE=FAREY_FINITE\nSCOPE=FINITE_EXAMPLE\n");
+}

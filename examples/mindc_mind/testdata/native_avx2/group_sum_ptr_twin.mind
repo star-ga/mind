@@ -1,0 +1,170 @@
+// Copyright 2026 STARGA Inc.
+// Kind 87 value twin: groups 3 and 4 over 100003 pixels (a remainder of 3 after
+// the four-pixel steps) with an unaligned plane (n*8 + 24 bytes). Each stored word
+// is compared with the plain-MIND expression of its row, and the gap words and the
+// row after the last must still hold the -1 sentinel. Stdout = one i64, the
+// mismatch count (expected 0); the Westmere run takes the scalar path.
+
+fn pt_next(v: i64) -> i64 {
+    v * 1103515245 + 12345
+}
+
+fn pt_fill(buf: i64, n: i64, seed: i64) -> i64 {
+    let mut v: i64 = seed;
+    let mut i: i64 = 0;
+    while i < n {
+        v = pt_next(v);
+        __mind_store_i64(buf + i * 8, v * 40503 - (v / 7));
+        i = i + 1;
+    }
+    v
+}
+
+fn pt_sentinel(buf: i64, words: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        __mind_store_i64(buf + i * 8, 0 - 1);
+        i = i + 1;
+    }
+    0
+}
+
+fn pt_z(k: i64, a: i64, b: i64, c: i64) -> i64 {
+    if k == 0 {
+        return c;
+    }
+    if k == 1 {
+        return b - c;
+    }
+    if k == 2 {
+        return b;
+    }
+    if k == 3 {
+        return b + c;
+    }
+    if k == 4 {
+        return a - b - c;
+    }
+    if k == 5 {
+        return a - b;
+    }
+    if k == 6 {
+        return a - b + c;
+    }
+    if k == 7 {
+        return a - c;
+    }
+    if k == 8 {
+        return a;
+    }
+    if k == 9 {
+        return a + c;
+    }
+    if k == 10 {
+        return a + b - c;
+    }
+    if k == 11 {
+        return a + b;
+    }
+    a + b + c
+}
+
+// 1 when row r at pixel p (0 <= r < rows) differs from the expected word.
+fn pt_row_bad(bank: i64, plane: i64, r: i64, p: i64, want: i64) -> i64 {
+    if __mind_load_i64(bank + r * plane + p * 8) != want {
+        return 1;
+    }
+    0
+}
+
+fn pt_check3(bank: i64, plane: i64, n: i64, a: i64, b: i64, c: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut p: i64 = 0;
+    while p < n {
+        let x: i64 = __mind_load_i64(a + p * 8);
+        let y: i64 = __mind_load_i64(b + p * 8);
+        let z: i64 = __mind_load_i64(c + p * 8);
+        let mut k: i64 = 0;
+        while k < 13 {
+            bad = bad + pt_row_bad(bank, plane, k, p, pt_z(k, x, y, z));
+            k = k + 1;
+        }
+        p = p + 1;
+    }
+    bad
+}
+
+fn pt_check4(bank: i64, plane: i64, n: i64, a: i64, b: i64, c: i64, d: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut p: i64 = 0;
+    while p < n {
+        let x: i64 = __mind_load_i64(a + p * 8);
+        let y: i64 = __mind_load_i64(b + p * 8);
+        let z: i64 = __mind_load_i64(c + p * 8);
+        let w: i64 = __mind_load_i64(d + p * 8);
+        bad = bad + pt_row_bad(bank, plane, 26, p, w);
+        let mut k: i64 = 0;
+        while k < 13 {
+            let v: i64 = pt_z(k, x, y, z);
+            bad = bad + pt_row_bad(bank, plane, k, p, v);
+            bad = bad + pt_row_bad(bank, plane, 25 - k, p, w - v);
+            bad = bad + pt_row_bad(bank, plane, 27 + k, p, w + v);
+            k = k + 1;
+        }
+        p = p + 1;
+    }
+    bad
+}
+
+// Words in the gap of every row (rows 0..rows) and the whole extra row must be -1.
+fn pt_gaps(bank: i64, plane: i64, n: i64, rows: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut r: i64 = 0;
+    while r < rows {
+        let mut g: i64 = n;
+        while g < plane / 8 {
+            if __mind_load_i64(bank + r * plane + g * 8) != 0 - 1 {
+                bad = bad + 1;
+            }
+            g = g + 1;
+        }
+        r = r + 1;
+    }
+    let mut g2: i64 = 0;
+    while g2 < plane / 8 {
+        if __mind_load_i64(bank + rows * plane + g2 * 8) != 0 - 1 {
+            bad = bad + 1;
+        }
+        g2 = g2 + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let n: i64 = 100003;
+    let plane: i64 = n * 8 + 24;
+    let a: i64 = __mind_alloc(n * 8);
+    let b: i64 = __mind_alloc(n * 8);
+    let c: i64 = __mind_alloc(n * 8);
+    let d: i64 = __mind_alloc(n * 8);
+    pt_fill(a, n, 1);
+    pt_fill(b, n, 2);
+    pt_fill(c, n, 3);
+    pt_fill(d, n, 4);
+    let ptrs: i64 = __mind_alloc(32);
+    __mind_store_i64(ptrs, a);
+    __mind_store_i64(ptrs + 8, b);
+    __mind_store_i64(ptrs + 16, c);
+    __mind_store_i64(ptrs + 24, d);
+    let bank: i64 = __mind_alloc(plane * 41);
+    pt_sentinel(bank, plane * 41 / 8);
+    __mind_group_bank_i64(ptrs, bank, plane, n, 3);
+    let mut bad: i64 = pt_check3(bank, plane, n, a, b, c) + pt_gaps(bank, plane, n, 13);
+    pt_sentinel(bank, plane * 41 / 8);
+    __mind_group_bank_i64(ptrs, bank, plane, n, 4);
+    bad = bad + pt_check4(bank, plane, n, a, b, c, d) + pt_gaps(bank, plane, n, 40);
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, bad);
+    __mind_write(1, w, 8, 0 - 1);
+    0
+}

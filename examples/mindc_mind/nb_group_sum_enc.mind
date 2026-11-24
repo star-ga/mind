@@ -6,6 +6,11 @@
 // accumulators and the emit entry: nb_group_sum_acc.mind.
 // PART RULE: std.string only; the frame-slot rule (rbp - 8 * (id + 1)) is the one
 // main.mind's nb_slot_disp states, and every row fixture reads its slots back.
+// Caller contract for the probe-skip bit. Kind 87: group bit 4 (nbg_probe_skip).
+// Kind 88: K1 = 1 << 62 (nbg_probe_k1 in the acc part). Set either only in a
+// program that also holds a guarded row (any ymm row or kind 89). Without one,
+// a CPU with no AVX2 dies on the first VEX op (SIGILL, status 132) before any
+// store, and it prints no isa.avx2_missing line.
 
 import std.string;
 
@@ -160,6 +165,25 @@ pub fn nbg_cpuid_r8(code: String) -> String {
     c = nbg_jmp(c, done);
     c = nbg_here(nbg_here(nbg_here(nbg_here(c, no), no2), no3), no4);
     c = nbg_b3(c, 77, 49, 192);
+    nbg_here(c, done)
+}
+
+// Kind 87: r8 = 1 and the CPUID probe does not run when bit `bit` of `reg` is
+// set (reg 7 = rdi, bit 16). Otherwise nbg_cpuid_r8 sets r8. The bank emitter
+// masks the group with 15 after this returns. Kind 88 does not use this fn.
+pub fn nbg_probe_skip(code: String, reg: i64, bit: i64) -> String {
+    let skip: i64 = nbg_cell();
+    let done: i64 = nbg_cell();
+    let mut c: String = code;
+    if reg == 11 {
+        c = nbg_b4(c, 65, 246, 195, bit);
+    }
+    if reg == 7 {
+        c = nbg_b4(c, 64, 246, 199, bit);
+    }
+    c = nbg_jcc(c, 133, skip);
+    c = nbg_jmp(nbg_cpuid_r8(c), done);
+    c = nbg_u32(nbg_b2(nbg_here(c, skip), 65, 184), 1);
     nbg_here(c, done)
 }
 

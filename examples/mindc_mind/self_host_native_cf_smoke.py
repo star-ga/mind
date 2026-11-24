@@ -471,11 +471,11 @@ def parallel_bounded(rep: Report, stage1b: pathlib.Path, td: pathlib.Path, jobs:
         t0 = time.time()
         with tempfile.TemporaryDirectory(dir=td) as sub:
             got = native_bounded(stage1b, src.encode(), pathlib.Path(sub), seeded, cpu=cpu)
-        ok = got == exp or (may_refuse and got[0] == "refused" and got[1] == 3)
+        ok = got == exp or (may_refuse and got[:2] == ("refused", 3) and "(lane." not in got[2])
         if vacuous_on_budget and got[0] == "refused" and "stack budget" in str(got[2:]):
             ok = False
             label += " VACUOUS: refused by the token budget, the walks never ran"
-        return ok, (f"bounded {what} {label} ({len(src)} B): native={got[:2]} Python={exp}"
+        return ok, (f"bounded {what} {label} ({len(src)} B): native={got[:3]} Python={exp}"
                     + (" (a clean rc-3 refusal is accepted)" if may_refuse else "")
                     + f" [{time.time() - t0:.0f} s]")
     with ThreadPoolExecutor(jobs) as ex:
@@ -538,8 +538,8 @@ def bounded_section(rep: Report, stage1b: pathlib.Path, td: pathlib.Path, cases)
         if bexp[0] == "refused":
             ok = got[:2] == bexp  # an expected clean refusal: rc 3, no ELF
         else:
-            ok = got == bexp or (may_refuse and got[0] == "refused" and got[1] == 3)
-        rep.check(ok, f"bounded {label} ({len(bsrc)} B): native={got[:2]} Python={bexp}"
+            ok = got == bexp or (may_refuse and got[:2] == ("refused", 3) and "(lane." not in got[2])
+        rep.check(ok, f"bounded {label} ({len(bsrc)} B): native={got[:3]} Python={bexp}"
                       + (" (a clean rc-3 refusal is accepted)" if may_refuse else "")
                       + f" [{time.time() - t0:.0f} s]")
 
@@ -558,8 +558,8 @@ def deep_extra_sections(rep: Report, stage1b, stage1, td: pathlib.Path) -> None:
             got, _ = native(stage1, dsrc.encode(), td, seeded)
         except subprocess.TimeoutExpired:
             got = ("compile-timeout", 600)
-        ok = got == dexp or (may_refuse and got[0] == "refused" and got[1] == 3)
-        rep.check(ok, f"default-profile {label} ({len(dsrc)} B): native={got[:2]} Python={dexp}"
+        ok = got == dexp or (may_refuse and got[:2] == ("refused", 3) and "(lane." not in got[2])
+        rep.check(ok, f"default-profile {label} ({len(dsrc)} B): native={got[:3]} Python={dexp}"
                       + (" (a clean rc-3 refusal is accepted)" if may_refuse else "")
                       + f" [{time.time() - t0:.0f} s]")
 
@@ -763,8 +763,8 @@ def main() -> int:
             if xexp[0] == "refused":
                 ok = got[:2] == xexp  # an expected clean refusal: rc 3, no ELF
             else:
-                ok = got == xexp or (may_refuse and got[0] == "refused" and got[1] == 3)
-            rep.check(ok, f"default-profile {label} ({len(xsrc)} B): native={got[:2]} Python={xexp}"
+                ok = got == xexp or (may_refuse and got[:2] == ("refused", 3) and "(lane." not in got[2])
+            rep.check(ok, f"default-profile {label} ({len(xsrc)} B): native={got[:3]} Python={xexp}"
                           + (" (a clean rc-3 refusal is accepted)" if may_refuse else ""))
 
         print("[cf] capacity, bounded production profile (768 MiB arena / 384 MiB stack, "

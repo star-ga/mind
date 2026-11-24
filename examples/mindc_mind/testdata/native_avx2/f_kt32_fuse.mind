@@ -1,0 +1,209 @@
+// Fused u32 tail. 7|8 and 2|7|8 must match the bit-5 u32 twin. The out row stays.
+// Gather (bit 6) is not in this fixture. Stdout: lanes compared, bad.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s <= 0 {
+        return v;
+    }
+    if s > 63 {
+        return 0;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn epi_v(a: i64, bq: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32));
+    let lo: i64 = lo32(ua);
+    let mut v: i64 = lsr(x + lo + 1, 1);
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v
+}
+
+fn starts() -> i64 {
+    let st: i64 = __mind_alloc(32);
+    __mind_store_i64(st, 0);
+    __mind_store_i64(st + 8, 0);
+    __mind_store_i64(st + 16, 0);
+    st
+}
+
+fn arm(d: i64, out: i64, step: i64, rows: i64, flags: i64, epi: i64, lim: i64) -> i64 {
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, step);
+    __mind_store_i64(d + 16, __mind_alloc(64));
+    __mind_store_i64(d + 24, __mind_alloc(16));
+    __mind_store_i64(d + 32, starts());
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 7);
+    __mind_store_i64(d + 80, lim);
+    d
+}
+
+fn fill(p: i64, n: i64, a0: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(p + i * 8, a0 + i);
+        i = i + 1;
+    }
+    n
+}
+
+fn srcs(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i32(p + i * 4, 3 + (i & 7));
+        i = i + 1;
+    }
+    n
+}
+
+fn bit5(out: i64, src: i64, dst: i64, w: i64, rows: i64, bq: i64) -> i64 {
+    let epi: i64 = __mind_alloc(rows * 64);
+    let mut r: i64 = 0;
+    while r < rows {
+        let rec: i64 = epi + r * 64;
+        __mind_store_i64(rec, 1);
+        __mind_store_i64(rec + 8, 0);
+        __mind_store_i64(rec + 16, 0);
+        __mind_store_i64(rec + 24, 0);
+        __mind_store_i64(rec + 32, 0);
+        __mind_store_i64(rec + 40, bq);
+        __mind_store_i64(rec + 48, src + r * w * 4);
+        __mind_store_i64(rec + 56, dst + r * w * 4);
+        r = r + 1;
+    }
+    let d: i64 = __mind_alloc(128);
+    arm(d, out, w * 8, rows, 289, epi, 4294967295);
+    __mind_group_accrows_i64(d);
+    __mind_load_i64(d + 72)
+}
+
+fn fuse(out: i64, src: i64, dst: i64, w: i64, rows: i64, flags: i64, bq: i64) -> i64 {
+    let epi: i64 = __mind_alloc(rows * 48);
+    let mut r: i64 = 0;
+    while r < rows {
+        let rec: i64 = epi + r * 48;
+        __mind_store_i64(rec, 1);
+        __mind_store_i64(rec + 8, 0);
+        __mind_store_i64(rec + 16, 0);
+        __mind_store_i64(rec + 24, 0);
+        __mind_store_i64(rec + 32, 0);
+        __mind_store_i64(rec + 40, bq);
+        r = r + 1;
+    }
+    let d: i64 = __mind_alloc(160);
+    arm(d, out, w * 8, rows, flags, epi, 4294967295);
+    __mind_store_i64(d + 88, src);
+    __mind_store_i64(d + 96, w * 4);
+    __mind_store_i64(d + 104, dst);
+    __mind_store_i64(d + 112, w * 4);
+    __mind_group_accrows_i64(d);
+    __mind_load_i64(d + 72)
+}
+
+fn same(a: i64, b: i64, n: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        if lo32(__mind_load_i32(a + i * 4)) != lo32(__mind_load_i32(b + i * 4)) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    bad
+}
+
+fn expect(dst: i64, out: i64, src: i64, n: i64, bq: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        let nv: i64 = epi_v(__mind_load_i64(out + i * 8), bq) + lo32(__mind_load_i32(src + i * 4));
+        if lo32(__mind_load_i32(dst + i * 4)) != lo32(nv) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    bad
+}
+
+fn kept(now: i64, was: i64, n: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        if __mind_load_i64(now + i * 8) != __mind_load_i64(was + i * 8) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let rows: i64 = 2;
+    let bq: i64 = 6;
+    let mut bad: i64 = 0;
+    let mut lanes: i64 = 0;
+    let widths: i64 = 0;
+    let w32: i64 = 32;
+    let n32: i64 = rows * w32;
+    let out: i64 = __mind_alloc(n32 * 8);
+    let copy: i64 = __mind_alloc(n32 * 8);
+    let src: i64 = __mind_alloc(n32 * 4 + 8);
+    let d5: i64 = __mind_alloc(n32 * 4 + 8);
+    let d7: i64 = __mind_alloc(n32 * 4 + 8);
+    fill(out, n32, 4);
+    fill(copy, n32, 4);
+    srcs(src, n32);
+    let t5: i64 = bit5(out, src, d5, w32, rows, bq);
+    fill(out, n32, 4);
+    let t7: i64 = fuse(out, src, d7, w32, rows, 385, bq);
+    bad = bad + same(d5, d7, n32);
+    bad = bad + expect(d7, copy, src, n32, bq);
+    bad = bad + kept(out, copy, n32);
+    if t5 != t7 {
+        bad = bad + 1;
+    }
+    lanes = lanes + n32;
+    let w64: i64 = 64;
+    let n64: i64 = rows * w64;
+    let out64: i64 = __mind_alloc(n64 * 8);
+    let copy64: i64 = __mind_alloc(n64 * 8);
+    let src64: i64 = __mind_alloc(n64 * 4 + 8);
+    let d64: i64 = __mind_alloc(n64 * 4 + 8);
+    fill(out64, n64, 8);
+    fill(copy64, n64, 8);
+    srcs(src64, n64);
+    let t64: i64 = fuse(out64, src64, d64, w64, rows, 389, bq);
+    bad = bad + expect(d64, copy64, src64, n64, bq);
+    bad = bad + kept(out64, copy64, n64);
+    if t64 != 0 {
+        bad = bad + 1;
+    }
+    lanes = lanes + n64;
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, lanes);
+    __mind_store_i64(p + 8, bad);
+    __mind_write(1, p, 16, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    if widths != 0 {
+        return 2;
+    }
+    0
+}

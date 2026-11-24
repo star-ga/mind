@@ -1,0 +1,122 @@
+// Kind 87 mode N32 (group bits 5 and 6): i32 code rows from u32 channel rows. The reference
+// route is group bit 5 alone on i64 channel rows that hold the same u32 values (zero-extended):
+// every bank byte of N32 must equal the reference bank byte. Groups 3 and 4, pixel counts with
+// every remainder of the 8-pixel step, an unaligned plane, random and edge u32 values
+// (0, 1, 2^31 - 1, 2^31, 2^32 - 1), and calls whose rows overlap each other (the scalar path
+// in both routes, same store order). A sentinel word after the last row must stay -1.
+// Each u32 row ends just before an unmapped page: a load wider than 4 bytes faults.
+// Stdout: bad bytes, compared bytes. Exit 0 when bad is 0. The Westmere twin runs the scalar path.
+
+fn nx(p: i64) -> i64 {
+    let s: i64 = __mind_load_i64(p) * 6364136223846793005 + 1442695040888963407;
+    __mind_store_i64(p, s);
+    s
+}
+
+fn nedge(i: i64) -> i64 {
+    if i == 0 {
+        return 0;
+    }
+    if i == 1 {
+        return 1;
+    }
+    if i == 2 {
+        return 2147483647;
+    }
+    if i == 3 {
+        return 2147483648;
+    }
+    4294967295
+}
+
+fn nval(sp: i64, mode: i64) -> i64 {
+    let v: i64 = (nx(sp) >> 13) & 4294967295;
+    if mode == 1 {
+        return nedge(v % 5);
+    }
+    v
+}
+
+// A u32 row of px pixels that ends where an unmapped page starts (map 2 pages, unmap the top one).
+fn ngp(px: i64) -> i64 {
+    let base: i64 = __mind_sys_mmap(0, 8192, 3, 34, 0 - 1, 0);
+    let un: i64 = __mind_sys_munmap(base + 4096, 4096);
+    base + 4096 - px * 4 + un
+}
+
+fn nfill(buf: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(buf + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+// One case: groups g (3 or 4), px pixels, plane bytes per row. Returns bad bytes; p[0] += bytes.
+fn ncase(seed: i64, g: i64, px: i64, plane: i64, mode: i64, p: i64) -> i64 {
+    let rows: i64 = 13 + 27 * (g - 3);
+    let n: i64 = rows * plane + 64;
+    let ref: i64 = __mind_alloc(n);
+    let got: i64 = __mind_alloc(n);
+    nfill(ref, n / 8, 0 - 1);
+    nfill(got, n / 8, 0 - 1);
+    let sp: i64 = __mind_alloc(8);
+    __mind_store_i64(sp, seed);
+    let p64: i64 = __mind_alloc(32);
+    let p32: i64 = __mind_alloc(32);
+    let mut q: i64 = 0;
+    while q < 4 {
+        let c64: i64 = __mind_alloc(px * 8 + 8);
+        let c32: i64 = ngp(px);
+        let mut i: i64 = 0;
+        while i < px {
+            let v: i64 = nval(sp, mode);
+            __mind_store_i64(c64 + i * 8, v);
+            __mind_store_i32(c32 + i * 4, v);
+            i = i + 1;
+        }
+        __mind_store_i64(p64 + q * 8, c64);
+        __mind_store_i64(p32 + q * 8, c32);
+        q = q + 1;
+    }
+    let a: i64 = __mind_group_bank_i64(p64, ref, plane, px, g + 32);
+    let b: i64 = __mind_group_bank_i64(p32, got, plane, px, g + 96);
+    let mut bad: i64 = (a - a) + (b - b);
+    let mut i: i64 = 0;
+    while i < n {
+        if __mind_load_i8(ref + i) != __mind_load_i8(got + i) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    if plane >= px * 4 {
+        if __mind_load_i64(got + rows * plane) != 0 - 1 {
+            bad = bad + 1;
+        }
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + n);
+    bad
+}
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 0);
+    let mut bad: i64 = 0;
+    let mut px: i64 = 1;
+    while px < 26 {
+        let plane: i64 = px * 4 + 4 * (px % 3);
+        bad = bad + ncase(px * 17 + 3, 3, px, plane, px % 2, p) + ncase(px * 31 + 5, 4, px, plane, (px + 1) % 2, p);
+        px = px + 1;
+    }
+    bad = bad + ncase(99, 3, 1000, 4004, 0, p) + ncase(98, 4, 999, 4000, 1, p);
+    // pixels 0, then rows that overlap each other (plane < pixels * 4): the scalar path.
+    bad = bad + ncase(97, 3, 0, 64, 0, p) + ncase(96, 3, 20, 40, 0, p) + ncase(95, 4, 20, 44, 1, p);
+    __mind_store_i64(p + 8, __mind_load_i64(p));
+    __mind_store_i64(p, bad);
+    __mind_write(1, p, 16, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

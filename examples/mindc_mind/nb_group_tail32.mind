@@ -1,0 +1,233 @@
+// Copyright 2026 STARGA Inc.
+// Kind 89 u32 tail (desc[7] bit 8, value 256). src and dst are u32. Lane i is at +4i.
+// The out row stays i64. A lane trips when nv > lim as unsigned 64-bit. dst stores
+// low32(nv): vpshufd 8, vpermq 8, a 16-byte store. src is zero-extended (vpmovzxdq).
+// The sign qword lives at [rsp+40] (or [rsp+base+40] while a fallback holds 512 bytes).
+// Bit 5 and bit 7 group loops live here. The i64 group bodies of the bit-5 and bit-7
+// rows are here too: nb_group_epi.mind, nb_group_fuse.mind and nb_group_fuse32.mind call them.
+
+import std.string;
+import nb_group_sum_enc;
+import nb_x86_vex;
+import nb_emit_core;
+
+pub fn nbf_b6(code: String, b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> String {
+    nbg_push(nbg_b5(code, b0, b1, b2, b3, b4), b5)
+}
+
+pub fn nbf_r(code: String, map: i64, op: i64, d: i64, a: i64, b: i64) -> String {
+    nbv_op_rrr(code, map, op, 1, 0, d, a, b)
+}
+
+pub fn nbf_ld(code: String, reg: i64, base: i64) -> String {
+    nbv_op_rm(code, 1, 111, 2, 0, reg, 0, base, 0)
+}
+
+pub fn nbf_st(code: String, reg: i64, base: i64) -> String {
+    nbv_op_rm(code, 1, 127, 2, 0, reg, 0, base, 0)
+}
+
+pub fn nbf_row_open(code: String, lane_at: i64) -> String {
+    let c1: String = nbf_b6(code, 196, 194, 125, 89, 125, 0);
+    let c2: String = nbf_b6(c1, 196, 66, 125, 89, 69, 8);
+    let c3: String = nbf_b6(c2, 196, 65, 122, 126, 101, 16);
+    let c4: String = nbf_b6(c3, 196, 65, 122, 126, 109, 24);
+    let c5: String = nbf_b6(c4, 196, 65, 122, 126, 117, 32);
+    let c6: String = nbf_b6(c5, 196, 66, 125, 89, 77, 40);
+    let c7: String = nbg_b4(c6, 73, 139, 85, 48);
+    let c8: String = nbg_b4(c7, 73, 139, 125, 56);
+    let c9: String = nbg_u32(nbg_push(c8, 185), 8);
+    nbg_jcc(nbg_b4(c9, 65, 246, 195, 4), 132, lane_at)
+}
+
+// 16-byte store of xmm reg. L is 0, so this is not the ymm vmovdqu helper.
+pub fn nbt32_st16(code: String, reg: i64, base: i64, disp: i64) -> String {
+    let c1: String = if base < 8 {
+        nb_vex2(code, reg / 8, 0, 0, 2)
+    } else {
+        nb_vex3(code, reg / 8, 0, base / 8, 1, 0, 0, 0, 2)
+    };
+    nbv_mem_tail(nbg_push(c1, 127), reg, base, disp)
+}
+
+// One group of 4 lanes. u32 0 keeps the i64 src, the signed compare and the 32-byte store.
+pub fn nbf_group(code: String, u32: i64) -> String {
+    let mut c: String = nbf_ld(code, 0, 6);
+    c = nbg_b4(c, 197, 245, 239, 201);
+    c = nbf_r(c, 2, 55, 1, 1, 0);
+    c = nbg_b4(c, 197, 253, 239, 209);
+    c = nbf_r(c, 1, 251, 2, 2, 1);
+    c = nbg_b5(c, 197, 229, 115, 210, 32);
+    c = nbf_r(c, 1, 244, 3, 3, 7);
+    c = nbf_r(c, 1, 244, 2, 2, 7);
+    c = nbf_r(c, 1, 243, 3, 3, 12);
+    c = nbf_r(c, 1, 211, 2, 2, 13);
+    c = nbf_r(c, 1, 212, 3, 3, 2);
+    c = nbf_r(c, 1, 211, 3, 3, 14);
+    c = nbf_r(c, 1, 212, 3, 10, 3);
+    c = nbg_b5(c, 197, 229, 115, 211, 1);
+    c = nbg_b4(c, 197, 189, 239, 201);
+    c = nbg_b4(c, 197, 229, 239, 217);
+    c = nbf_r(c, 1, 251, 3, 3, 1);
+    c = nbf_r(c, 1, 212, 3, 9, 3);
+    c = nbg_b4(c, 197, 205, 239, 246);
+    c = nbf_r(c, 2, 55, 6, 6, 3);
+    c = nbg_b4(c, 197, 205, 223, 219);
+    if u32 == 1 {
+        c = nbv_op_rm(c, 2, 53, 1, 0, 5, 0, 2, 0);
+        c = nbf_r(c, 1, 212, 5, 3, 5);
+        c = nbv_op_rm(c, 2, 89, 1, 0, 2, 0, 4, 40);
+        c = nbf_r(c, 1, 239, 6, 5, 2);
+        c = nbf_r(c, 1, 239, 2, 11, 2);
+        c = nbf_r(c, 2, 55, 6, 6, 2);
+        c = nbf_r(c, 1, 235, 4, 4, 6);
+        c = nbg_push(nbv_op_rrr(c, 1, 112, 1, 0, 5, 0, 5), 8);
+        c = nbg_push(nbv_op_rrr(c, 3, 0, 1, 1, 5, 0, 5), 8);
+        return nbt32_st16(c, 5, 7, 0);
+    }
+    c = nbf_ld(c, 5, 2);
+    c = nbf_r(c, 1, 212, 5, 3, 5);
+    c = nbf_r(c, 2, 55, 6, 5, 11);
+    c = nbf_r(c, 1, 235, 4, 4, 6);
+    nbf_st(c, 5, 7)
+}
+
+pub fn nbf_row_step(code: String) -> String {
+    let c1: String = nbg_rr(code, 1, 14, 15);
+    let c2: String = nbg_b4(c1, 73, 131, 197, 64);
+    nbg_b4(c2, 73, 131, 234, 1)
+}
+
+pub fn nbt32_step(code: String) -> String {
+    let c1: String = nbg_add_rsi(code, 32);
+    let c2: String = nbg_b4(c1, 72, 131, 194, 16);
+    let c3: String = nbg_b4(c2, 72, 131, 199, 16);
+    nbg_b3(c3, 131, 233, 1)
+}
+
+pub fn nbt32_restore(code: String) -> String {
+    let c1: String = nbg_b5(code, 76, 139, 100, 36, 16);
+    let c2: String = nbg_b5(c1, 76, 139, 124, 36, 24);
+    let c3: String = nbg_b5(c2, 76, 139, 84, 36, 32);
+    nbg_b4(c3, 76, 139, 28, 36)
+}
+
+// cmp byte [rsp+disp], 1; je cell. disp 8 is the fused flag. disp 520 is that flag
+// under a 512-byte fallback buffer.
+pub fn nbt32_je(code: String, disp: i64, cell: i64) -> String {
+    if disp <= 127 {
+        return nbg_jcc(nbg_b5(code, 128, 124, 36, disp, 1), 132, cell);
+    }
+    nbg_jcc(nbg_push(nbg_u32(nbg_b3(code, 128, 188, 36), disp), 1), 132, cell)
+}
+
+// Bit-5 u32 rows. Consts and the checked flags are already in registers. ymm4 is the trip mask.
+pub fn nbt32_bit5_rows(code: String) -> String {
+    let lane_at: i64 = nbg_cell();
+    let lane_back: i64 = nbg_cell();
+    let row_back: i64 = nbg_cell();
+    let row_head: i64 = string_len(code);
+    let mut c: String = nbf_row_open(code, lane_at);
+    c = nbg_u32(nbg_push(c, 185), 16);
+    c = nbg_here(c, lane_at);
+    c = nbg_rr(c, 137, 6, 14);
+    let lane_head: i64 = string_len(c);
+    c = nbf_group(c, 1);
+    c = nbt32_step(c);
+    c = nbg_jcc(c, 133, lane_back);
+    c = nbg_link(c, lane_back, lane_head);
+    c = nbf_row_step(c);
+    c = nbg_jcc(c, 133, row_back);
+    nbg_link(c, row_back, row_head)
+}
+
+pub fn nbk_comm(op: i64) -> i64 {
+    if op == 212 {
+        return 1;
+    }
+    if op == 239 {
+        return 1;
+    }
+    if op == 244 {
+        return 1;
+    }
+    if op == 235 {
+        return 1;
+    }
+    0
+}
+
+pub fn nbk_rrr(code: String, map: i64, op: i64, d: i64, a: i64, b: i64) -> String {
+    if map == 1 {
+        if a < 8 {
+            if b >= 8 {
+                if nbk_comm(op) == 1 {
+                    return nbv_op_rrr(code, map, op, 1, 0, d, b, a);
+                }
+            }
+        }
+    }
+    nbv_op_rrr(code, map, op, 1, 0, d, a, b)
+}
+
+pub fn nbk_rm(code: String, op: i64, d: i64, a: i64, base: i64, disp: i64) -> String {
+    nbv_op_rm(code, 1, op, 1, 0, d, a, base, disp)
+}
+
+pub fn nbk_shi(code: String, ext: i64, d: i64, s: i64, imm: i64) -> String {
+    let c1: String = nbv_prefix(code, 1, 1, 0, 0, d, s);
+    nbg_b3(c1, 115, 192 + ext * 8 + s % 8, imm)
+}
+
+pub fn nbk_bc(code: String, d: i64, base: i64, disp: i64) -> String {
+    nbv_op_rm(code, 2, 89, 1, 0, d, 0, base, disp)
+}
+
+// One fused group. u32 0 is the i64 src, the signed compare and the 32-byte store.
+// u32 1 zero-extends 16 bytes at [rsi+sd], compares unsigned, and stores 16 bytes.
+pub fn nbk_group(code: String, ra: i64, sd: i64, u32: i64, base: i64) -> String {
+    let mut c: String = nbk_rrr(code, 1, 239, 13, 13, 13);
+    c = nbk_rrr(c, 2, 55, 13, 13, ra);
+    c = nbk_rrr(c, 1, 239, ra, ra, 13);
+    c = nbk_rrr(c, 1, 251, ra, ra, 13);
+    c = nbk_shi(c, 2, 14, ra, 32);
+    c = nbk_rrr(c, 1, 244, 14, 14, 8);
+    c = nbk_rrr(c, 1, 244, ra, ra, 8);
+    c = nbk_rm(c, 243, 14, 14, 13, 16);
+    c = nbk_rm(c, 211, ra, ra, 13, 24);
+    c = nbk_rrr(c, 1, 212, 14, 14, ra);
+    c = nbk_rm(c, 211, 14, 14, 13, 32);
+    c = nbk_rrr(c, 1, 212, 14, 11, 14);
+    c = nbk_shi(c, 2, 14, 14, 1);
+    c = nbk_rrr(c, 1, 239, 13, 9, 13);
+    c = nbk_rrr(c, 1, 239, 14, 14, 13);
+    c = nbk_rrr(c, 1, 251, 14, 14, 13);
+    c = nbk_rrr(c, 1, 212, 14, 10, 14);
+    c = nbk_rrr(c, 1, 239, ra, ra, ra);
+    c = nbk_rrr(c, 2, 55, ra, ra, 14);
+    c = nbk_rrr(c, 1, 223, 14, ra, 14);
+    if u32 == 1 {
+        c = nbv_op_rm(c, 2, 53, 1, 0, 13, 0, 6, sd);
+        c = nbk_rrr(c, 1, 212, 14, 14, 13);
+        c = nbv_op_rm(c, 2, 89, 1, 0, 13, 0, 4, base + 40);
+        c = nbk_rrr(c, 1, 239, ra, 14, 13);
+        c = nbk_rrr(c, 1, 239, 13, 12, 13);
+        c = nbk_rrr(c, 2, 55, ra, ra, 13);
+        c = nbk_rrr(c, 1, 235, 15, 15, ra);
+        c = nbg_push(nbv_op_rrr(c, 1, 112, 1, 0, 14, 0, 14), 8);
+        c = nbg_push(nbv_op_rrr(c, 3, 0, 1, 1, 14, 0, 14), 8);
+        return nbt32_st16(c, 14, 7, sd);
+    }
+    c = nbk_rm(c, 212, 14, 14, 6, sd);
+    c = nbk_rrr(c, 2, 55, ra, 14, 12);
+    c = nbk_rrr(c, 1, 235, 15, 15, ra);
+    nbv_op_rm(c, 1, 127, 2, 0, 14, 0, 7, sd)
+}
+
+// Fused i32 half: the out add stays i64. The u32 src and dst use half that displacement.
+pub fn nbt32_half(code: String, k: i64, disp: i64, add: i64, base: i64) -> String {
+    if add == 1 {
+        return nbk_group(nbv_op_rm(code, 1, 212, 1, 0, k, k, 12, disp), k, disp / 2, 1, base);
+    }
+    nbk_group(code, k, disp / 2, 1, base)
+}

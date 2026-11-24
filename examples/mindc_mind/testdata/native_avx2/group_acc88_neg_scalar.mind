@@ -1,0 +1,17 @@
+// Scalar twin of group_acc88_neg. Three negative inits are zero start, then add term 0.
+
+fn st(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v);
+    0
+}
+
+fn main() -> i64 {
+    let out: i64 = __mind_alloc(768);
+    let mut i: i64 = 0;
+    while i < 96 {
+        st(out, i, 100 + (i % 32));
+        i = i + 1;
+    }
+    __mind_write(1, out, 768, 0 - 1);
+    0
+}

@@ -1,0 +1,64 @@
+// Epilogue speed row. 1024 rows, 2000 calls, dst is the out row.
+// Stdout is the checksum then the lane count. Exit 0.
+
+fn main() -> i64 {
+    let rows: i64 = 1024;
+    let out: i64 = __mind_alloc(rows * 256);
+    let src: i64 = __mind_alloc(rows * 256);
+    let epi: i64 = __mind_alloc(rows * 64);
+    let starts: i64 = __mind_alloc(24);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 0);
+    __mind_store_i64(starts + 16, 0);
+    let mut r: i64 = 0;
+    while r < rows {
+        let mut i: i64 = 0;
+        while i < 32 {
+            __mind_store_i64(out + r * 256 + i * 8, i + r);
+            __mind_store_i64(src + r * 256 + i * 8, 1);
+            i = i + 1;
+        }
+        let e: i64 = epi + r * 64;
+        __mind_store_i64(e, 1);
+        __mind_store_i64(e + 8, 0);
+        __mind_store_i64(e + 16, 0);
+        __mind_store_i64(e + 24, 32);
+        __mind_store_i64(e + 32, 0);
+        __mind_store_i64(e + 40, 0);
+        __mind_store_i64(e + 48, src + r * 256);
+        __mind_store_i64(e + 56, out + r * 256);
+        r = r + 1;
+    }
+    let d: i64 = __mind_alloc(88);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 256);
+    __mind_store_i64(d + 16, 0);
+    __mind_store_i64(d + 24, 0);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 0);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, 33);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 0);
+    __mind_store_i64(d + 80, 9223372036854775807);
+    let mut n: i64 = 0;
+    while n < 2000 {
+        let c: i64 = __mind_group_accrows_i64(d);
+        n = n + 1 + (c - c);
+    }
+    let mut s: i64 = 0;
+    r = 0;
+    while r < rows {
+        let mut i: i64 = 0;
+        while i < 32 {
+            s = s * 31 + __mind_load_i64(out + r * 256 + i * 8);
+            i = i + 1;
+        }
+        r = r + 1;
+    }
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, s);
+    __mind_store_i64(p + 8, 65536000);
+    __mind_write(1, p, 16, 0 - 1);
+    0
+}

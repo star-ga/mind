@@ -1,0 +1,284 @@
+// Copyright 2026 STARGA Inc.
+// Kind 89: __mind_group_accrows_i64(desc) -> 0. One path (ymm0-7, AVX2). No CPUID.
+// desc is i64[8], read once at entry: out, out_step, bank, off, starts,
+// starts_step, rows, init. rows <= 0 reads nothing else and writes nothing.
+// Each row reads j0, j1, j2 before any write. a = (init == 1) ? out : 0, then
+// a[i] += bank[off[j] + i*8] for j in j0..j1, then -= for j in j1..j2, then
+// out = a. Then out += out_step and starts += starts_step. Wrapping i64.
+// Kind 89 keeps out iff (desc[7] & 3) == 1, so mode bits above bit 1 do not
+// clear the flag. Init 2 and init 3 are zero start. Kind 88 uses that same keep
+// rule on {0, 1, 2, 3}. Kind 89 has no probe and does not take K1: desc[7] bit
+// 62 must be 0. Bit 1 is not a mode bit. j1 < j0 adds no term. j2 < j1 subtracts none.
+// desc[7] bit 2 (value 4) selects the i32 walk in nb_group_i32w.mind. Bit clear
+// keeps this body: desc[7] bit 62 must be 0 (as K1 reads it) and bit 1 is not a
+// mode bit. Bit set: bit 0 selects add-to-out, bit 1 stays reserved, and
+// bits 63..32 hold the segment bound, so bit 62 is data and not the K1 bit.
+// Bits 3 and 4 select the term loop in nb_group_terms.mind.
+// On the term path, bit 0 is the add-to-out flag.
+// Reserved desc[7] values trap (ud2) on every path before any store: nbw_guard.
+// The mask is 0xFFFFFE40. Bit 8 is the u32 tail. Bit 6 stays reserved.
+// Registers: r12 out, r15 out_step, rbx bank, rdx off, r14 starts, r8
+// starts_step, r10 rows, r11 init, rcx j0, rdi j1, r13 j2, rsi j, r9 end,
+// rax off[j]. Callee-saved rbx, r12, r13, r14, r15. Term body (12 instructions,
+// 0 frame operands): mov rax,[rdx+rsi*8]; 8x vpaddq/vpsubq ymmK,[rbx+rax*1+32K];
+// add rsi,1; cmp rsi,r9; jl.
+// A program that names this row gets the ymm entry guard. Inside a bank fn the
+// existing walker refuses the call (it clobbers ymm0-7).
+// Bit 5 of desc[7] runs nbf_tail (nb_group_epi.mind) after the last row store.
+// The tail owns desc[8], desc[9] and desc[10]. Bit 5 does not change the walk body.
+// Bit 7 runs a second copy of every walk path (plain, i32, term) that finishes
+// each row in registers (nb_group_fuse.mind, nb_group_fuse32.mind). The bit-5 tail does
+// not run then. Bit 7 clear: the same paths as before, plus one test and jne per call.
+
+import std.string;
+import nb_group_sum_enc;
+import nb_group_i32w;
+import nb_group_terms;
+import nb_group_epi;
+import nb_group_fuse;
+import nb_group_guard;
+
+// 1 iff [lo, hi) is "__mind_group_accrows_i64" (24 bytes), else 0. Name only.
+pub fn nbw_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 24 {
+        return 0;
+    }
+    nbw_name_at(buf, lo)
+}
+
+// "__mind_group_accrows_i64" with exactly one argument -> 89, else -1.
+pub fn nbw_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    if nbw_name(buf, lo, hi) == 0 {
+        return 0 - 1;
+    }
+    if nbg_arity(buf, hi) != 1 {
+        return 0 - 1;
+    }
+    return 89;
+}
+
+pub fn nbw_kind_ok(kind: i64, args_len: i64) -> i64 {
+    if kind == 89 {
+        if args_len == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
+// ids == 0 or a non-zero ctx emits nothing (the caller's 0-byte fence refuses it).
+pub fn nbw_emit(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i64) -> String {
+    if ids == 0 {
+        return string_new();
+    }
+    if ctx != 0 {
+        return string_new();
+    }
+    if kind == 89 {
+        let d0: i64 = __mind_load_i64(ids);
+        return nbw_emit_rows(code, d0, dst_id);
+    }
+    string_new()
+}
+
+// 1 when the 24 name bytes sit at buf[i].
+pub fn nbw_name_at(buf: i64, i: i64) -> i64 {
+    if __mind_load_i64(buf + i) != 7448782734072045407 {
+        return 0;
+    }
+    if __mind_load_i64(buf + i + 8) != 7161674894985752434 {
+        return 0;
+    }
+    if __mind_load_i64(buf + i + 16) != 3762310397394644850 {
+        return 0;
+    }
+    1
+}
+
+// 1 when [lo, hi) contains the name. A comment hit may set the guard.
+pub fn nbw_span_hit(buf: i64, lo: i64, hi: i64) -> i64 {
+    let mut i: i64 = lo;
+    let mut hit: i64 = 0;
+    while i + 24 <= hi {
+        if hit == 0 {
+            hit = nbw_name_at(buf, i);
+        }
+        i = i + 1;
+    }
+    hit
+}
+
+pub fn nbw_nonneg(v: i64) -> i64 {
+    if v < 0 {
+        return 0;
+    }
+    v
+}
+
+pub fn nbw_fn_span(node: i64) -> i64 {
+    let body: i64 = __mind_load_i64(node + 40);
+    let a: i64 = __mind_load_i64(node + 16) - __mind_load_i64(node + 8);
+    if body == 0 {
+        return nbw_nonneg(a);
+    }
+    let b: i64 = __mind_load_i64(body + 16) - __mind_load_i64(body + 8);
+    if a > b {
+        return nbw_nonneg(a);
+    }
+    nbw_nonneg(b)
+}
+
+// 1 when a fn of the pruned set contains the name. A call cannot miss it.
+pub fn nbw_fns_use_walk(src_addr: i64, ordered: i64, n_fns: i64) -> i64 {
+    if n_fns <= 0 {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + (n_fns - 1) * 8);
+    let lo: i64 = __mind_load_i64(node + 8);
+    if nbw_span_hit(src_addr, lo, lo + nbw_fn_span(node)) == 1 {
+        return 1;
+    }
+    nbw_fns_use_walk(src_addr, ordered, n_fns - 1)
+}
+
+// vpaddq (212) or vpsubq (251): ymm k op= [rbx + rax*1 + disp]. SIB 0x03.
+pub fn nbw_sib(code: String, op: i64, k: i64, disp: i64) -> String {
+    let c2: String = nbg_b3(code, 197, 128 + (15 - k) * 8 + 5, op);
+    if disp == 0 {
+        return nbg_b2(c2, k * 8 + 4, 3);
+    }
+    if disp <= 127 {
+        return nbg_b3(c2, 64 + k * 8 + 4, 3, disp);
+    }
+    nbg_u32(nbg_b2(c2, 128 + k * 8 + 4, 3), disp)
+}
+
+pub fn nbw_sips(code: String, op: i64) -> String {
+    let mut c: String = code;
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbw_sib(c, op, i, i * 32);
+        i = i + 1;
+    }
+    c
+}
+
+// rsi = start, r9 = end. One bounds test, then the 12-instruction body.
+pub fn nbw_terms(code: String, op: i64) -> String {
+    let skip: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let c1: String = nbg_jcc(nbg_rr(code, 57, 6, 9), 141, skip);
+    let head: i64 = string_len(c1);
+    let c2: String = nbw_sips(nbg_b4(c1, 72, 139, 4, 242), op);
+    let c3: String = nbg_jcc(nbg_rr(nbg_b4(c2, 72, 131, 198, 1), 57, 6, 9), 140, back);
+    nbg_here(nbg_link(c3, back, head), skip)
+}
+
+pub fn nbw_xor8(code: String) -> String {
+    let mut c: String = code;
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_rrr(c, 239, i, i, i);
+        i = i + 1;
+    }
+    c
+}
+
+pub fn nbw_ld8(code: String) -> String {
+    let mut c: String = nbg_rr(code, 137, 0, 12);
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_mem(c, 2, 0, 111, i, i * 32);
+        i = i + 1;
+    }
+    c
+}
+
+pub fn nbw_st8(code: String) -> String {
+    let mut c: String = nbg_rr(code, 137, 0, 12);
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_mem(c, 2, 0, 127, i, i * 32);
+        i = i + 1;
+    }
+    c
+}
+
+// rax holds desc. Eight i64 loads into the row registers.
+pub fn nbw_desc(code: String) -> String {
+    let mut c: String = nbg_b3(code, 76, 139, 32);
+    c = nbg_b4(c, 76, 139, 120, 8);
+    c = nbg_b4(c, 72, 139, 88, 16);
+    c = nbg_b4(c, 72, 139, 80, 24);
+    c = nbg_b4(c, 76, 139, 112, 32);
+    c = nbg_b4(c, 76, 139, 64, 40);
+    c = nbg_b4(c, 76, 139, 80, 48);
+    nbg_b4(c, 76, 139, 88, 56)
+}
+
+// The row store of the plain loop, or the fused row finish (bit 7).
+pub fn nbw_store(code: String, fused: i64, slot: i64) -> String {
+    if fused == 1 {
+        return nbk_row(code, slot);
+    }
+    nbw_st8(code)
+}
+
+pub fn nbw_rows(code: String, fused: i64, slot: i64) -> String {
+    let done: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let zero: i64 = nbg_cell();
+    let after: i64 = nbg_cell();
+    let head: i64 = string_len(code);
+    let mut c: String = nbg_jcc(nbg_rr(code, 133, 10, 10), 142, done);
+    c = nbg_b4(nbg_b4(nbg_b3(c, 73, 139, 14), 73, 139, 126, 8), 77, 139, 110, 16);
+    c = nbg_b4(c, 73, 131, 227, 3);
+    c = nbg_jcc(nbg_b4(c, 73, 131, 251, 1), 133, zero);
+    c = nbg_jmp(nbw_ld8(c), after);
+    c = nbw_xor8(nbg_here(c, zero));
+    c = nbg_here(c, after);
+    c = nbg_rr(nbg_rr(c, 137, 6, 1), 137, 9, 7);
+    c = nbw_terms(c, 212);
+    c = nbg_rr(nbg_rr(c, 137, 6, 7), 137, 9, 13);
+    c = nbw_terms(c, 251);
+    c = nbw_store(c, fused, slot);
+    c = nbg_rr(nbg_rr(c, 1, 12, 15), 1, 14, 8);
+    c = nbg_jmp(nbg_b4(c, 73, 131, 234, 1), back);
+    nbg_here(nbg_link(c, back, head), done)
+}
+
+pub fn nbw_epi(code: String, id: i64) -> String {
+    let c0: String = nbg_b4(code, 72, 131, 196, 48);
+    let c1: String = nbg_b2(c0, 65, 93);
+    let c2: String = nbg_b3(nbg_b4(c1, 65, 95, 65, 94), 65, 92, 91);
+    let c3: String = nbg_b3(c2, 197, 248, 119);
+    nbg_u32(nbg_b5(c3, 49, 192, 72, 137, 133), 0 - 8 * (id + 1))
+}
+
+// One copy of the path dispatch: term loop (bits 3, 4), i32 walk (bit 2), plain rows. fused 1 is
+// the bit-7 copy: each path finishes its rows in registers. p32 is this copy's i32 entry.
+pub fn nbw_paths(code: String, fused: i64, slot: i64) -> String {
+    let i32: i64 = nbg_cell();
+    let join: i64 = nbg_cell();
+    let join2: i64 = nbg_cell();
+    let tw: i64 = nbg_cell();
+    let c1t: String = nbg_jcc(nbg_b4(code, 65, 246, 195, 24), 133, tw);
+    let c2: String = nbg_jcc(nbg_b4(c1t, 65, 246, 195, 4), 133, i32);
+    let c3: String = nbg_jmp(nbw_rows(c2, fused, slot), join2);
+    let p32: i64 = string_len(c3);
+    let c4: String = nbg_jmp(nbi_i32_rows(nbg_here(c3, i32), fused, slot), join);
+    let c5: String = nbt_rows(nbg_here(c4, tw), p32, fused, slot);
+    nbg_here(nbg_here(c5, join), join2)
+}
+
+pub fn nbw_emit_rows(code: String, slot: i64, id: i64) -> String {
+    let c0: String = nbg_b4(nbg_b2(nbg_prologue(code), 65, 85), 72, 131, 236, 48);
+    let fuse_at: i64 = nbg_cell();
+    let none_at: i64 = nbg_cell();
+    let end_at: i64 = nbg_cell();
+    let c1: String = nbk_open(nbw_guard(nbw_desc(nbg_slot(c0, slot, 0))), fuse_at);
+    let c2: String = nbg_jmp(nbf_tail(nbw_paths(c1, 0, slot), slot), end_at);
+    let c3: String = nbk_enter(nbg_here(c2, fuse_at), none_at, slot);
+    let c4: String = nbk_close(nbw_paths(c3, 1, slot), slot);
+    nbw_epi(nbg_here(nbg_here(c4, none_at), end_at), id)
+}

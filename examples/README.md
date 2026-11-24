@@ -18,6 +18,13 @@ Comprehensive examples demonstrating MIND's capabilities for tensor computation,
 | `remizov_feynman.mind` | Monte Carlo Feynman path integral ODE solver | Advanced |
 | `remizov_benchmark.mind` | 6-benchmark ODE solver performance suite | Advanced |
 | `policy.mind` | Execution boundary kernel — fail-closed access control | Intermediate |
+| [`formal_verification/implication_truth_table.mind`](formal_verification/README.md) | Finite truth-table check of modus ponens, with a negative control | Beginner |
+| [`formal_verification/prime_counting.mind`](formal_verification/README.md) | Prime counting and primality (bounded) | Beginner |
+| [`formal_verification/divisor_functions.mind`](formal_verification/README.md) | Divisor sums and Euler totient (bounded) | Beginner |
+| [`formal_verification/mobius_finite.mind`](formal_verification/README.md) | Möbius function and finite Mertens sums | Intermediate |
+| [`formal_verification/harmonic_exact.mind`](formal_verification/README.md) | Exact rational harmonic sums | Intermediate |
+| [`formal_verification/farey_finite.mind`](formal_verification/README.md) | Integer Farey recurrence | Intermediate |
+| [`formal_verification/goldbach_bounded.mind`](formal_verification/README.md) | Finite Goldbach pair search, not a proof of the conjecture | Beginner |
 
 ## Example Descriptions
 

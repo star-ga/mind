@@ -13,11 +13,8 @@
 | Repo | Path | Manifest | Version | mindc target | IR format | Notes |
 |---|---|---|---|---|---|---|
 | **mind** | `~/mind` | `Cargo.toml` | **0.10.4** | self (the compiler) | mic@1 (text), mic@3 (binary); NATIVE-ELF (normative self-host, `src/native`) | Public repo `star-ga/mind`. Native-ELF self-host fixed point closed 2026-06-25. |
-| **mind-mem** | `~/mind-mem` | `pyproject.toml` | **4.0.15** | n/a (Python package) | uses `mic_map.py` (MICB_VERSION=0x02 / mic@2) | PyPI `mind-mem 4.0.15`. `__version__ = "4.0.15"`. MICB_VERSION pin is mic@2 — see drift flag. |
-| **mind-nerve** | `~/mind-nerve` | `Mind.toml` | **0.1.0-alpha.2** | mindc ≥0.10.2, <0.11.0 (`[mind]` pin, now ENFORCED) | mic@2 (`ir-format = "mic@2"`) | Python package: `pyproject.toml` uses dynamic version via `mind_nerve.__version__`; `__version__ = "0.3.0b8"`. The `ir-format` pin is REFUSED by mindc: no invocation emits mic@2 (see `docs/ir-stability.md`). See drift flag. |
-| **mind-inference** | `~/mind-inference` | `Mind.toml` | **0.2.0** | not pinned (see drift flag) | mic@1 (standard pipeline) | STARGA Commercial license. No CI verified as of last audit. |
-| **MIND-Law** | `~/mind-law` | CHANGELOG.md | **1.10.1** | mindc 0.2.5 (CHANGELOG §v1.10.1) | MIC-B / mic@2 (`canonical_ir.serialize_mic_b`) | DIFC governance framework. 65+ .mind source modules. See drift flag on mindc target. |
-| **mindlang.dev** | `~/mindlang.dev` | `package.json` | **0.1.0** | n/a (Next.js / Cloudflare Pages) | n/a | Site name in package.json is `"v2"`, version `"0.1.0"`. TypeScript/Next.js. |
+| **mind-mem** | `star-ga/mind-mem` | `pyproject.toml` | **5.0.3** | n/a (Python package) | uses `mic_map.py` (MICB_VERSION=0x02 / mic@2) | PyPI `mind-mem 5.0.3`. MICB_VERSION pin is mic@2 — see drift flag. |
+| **mind-nerve** | `star-ga/mind-nerve` | `Mind.toml` | **0.3.1** | mindc ≥0.10.2, <0.11.0 (`[mind]` pin, now ENFORCED) | mic@2 (`ir-format = "mic@2"`) | Python package: `pyproject.toml` uses dynamic version via `mind_nerve.__version__`; `__version__ = "0.3.1"` (PyPI `mind-nerve 0.3.1`). The `ir-format` pin is REFUSED by mindc: no invocation emits mic@2 (see `docs/ir-stability.md`). |
 
 ---
 
@@ -31,52 +28,6 @@
 | `~/mind/Mind.toml` | `version = "0.10.4"` |
 
 **Assessment:** RESOLVED. Both manifests now read `0.10.4`.
-
----
-
-### FLAG-2: mind-nerve Mind.toml version vs Python __version__ mismatch
-
-| File | Value |
-|---|---|
-| `~/mind-nerve/Mind.toml` | `version = "0.1.0-alpha.2"` |
-| `~/mind-nerve/python/mind_nerve/__init__.py` | `__version__ = "0.3.0b8"` |
-
-**Assessment:** Two independent version strings in the same repo. `Mind.toml`
-tracks the MIND-language source package version; the Python `__version__` tracks
-the Python MCP/CLI adapter package version. These are legitimately different
-artefacts (the MIND binary vs the Python wrapper), but there is no documented
-correspondence policy: a user/CI reading the repo cannot easily determine which
-component they have at what version.
-
-**Action:** Document the version-skew policy in mind-nerve's README or CONTRIBUTING:
-are these expected to be independent, or should they be kept in sync? If independent,
-add a note to Mind.toml clarifying the scope of each version string.
-
----
-
-### FLAG-3: MIND-Law mindc target is mindc 0.2.5, compiler is at 0.7.0
-
-| File | Value |
-|---|---|
-| `~/mind-law/CHANGELOG.md` §v1.10.1 | `mindc 0.2.5 alignment` (last recorded bump) |
-| `~/mind/Cargo.toml` | `mindc 0.7.0` |
-
-**Assessment:** MIND-Law targets mindc 0.2.5, which is 5 minor versions behind the
-current compiler. The gap is large: mindc 0.3.x through 0.7.x added the full
-pure-MIND stdlib (RFC 0005), mind-blas (RFC 0006), Mindcraft (RFC 0007), `mindc build`
-(RFC 0008), extern "C" + SysV ABI (RFC 0010), `mic@2.1`/`mic@3` (RFC 0014/0021),
-and evidence chains (RFC 0016). MIND-Law's .mind source (1863 bitwise ops, 65+
-modules) may compile on the current mindc but this has not been verified after each
-major RFC ship.
-
-The existing audit (2026-05-29 genesis audit) found that 65/67 modules compile; 2
-fail. The mindc target version in the CHANGELOG is informational (MIND-Law has no
-`Mind.toml` at the repo root), so there is no machine-enforced compatibility gate.
-
-**Action (P1):** Test MIND-Law against the current mindc 0.7.x to confirm/refute
-the 65/67 compile claim and identify which two modules fail. Create a `Mind.toml`
-at the repo root with a `mindc-min` / `mindc-max` range so future mindc upgrades
-are gated mechanically.
 
 ---
 
@@ -98,22 +49,6 @@ and mind-mem as a single cross-repo PR set. Do not rename until all three are re
 
 ---
 
-### FLAG-5: mind-inference has no mindc version pin
-
-| File | Value |
-|---|---|
-| `~/mind-inference/Mind.toml` | `version = "0.2.0"` — no `mindc-min` / `mindc-max` |
-
-**Assessment:** mind-inference is the MIND-native LLM inference pipeline. Its
-`Mind.toml` declares a package version but no mindc toolchain compatibility range.
-This means a toolchain upgrade cannot be caught at the project-manifest level; a
-breaking change in mindc would be discovered only at build time.
-
-**Action:** Add `mindc-min` and `mindc-max` to `mind-inference/Mind.toml`, consistent
-with the range used in mind-nerve (`0.5.0` ≤ mindc < `0.8.0`). Low-cost hygiene.
-
----
-
 ## Quick-reference: key version anchors
 
 | Property | Value | Source |
@@ -123,10 +58,6 @@ with the range used in mind-nerve (`0.5.0` ≤ mindc < `0.8.0`). Low-cost hygien
 | mic@3 (binary codec) | post-0.7.0 (unreleased) | RFC 0021 step 1, mind@5c29f0d |
 | Evidence chain (Phase A/B) | post-0.7.0 (unreleased) | RFC 0016, mind@e7c8c28/cadca87 |
 | MICB_VERSION in mind-mem | 0x02 (mic@2) | `mind-mem/src/mind_mem/mic_map.py` |
-| mind-mem PyPI version | 4.0.15 | `mind-mem/pyproject.toml` |
-| mind-nerve Python __version__ | 0.3.0b8 | `mind-nerve/python/mind_nerve/__init__.py` |
-| mind-nerve Mind.toml version | 0.1.0-alpha.2 | `mind-nerve/Mind.toml` |
-| MIND-Law version | 1.10.1 | `mind-law/CHANGELOG.md` §v1.10.1 |
-| MIND-Law last mindc bump | 0.2.5 | `mind-law/CHANGELOG.md` §v1.10.1 |
-| mind-inference version | 0.2.0 | `mind-inference/Mind.toml` |
-| mindlang.dev version | 0.1.0 | `mindlang.dev/package.json` |
+| mind-mem PyPI version | 5.0.3 | PyPI `mind-mem` |
+| mind-nerve Python __version__ | 0.3.1 | `mind-nerve/python/mind_nerve/__init__.py` |
+| mind-nerve Mind.toml version | 0.3.1 | `mind-nerve/Mind.toml` |

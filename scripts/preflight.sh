@@ -704,17 +704,18 @@ python3 scripts/run_gate.py examples/mindc_mind/ri_d1_frozen_profile_gate.py || 
   step "string rows and identity  [ci.yml — minted stage2, not the frozen seed]"
   # Inside --full, as the ci.yml step. The runner self-test needs a compiler
   # without the string rule, and the merged identity judge a reference without
-  # the lane rules. The frozen seed carries both since its advance, so both read
-  # the seed as it was before its last change. The minted stage2 is what the rows
+  # the lane rules. The frozen seed carries both since its 0.10.4 advance and a
+  # later advance keeps them, so both read the seed of commit e52217f4 (00e9c2d9,
+  # the last seed without them). The minted stage2 is what the rows
   # and the merged identity run judge; the host rows run through the release mindc.
   sr_elf=/tmp/preflight-stage2.elf
   sr_seed=examples/mindc_mind/testdata/selfhost_loop/stage1.elf
   sr_ref=/tmp/preflight-seed-before-advance.elf
-  { git show "$(git log -1 --format=%H -- "$sr_seed")^:$sr_seed" > "$sr_ref" && chmod +x "$sr_ref"; } || bad "the seed before its advance is not in this checkout"
+  { git show "e52217f407d793a9afc4f2be10ffbab46579f6fb:$sr_seed" > "$sr_ref" && chmod +x "$sr_ref"; } || bad "the seed before its advance is not in this checkout"
   python3 examples/mindc_mind/native_lane_value_shapes_smoke.py --mint-stage2 "$sr_elf" --assert-fixed-point || bad "stage2 mint FAILED"
   python3 scripts/run_gate.py --min-asserted 499 --timeout 3600 examples/mindc_mind/native_lane_value_shapes_smoke.py --string-rows "$sr_elf" --string-rows-mindc "${MINDC_BIN:-}" || bad "string rows FAILED"
   python3 scripts/run_gate.py --min-asserted 140 --timeout 1800 examples/mindc_mind/native_lane_value_shapes_smoke.py --string-rows-selftest "$sr_ref" || bad "string rows self-test FAILED"
-  MIND_IDENTITY_PARTITION=merged python3 scripts/run_gate.py --min-asserted 557 --timeout 7200 examples/mindc_mind/native_lane_value_shapes_smoke.py --identity-vs "$sr_ref" --compiler "$sr_elf" || bad "identity FAILED"
+  MIND_IDENTITY_PARTITION=merged python3 scripts/run_gate.py --min-asserted 615 --timeout 7200 examples/mindc_mind/native_lane_value_shapes_smoke.py --identity-vs "$sr_ref" --compiler "$sr_elf" || bad "identity FAILED"
 
 fi
 

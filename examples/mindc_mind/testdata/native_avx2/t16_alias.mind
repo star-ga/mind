@@ -1,0 +1,51 @@
+// i32-walk term fallback overlap: bit 4 + bit 2 (mode 20), bound field 2^31 takes nbt_fallback.
+// The u16 offset list is the out row, so the first lane store would overwrite off16[0].
+// Every read of the row comes before its stores (i64-walk order). Bound 0 runs the fast loop.
+// Stdout: two bad counts (fallback, fast). Exit 0 when both are 0.
+
+fn ta_run(bound: i64) -> i64 {
+    let b32: i64 = __mind_alloc(2048);
+    let out: i64 = __mind_alloc(512);
+    let s: i64 = __mind_alloc(24);
+    let d: i64 = __mind_alloc(80);
+    let mut l: i64 = 0;
+    while l < 64 {
+        __mind_store_i32(b32 + l * 4, 1000 + l * 7);
+        __mind_store_i64(out + l * 8, 0);
+        l = l + 1;
+    }
+    __mind_store_i64(s, 0);
+    __mind_store_i64(s + 8, 1);
+    __mind_store_i64(s + 16, 1);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, b32);
+    __mind_store_i64(d + 24, out);
+    __mind_store_i64(d + 32, s);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 1);
+    __mind_store_i64(d + 56, 20);
+    __mind_store_i32(d + 60, bound);
+    let mut bad: i64 = __mind_group_accrows_i64(d);
+    l = 0;
+    while l < 64 {
+        if __mind_load_i64(out + l * 8) != 1000 + l * 7 {
+            bad = bad + 1;
+        }
+        l = l + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let w: i64 = __mind_alloc(16);
+    let a: i64 = ta_run(2147483648);
+    let b: i64 = ta_run(0);
+    __mind_store_i64(w, a);
+    __mind_store_i64(w + 8, b);
+    __mind_write(1, w, 16, 0 - 1);
+    if a + b != 0 {
+        return 1;
+    }
+    0
+}

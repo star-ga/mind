@@ -1,0 +1,344 @@
+// Copyright 2026 STARGA Inc.
+// Kind 89 term-loop modes. No new kind. Entered from nbw_emit_rows
+// when desc[7] bit 3 or bit 4 is set (test r11b, 24).
+// Bit 3 (value 8): two terms per iteration. Bit clear: one term per iteration.
+// Bit 4 (value 16): u16 lane offsets, zero-extended. The offset unit is one
+// lane: address = bank + off16 * 8 on the i64 walk (SIB scale 8) and
+// bank + off16 * 4 on the i32 walk (SIB scale 4). j0, j1, j2 stay list indices.
+// Bit 4 clear keeps i64 byte offsets and SIB scale 1. Results equal the
+// bit-clear walk. Bit 2 selects the i32 fast path. Bound >= 2^31 with bit 4
+// clear jumps to the i32 walk path. Bit 4 set uses nbt_fallback: an exact int64 loop
+// that sign-extends each i32 code, with the same result as the i32 walk fallback.
+// Bit 0 is the add-to-out flag. Reserved bits trap in nbw_guard (nb_group_walk.mind)
+// before any store.
+// One emitter: opcode, list element size, SIB scale. r9 = list end address.
+// rsi = negative byte index. Pair body, 20 instructions, 0 frame operands:
+// mov rax,[r9+rsi]; mov rcx,[r9+rsi+8]; 8 ops rax; 8 ops rcx; add rsi,16; jl.
+// An odd count emits one term, then the pairs. Callee-saved: rbx, r12-r15.
+// llvm-mc (x86_64, intel, +avx2), before this emitter:
+// mov rax, [r9+rsi] = 49 8b 04 31
+// mov rcx, [r9+rsi+8] = 49 8b 4c 31 08
+// movzx eax, word [r9+rsi] = 41 0f b7 04 31
+// movzx ecx, word [r9+rsi+2] = 41 0f b7 4c 31 02
+// ud2 = 0f 0b
+// test r11b, 16 = 41 f6 c3 10
+// test r11b, 8 = 41 f6 c3 08
+// test r11b, 24 = 41 f6 c3 18
+// lea r9, [rdx+rcx] = 4c 8d 0c 0a
+// neg rsi = 48 f7 de
+// shl rcx, 3 = 48 c1 e1 03
+// shl rsi, 3 = 48 c1 e6 03
+// shl rcx, 1 = 48 d1 e1
+// shl rsi, 1 = 48 d1 e6
+// test al, 1 = a8 01
+// add rsi, 16 = 48 83 c6 10
+// add rsi, 8 = 48 83 c6 08
+// add rsi, 4 = 48 83 c6 04
+// add rsi, 2 = 48 83 c6 02
+// SIB [rbx+index*scale+disp], VEX C5, pp 66, L 256. Opcode D4/FB/FE/FA.
+// index rax scale 1 sib 03; rcx scale 1 sib 0b
+// index rax scale 4 sib 83; rcx scale 4 sib 8b
+// index rax scale 8 sib c3; rcx scale 8 sib cb
+// vpaddq ymm0, ymm0, [rbx+rax] = c5 fd d4 04 03
+// vpaddq ymm1, ymm1, [rbx+rax+32] = c5 f5 d4 4c 03 20
+// vpaddq ymm4, ymm4, [rbx+rax+128] = c5 dd d4 a4 03 80 00 00 00
+// vpaddq ymm0, ymm0, [rbx+rcx] = c5 fd d4 04 0b
+// vpaddq ymm0, ymm0, [rbx+rax*4] = c5 fd d4 04 83
+// vpaddq ymm0, ymm0, [rbx+rcx*4] = c5 fd d4 04 8b
+// vpaddq ymm0, ymm0, [rbx+rax*8] = c5 fd d4 04 c3
+// vpaddq ymm0, ymm0, [rbx+rcx*8] = c5 fd d4 04 cb
+// vpsubq ymm0, ymm0, [rbx+rax] = c5 fd fb 04 03
+// vpaddd ymm0, ymm0, [rbx+rax] = c5 fd fe 04 03
+// vpaddd ymm7, ymm7, [rbx+rax*4+224] = c5 c5 fe bc 83 e0 00 00 00
+// vpsubd ymm0, ymm0, [rbx+rax] = c5 fd fa 04 03
+// vpsubd ymm7, ymm7, [rbx+rcx+224] = c5 c5 fa bc 0b e0 00 00 00
+// movzx r9d, word [rdx+rax*2] = 44 0f b7 0c 42
+// lea r9, [rbx+r9*4] = 4e 8d 0c 8b
+// movsxd r9, dword [r9+rsi*4] = 4d 63 0c b1
+// vpaddq ymm0, ymm0, [rbx+rax*8] = c5 fd d4 04 c3
+// vpaddd ymm0, ymm0, [rbx+rax*4] = c5 fd fe 04 83
+
+import std.string;
+import nb_group_sum_enc;
+import nb_group_i32w;
+import nb_group_fuse;
+import nb_group_fuse32;
+
+pub fn nbt_sc(scale: i64) -> i64 {
+    if scale == 8 {
+        return 3;
+    }
+    if scale == 4 {
+        return 2;
+    }
+    0
+}
+
+// ymm k op= [rbx + idx*scale + k*32]. idx 0 = rax, idx 1 = rcx.
+pub fn nbt_sib(code: String, op: i64, k: i64, idx: i64, scale: i64) -> String {
+    let sib: i64 = nbt_sc(scale) * 64 + idx * 8 + 3;
+    let disp: i64 = k * 32;
+    let c2: String = nbg_b3(code, 197, 128 + (15 - k) * 8 + 5, op);
+    if disp == 0 {
+        return nbg_b2(c2, k * 8 + 4, sib);
+    }
+    if disp <= 127 {
+        return nbg_b3(c2, 64 + k * 8 + 4, sib, disp);
+    }
+    nbg_u32(nbg_b2(c2, 128 + k * 8 + 4, sib), disp)
+}
+
+pub fn nbt_sips(code: String, op: i64, idx: i64, scale: i64) -> String {
+    let mut c: String = code;
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbt_sib(c, op, i, idx, scale);
+        i = i + 1;
+    }
+    c
+}
+
+pub fn nbt_ld_rax(code: String, wide: i64) -> String {
+    if wide == 1 {
+        return nbg_b5(code, 65, 15, 183, 4, 49);
+    }
+    nbg_b4(code, 73, 139, 4, 49)
+}
+
+pub fn nbt_ld_rcx(code: String, wide: i64) -> String {
+    if wide == 1 {
+        return nbg_push(nbg_b5(code, 65, 15, 183, 76, 49), 2);
+    }
+    nbg_b5(code, 73, 139, 76, 49, 8)
+}
+
+// which 1 = rcx, else rsi. sh 1 uses the one-bit form. sh 3 uses imm8.
+pub fn nbt_shl(code: String, which: i64, sh: i64) -> String {
+    let rm: i64 = if which == 1 {
+        225
+    } else {
+        230
+    };
+    if sh == 1 {
+        return nbg_b3(code, 72, 209, rm);
+    }
+    nbg_b4(code, 72, 193, rm, sh)
+}
+
+pub fn nbt_one(code: String, op: i64, scale: i64, es: i64, wide: i64) -> String {
+    nbg_b4(nbt_sips(nbt_ld_rax(code, wide), op, 0, scale), 72, 131, 198, es)
+}
+
+// 11 instructions. Caller enters only when rsi < 0.
+pub fn nbt_single(code: String, op: i64, scale: i64, es: i64, wide: i64) -> String {
+    let back: i64 = nbg_cell();
+    let head: i64 = string_len(code);
+    let mut c: String = nbt_ld_rax(code, wide);
+    c = nbt_sips(c, op, 0, scale);
+    c = nbg_jcc(nbg_b4(c, 72, 131, 198, es), 140, back);
+    nbg_link(c, back, head)
+}
+
+// 20 instructions. Caller enters only when rsi < 0.
+pub fn nbt_pair(code: String, op: i64, scale: i64, step: i64, wide: i64) -> String {
+    let back: i64 = nbg_cell();
+    let head: i64 = string_len(code);
+    let mut c: String = nbt_ld_rax(code, wide);
+    c = nbt_ld_rcx(c, wide);
+    c = nbt_sips(c, op, 0, scale);
+    c = nbt_sips(c, op, 1, scale);
+    c = nbg_jcc(nbg_b4(c, 72, 131, 198, step), 140, back);
+    nbg_link(c, back, head)
+}
+
+// ja, jb are GPR numbers (j start, j end). rdx is the list base. es is 8 or 2.
+pub fn nbt_list(code: String, op: i64, ja: i64, jb: i64, shift: i64, es: i64, scale: i64, wide: i64) -> String {
+    let skip_a: i64 = nbg_cell();
+    let skip_b: i64 = nbg_cell();
+    let even: i64 = nbg_cell();
+    let mut c: String = nbg_jcc(nbg_rr(code, 57, ja, jb), 141, skip_a);
+    c = nbg_rr(c, 137, 0, jb);
+    c = nbg_rr(c, 41, 0, ja);
+    c = nbg_rr(c, 137, 1, jb);
+    c = nbt_shl(c, 1, shift);
+    c = nbg_b4(c, 76, 141, 12, 10);
+    c = nbg_rr(c, 137, 6, 0);
+    c = nbt_shl(c, 6, shift);
+    c = nbg_b3(c, 72, 247, 222);
+    let pairs: i64 = nbg_cell();
+    let skip_s: i64 = nbg_cell();
+    let done_s: i64 = nbg_cell();
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 8), 133, pairs);
+    c = nbg_jcc(nbg_rr(c, 133, 6, 6), 141, skip_s);
+    c = nbt_single(c, op, scale, es, wide);
+    c = nbg_jmp(c, done_s);
+    c = nbg_here(c, pairs);
+    c = nbg_jcc(nbg_b2(c, 168, 1), 132, even);
+    c = nbt_one(c, op, scale, es, wide);
+    c = nbg_jcc(nbg_rr(c, 133, 6, 6), 141, skip_b);
+    c = nbg_here(c, even);
+    c = nbt_pair(c, op, scale, es * 2, wide);
+    c = nbg_here(nbg_here(c, skip_a), skip_b);
+    nbg_here(nbg_here(c, skip_s), done_s)
+}
+
+pub fn nbt_ld8(code: String) -> String {
+    let mut c: String = nbg_rr(code, 137, 0, 12);
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_mem(c, 2, 0, 111, i, i * 32);
+        i = i + 1;
+    }
+    c
+}
+
+pub fn nbt_st8(code: String) -> String {
+    let mut c: String = nbg_rr(code, 137, 0, 12);
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbg_mem(c, 2, 0, 127, i, i * 32);
+        i = i + 1;
+    }
+    c
+}
+
+// Row end of an i64 term row: the 8 stores, or the fused finish (bit 7).
+pub fn nbt_end64(code: String, fused: i64, slot: i64) -> String {
+    if fused == 1 {
+        return nbk_row(code, slot);
+    }
+    nbt_st8(code)
+}
+
+pub fn nbt_i64_rows(code: String, shift: i64, es: i64, scale: i64, wide: i64, fused: i64, slot: i64) -> String {
+    let done: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let zero: i64 = nbg_cell();
+    let after: i64 = nbg_cell();
+    let head: i64 = string_len(code);
+    let mut c: String = nbg_jcc(nbg_rr(code, 133, 10, 10), 142, done);
+    c = nbg_b4(nbg_b4(nbg_b3(c, 73, 139, 14), 73, 139, 126, 8), 77, 139, 110, 16);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 1), 132, zero);
+    c = nbg_jmp(nbt_ld8(c), after);
+    c = nbi_xor8(nbg_here(c, zero));
+    c = nbg_here(c, after);
+    c = nbt_list(c, 212, 1, 7, shift, es, scale, wide);
+    c = nbt_list(c, 251, 7, 13, shift, es, scale, wide);
+    c = nbt_end64(c, fused, slot);
+    c = nbg_rr(nbg_rr(c, 1, 12, 15), 1, 14, 8);
+    c = nbg_jmp(nbg_b4(c, 73, 131, 234, 1), back);
+    nbg_here(nbg_link(c, back, head), done)
+}
+
+pub fn nbt_i32_fast(code: String, shift: i64, es: i64, scale: i64, wide: i64, fused: i64, slot: i64) -> String {
+    let done: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let addp: i64 = nbg_cell();
+    let after: i64 = nbg_cell();
+    let head: i64 = string_len(code);
+    let mut c: String = nbg_jcc(nbg_rr(code, 133, 10, 10), 142, done);
+    c = nbg_b4(nbg_b4(nbg_b3(c, 73, 139, 14), 73, 139, 126, 8), 77, 139, 110, 16);
+    c = nbi_xor8(c);
+    c = nbt_list(c, 254, 1, 7, shift, es, scale, wide);
+    c = nbt_list(c, 250, 7, 13, shift, es, scale, wide);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 1), 133, addp);
+    c = nbg_jmp(nbx_end32(c, 0, fused, slot), after);
+    c = nbx_end32(nbg_here(c, addp), 1, fused, slot);
+    c = nbg_here(c, after);
+    c = nbg_rr(nbg_rr(c, 1, 12, 15), 1, 14, 8);
+    c = nbg_jmp(nbg_b4(c, 73, 131, 234, 1), back);
+    nbg_here(nbg_link(c, back, head), done)
+}
+
+// movzx r9d, word [rdx+rax*2]; lea r9, [rbx+r9*4]; movsxd r9, [r9+rsi*4].
+pub fn nbt_term16(code: String, add: i64) -> String {
+    let c0: String = nbg_b5(code, 68, 15, 183, 12, 66);
+    let c1: String = nbg_b4(c0, 78, 141, 12, 139);
+    let c2: String = nbg_b4(c1, 77, 99, 12, 177);
+    if add == 1 {
+        return nbg_rr(c2, 1, 11, 9);
+    }
+    nbg_rr(c2, 41, 11, 9)
+}
+
+// Exact i64 sum of sign-extended i32 codes. u16 lane offsets. Same result as
+// the i32 walk fallback. One lane at a time. r11 is saved, then used as the sum. The 64
+// lane sums wait in a 512-byte stack buffer until every read of the row is done.
+pub fn nbt_fallback(code: String, fused: i64, slot: i64) -> String {
+    let done: i64 = nbg_cell();
+    let back: i64 = nbg_cell();
+    let lane: i64 = nbg_cell();
+    let ladd: i64 = nbg_cell();
+    let lsub: i64 = nbg_cell();
+    let noini: i64 = nbg_cell();
+    let mut c: String = nbg_b5(nbg_u32(nbg_b3(code, 72, 129, 236), 512), 76, 137, 92, 36, 232);
+    let head: i64 = string_len(c);
+    c = nbg_jcc(nbg_rr(c, 133, 10, 10), 142, done);
+    c = nbg_b4(nbg_b4(nbg_b3(c, 73, 139, 14), 73, 139, 126, 8), 77, 139, 110, 16);
+    c = nbg_b2(c, 49, 246);
+    let lhead: i64 = string_len(c);
+    c = nbg_rr(c, 49, 11, 11);
+    c = nbg_jcc(nbg_b5(c, 246, 68, 36, 232, 1), 132, noini);
+    c = nbg_b4(c, 77, 139, 28, 244);
+    c = nbg_here(c, noini);
+    c = nbg_rr(c, 137, 0, 1);
+    let hadd: i64 = string_len(c);
+    c = nbg_jcc(nbg_rr(c, 57, 0, 7), 141, ladd);
+    c = nbt_term16(c, 1);
+    c = nbg_jmp(nbg_b4(c, 72, 131, 192, 1), back);
+    c = nbg_link(c, back, hadd);
+    c = nbg_here(c, ladd);
+    c = nbg_rr(c, 137, 0, 7);
+    let hsub: i64 = string_len(c);
+    let sback: i64 = nbg_cell();
+    c = nbg_jcc(nbg_rr(c, 57, 0, 13), 141, lsub);
+    c = nbt_term16(c, 0);
+    c = nbg_jmp(nbg_b4(c, 72, 131, 192, 1), sback);
+    c = nbg_link(c, sback, hsub);
+    c = nbg_here(c, lsub);
+    c = nbg_b4(c, 76, 137, 28, 244);
+    c = nbg_jcc(nbg_b4(nbg_b4(c, 72, 131, 198, 1), 72, 131, 254, 64), 140, lane);
+    c = nbg_link(c, lane, lhead);
+    // Row end after all reads of the row, as in nbi_fallback (the order of the i64 walk). Buffer: sub rsp, 512.
+    c = nbx_endfb(c, fused, slot);
+    c = nbg_rr(nbg_rr(c, 1, 12, 15), 1, 14, 8);
+    let rback: i64 = nbg_cell();
+    c = nbg_jmp(nbg_b4(c, 73, 131, 234, 1), rback);
+    c = nbg_here(nbg_link(c, rback, head), done);
+    nbg_u32(nbg_b3(c, 72, 129, 196), 512)
+}
+
+// p32 is the byte position of the i32 walk path of the same copy. Bit 4 does not trap.
+// fused 1: every row end is the bit-7 finish (nb_group_fuse.mind, nb_group_fuse32.mind).
+pub fn nbt_rows(code: String, p32: i64, fused: i64, slot: i64) -> String {
+    let wide: i64 = nbg_cell();
+    let u64: i64 = nbg_cell();
+    let u32: i64 = nbg_cell();
+    let big: i64 = nbg_cell();
+    let fb: i64 = nbg_cell();
+    let far: i64 = nbg_cell();
+    let j0: i64 = nbg_cell();
+    let j1: i64 = nbg_cell();
+    let j2: i64 = nbg_cell();
+    let j3: i64 = nbg_cell();
+    let mut c: String = nbg_jcc(nbg_b4(code, 65, 246, 195, 4), 133, wide);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 16), 133, u64);
+    c = nbg_jmp(nbt_i64_rows(c, 3, 8, 1, 0, fused, slot), j0);
+    c = nbg_here(c, u64);
+    c = nbg_jmp(nbt_i64_rows(c, 1, 2, 8, 1, fused, slot), j1);
+    c = nbg_here(c, wide);
+    c = nbg_rr(c, 137, 0, 11);
+    c = nbg_b4(c, 72, 193, 232, 32);
+    c = nbg_u32(nbg_push(c, 185), 2147483648);
+    c = nbg_jcc(nbg_rr(c, 57, 0, 1), 131, big);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 16), 133, u32);
+    c = nbg_jmp(nbt_i32_fast(c, 3, 8, 1, 0, fused, slot), j2);
+    c = nbg_here(c, u32);
+    c = nbg_jmp(nbt_i32_fast(c, 1, 2, 4, 1, fused, slot), j3);
+    c = nbg_here(c, big);
+    c = nbg_jcc(nbg_b4(c, 65, 246, 195, 16), 133, fb);
+    c = nbg_link(nbg_jmp(c, far), far, p32);
+    c = nbt_fallback(nbg_here(c, fb), fused, slot);
+    c = nbg_here(nbg_here(c, j0), j1);
+    nbg_here(nbg_here(c, j2), j3)
+}

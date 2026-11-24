@@ -2,7 +2,8 @@
 #
 # Downloads mindc-windows-x64.zip from a GitHub release of star-ga/mind,
 # checks its SHA-256 against the mindc-windows-x64.zip.sha256 file published
-# beside it, unpacks mindc.exe and copies it to the install directory.
+# beside it, unpacks the archive (mindc.exe, std/, stdlib_manifest.txt and
+# SHA256SUMS) and copies only mindc.exe to the install directory.
 # Runs in Windows PowerShell 5.1 and in PowerShell 7. Windows x64 only.
 #
 # Usage:

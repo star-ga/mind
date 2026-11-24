@@ -13,8 +13,9 @@ import tempfile
 import time
 
 from _selfhost_sources import COMPILER_UNIT_DRIVERS  # drivers that call compiler fns: compiler source, in self mode
-from _selfhost_sources import _REPO, SELF_MAGIC, capture_bundle, direct_compile_cli, mint_stage2, self_mode_image, start_child
+from _selfhost_sources import _REPO, SELF_MAGIC, capture_bundle, core_limit_check, core_limit_one, direct_compile_cli, mint_stage2, self_mode_image, start_child
 from _selfhost_string_rows import _tsv_rows, add_string_rows_args, load_string_rows, string_rows_main
+from _w8_native import _libc_admitted, group_accrows_admitted, group_kernel_change, group_kernel_reason  # admission rows; kinds 87-89
 
 
 def corpus_programs(path: pathlib.Path) -> list[tuple[str, str]]:
@@ -70,8 +71,8 @@ def elf_note(image: bytes) -> bytes:
 
 
 def run_image(image: bytes, timeout: int = 20, args: tuple = (), env: dict | None = None) -> tuple[int, bytes] | None:
-    """(exit status, stdout) of an image run with `args` (default none) and no stdin; None on a timeout.
-    `env` is added to the parent environment (a row's own variables)."""
+    """(exit status, stdout) of an image run with `args` (default none), no stdin and the soft core limit 1 (core_limit_one:
+    a trap starts no dump handler); None on a timeout. `env` is added to the parent environment (a row's own variables)."""
     penv = None if not env else {**os.environ, **{str(k): str(v) for k, v in env.items()}}
     with tempfile.TemporaryDirectory() as td:
         exe = pathlib.Path(td) / "image"
@@ -80,7 +81,7 @@ def run_image(image: bytes, timeout: int = 20, args: tuple = (), env: dict | Non
         for attempt in range(8):
             try:
                 r = subprocess.run([str(exe), *args], stdin=subprocess.DEVNULL, capture_output=True,
-                                   timeout=timeout, env=penv)
+                                   timeout=timeout, env=penv, preexec_fn=core_limit_one())
                 return r.returncode, r.stdout
             except subprocess.TimeoutExpired:
                 return None
@@ -265,18 +266,6 @@ def _add_keys(keys: dict, pos: dict, name: str, blob: str) -> None:
             pos[name].setdefault(key, set()).add(pair)
 
 
-def _libc_admitted(rows: list) -> tuple[frozenset, dict]:
-    """(names, {name: (exit, env)}) of expect_exit rows that are not a front-door duplicate."""
-    libc, admit = set(), {}
-    for r in rows:
-        if not r.get("fixture") or "expect_exit" not in r or r.get("front_door"):
-            continue
-        name = f"examples/mindc_mind/{r['fixture']}"
-        libc.add(name)
-        admit[name] = (int(r["expect_exit"]), dict(r.get("env") or {}))
-    return frozenset(libc), admit
-
-
 def _row_facts(root: pathlib.Path, source: dict[str, str]) -> dict:
     """Keys, positions, libc admissions, allocator exits and classes, and the std prefix, from row data."""
     mind = root / "examples/mindc_mind"
@@ -297,7 +286,7 @@ def _row_facts(root: pathlib.Path, source: dict[str, str]) -> dict:
     by_text = {srows.programs[r["id"]].decode().strip(): r["key"] for r in srows.rows if r["key"] and r["id"] in srows.programs}
     for name, text in source.items():
         keys[name].update(k for k in [by_text.get(text.strip()), FRAME_KEYS.get(name)] if k)
-    libc, admit = _libc_admitted(rows)
+    libc, admit = _libc_admitted(rows + group_accrows_admitted())
     exits = {"corpus/" + line[4:].split(" | ")[0]: (int(line.split(" | ")[1][5:]), ())
              for line in (root / "tests/fixtures/native_lane/request_corpus.txt").read_text().splitlines()
              if line.startswith("=== ") and line.split(" | ")[1].startswith("exit=")}
@@ -310,7 +299,7 @@ def _row_facts(root: pathlib.Path, source: dict[str, str]) -> dict:
 
 # The classes of the merged identity partition. Every program of a pair list is in exactly one.
 MERGED_CLASSES = ("identical", "literal handle", "alloc prologue", "named refusal", "refusal equal",
-                  "newly admitted", "refused by its row")
+                  "newly admitted", "refused by its row", "group kernel")
 # A string-family key needs no row when the line the report names holds the construct of that key.
 _STRING_CONSTRUCT = {"lane.string.result": re.compile(r"->\s*String\b"),
                      "lane.string.binding": re.compile(r"\blet\s+(?:mut\s+)?\w+\s*(?::\s*String\b|=\s*\")"),
@@ -497,6 +486,8 @@ def _merged_class_of(name: str, text: str, ref: tuple, cand: tuple, facts: dict)
         return "literal handle", f"{lits} literal(s)"
     if not lits and cand_pro and not ref_pro and _prologue_ok(name, text, facts):
         return "alloc prologue", ""
+    if not lits and cand_pro == ref_pro and group_kernel_change(text):
+        return "group kernel", "kind 87 / 88 probe-skip contract"
     if lits:
         return None, f"{lits} literal(s) AND a prologue change: in two classes"
     return None, f"image differs ({len(ref[1])} -> {len(cand[1])} B) and the candidate does not start with the runtime prologue"
@@ -523,6 +514,7 @@ def _merged_partition(source: dict[str, str], pairs: list, facts: dict, jobs: in
         else:
             members[cls].append((name, why, ref, cand))
     diff = [("literal handle", *m) for m in members["literal handle"]] + [("alloc prologue", *m) for m in members["alloc prologue"]]
+    diff += [("group kernel", *m) for m in members["group kernel"]]  # both images run; exit status equal, stdout may differ
     with ThreadPoolExecutor(jobs) as pool:
         runs = list(pool.map(lambda m: (run(m[3][1]), run(m[4][1])), diff))
     equal = died = 0
@@ -537,6 +529,10 @@ def _merged_partition(source: dict[str, str], pairs: list, facts: dict, jobs: in
         elif ref_run == cand_run:
             equal += 1
             verdict = "run equal" if ref_run is None else f"run equal exit={ref_run[0]} stdout={len(ref_run[1])}B"
+        elif cls == "group kernel" and cand_run[0] == ref_run[0] == 0:
+            verdict = f"exit 0 both, stdout {len(ref_run[1])} -> {len(cand_run[1])} B (the value-shape row checks the bytes)"
+        elif cls == "group kernel" and (reason := group_kernel_reason(name, ref_run, cand_run)):
+            verdict = f"named reason: {reason}; ref exit={ref_run[0]}, cand exit={cand_run[0]} stdout={len(cand_run[1])} B = its row"
         elif ref_run[0] < 0 and row_exit(name, cand[1], cand_run):
             died += 1
             verdict = f"reference died (signal {-ref_run[0]}), candidate exit = its row {facts['alloc'][name]}"
@@ -550,10 +546,10 @@ def _merged_partition(source: dict[str, str], pairs: list, facts: dict, jobs: in
         if not spec:
             bad.append(f"{name}: newly admitted with no exit in its row")
             continue
-        want, env = spec
-        got = run(cand[1], (), env)
-        if got is None or got[0] != want:
-            bad.append(f"{name}: admitted image exit {None if got is None else got[0]}, its row states {want}")
+        for want, env, args, out in spec:  # each admission row: its arguments, its exit, its stdout when it states one
+            got = run(cand[1], args, env)
+            if got is None or got[0] != want or out is not None and got[1] != out:
+                bad.append(f"{name}: admitted image {list(args)} exit {None if got is None else got[0]}, its row states {want}")
     if not quiet:
         for name, why, *_ in members["named refusal"]:
             print(f"  NAMED {name}: {why}")
@@ -619,7 +615,8 @@ def _merged_selftest() -> bool:
     other = (3, b"", b"error[E0001]: no\n")
     runs = {elf(b"a"): (0, b"x"), elf(b"b"): (0, b"x"), elf(b"c"): (0, b"y"), elf(b"d"): (-11, b""), pro: (33, b""),
             elf(b"e"): (33, b""), elf(b"L"): (33, b"x"), pro_eq: (0, b"x"), pro_b: (33, b""),
-            note_a: (0, b"q"), note_b: (0, b"q"), elf(b"T"): None, elf(b"U"): None}
+            note_a: (0, b"q"), note_b: (0, b"q"), elf(b"T"): None, elf(b"U"): None, elf(b"r1"): (1, b"\x01" + bytes(7)),
+            elf(b"c0"): (0, bytes(8))}
     msg = b"error[native-lane]: the program is outside candidate native-lane-v1 ("
     keyed = lambda key, line: (3, b"", msg + key + b") in fn `f` at line " + line + b", column 1 of the composed user image.\n")
     at = lambda key, line, col: (3, b"", msg + key + b") at line " + line + b", column " + col + b" of the composed user image.\n")
@@ -646,7 +643,8 @@ def _merged_selftest() -> bool:
     rows = lambda keys=None, libc=(), alloc=None, admit=None, pos=None, alloc_class=None, std="": {"libc": frozenset(libc), "keys": keys or {}, "alloc": alloc or {}, "admit": admit or {}, "pos": pos or {}, "alloc_class": alloc_class or {}, "std": std}
     arity = {"named": frozenset({"lane.extern.arity"})}
     exf = rows({"ex": frozenset({"lane.extern.unknown_symbol"})}, pos={"ex": {"lane.extern.unknown_symbol": frozenset({(1, 17)})}})
-    admit_ok = rows(libc={"adm"}, admit={"adm": (42, {"EXIT": "42"})})
+    admit_ok, kb = rows(libc={"adm"}, admit={"adm": [(42, {"EXIT": "42"}, (), None)]}), "examples/mindc_mind/testdata/native_avx2/k3_bank.mind"
+    k87, ref1, cand0 = "fn main() { __mind_group_bank_i64(0, 0, 0, 0, 35) }\n", ok(elf(b"r1")), ok(elf(b"c0"))
 
     def v(name, text, ref, cand, facts):
         return _merged_partition({name: text}, [(name, ref, cand)], facts, 1, 0, True, fake)
@@ -661,7 +659,10 @@ def _merged_selftest() -> bool:
         ("to", lit, ok(elf(b"T")), ok(elf(b"U")), rows(), 1), ("ip", plain, ok(pro), ok(pro), rows(), 1),
         ("lp", lit, ok(elf(b"a")), ok(pro_eq), rows(), 1), ("rp", free_loop, ok(pro), ok(pro_b), rows(), 1),
         ("adm", plain, generic, ok(elf(b"a")), rows(), 1), ("adm", plain, generic, ok(elf(b"a")), admit_ok, 2),
-        ("adm", plain, generic, ok(elf(b"a")), rows(libc={"adm"}, admit={"adm": (7, {"EXIT": "42"})}), 1),
+        ("adm", plain, generic, ok(elf(b"a")), rows(libc={"adm"}, admit={"adm": [(7, {"EXIT": "42"}, (), None)]}), 1),
+        ("adm", plain, generic, ok(elf(b"a")), rows(libc={"adm"}, admit={"adm": [(1, {}, ("8",), b""), (0, {}, (), None)]}), 2),
+        ("adm", plain, generic, ok(elf(b"a")), rows(libc={"adm"}, admit={"adm": [(1, {}, ("8",), b"x")]}), 1),
+        (kb, k87, ref1, cand0, rows(), 0), (kb[:-5] + "_x.mind", k87, ref1, cand0, rows(), 1), (kb, k87, cand0, ref1, rows(), 1),
         ("adm", plain, other, ok(elf(b"a")), admit_ok, 1), ("named", plain, generic, lane, rows(), 1),
         ("named", plain, code, lane, rows(arity), 2), ("named", plain, ok(elf(b"a")), lane, rows(), 1),
         ("named", plain, ok(elf(b"a")), lane, rows(arity), 2),
@@ -730,6 +731,8 @@ def identity_compare(reference: str, candidate: str | None, extra: list[tuple[st
     if not candidate:
         print("BLOCKED: --identity-vs needs --compiler ELF (the candidate)")
         return 2
+    if not core_limit_check(run_image):  # it printed its FAIL line
+        return 1
     root = pathlib.Path(repo)
     programs, std, pairs = _identity_pairs(reference, candidate, extra, root, jobs, self_mode)
     if os.environ.get("MIND_IDENTITY_PARTITION") == "merged":

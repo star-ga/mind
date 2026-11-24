@@ -1,0 +1,49 @@
+# Kind 87 running-pointer encoder oracle. Columns: tag <TAB> instruction (Intel syntax, ' ; ' between
+# statements) <TAB> bytes (hex, x86-64) <TAB> source. Row order = the record order of group_sum_ptr_driver.mind.
+# Every row is source=llvm-mc: llvm-mc --triple=x86_64 assembles the instruction to exactly these bytes.
+ptr:vmovdqu_st:ymm0:rax	vmovdqu [rax],ymm0	c5fe7f00	llvm-mc
+ptr:vmovdqu_st:ymm0:rcx	vmovdqu [rcx],ymm0	c5fe7f01	llvm-mc
+ptr:vmovdqu_st:ymm0:rdi	vmovdqu [rdi],ymm0	c5fe7f07	llvm-mc
+ptr:vmovdqu_st:ymm1:rax	vmovdqu [rax],ymm1	c5fe7f08	llvm-mc
+ptr:vmovdqu_st:ymm1:rcx	vmovdqu [rcx],ymm1	c5fe7f09	llvm-mc
+ptr:vmovdqu_st:ymm1:rdi	vmovdqu [rdi],ymm1	c5fe7f0f	llvm-mc
+ptr:vmovdqu_st:ymm2:rax	vmovdqu [rax],ymm2	c5fe7f10	llvm-mc
+ptr:vmovdqu_st:ymm2:rcx	vmovdqu [rcx],ymm2	c5fe7f11	llvm-mc
+ptr:vmovdqu_st:ymm2:rdi	vmovdqu [rdi],ymm2	c5fe7f17	llvm-mc
+ptr:vmovdqu_st:ymm3:rax	vmovdqu [rax],ymm3	c5fe7f18	llvm-mc
+ptr:vmovdqu_st:ymm3:rcx	vmovdqu [rcx],ymm3	c5fe7f19	llvm-mc
+ptr:vmovdqu_st:ymm3:rdi	vmovdqu [rdi],ymm3	c5fe7f1f	llvm-mc
+ptr:vmovdqu_st:ymm4:rax	vmovdqu [rax],ymm4	c5fe7f20	llvm-mc
+ptr:vmovdqu_st:ymm4:rcx	vmovdqu [rcx],ymm4	c5fe7f21	llvm-mc
+ptr:vmovdqu_st:ymm4:rdi	vmovdqu [rdi],ymm4	c5fe7f27	llvm-mc
+ptr:vmovdqu_st:ymm5:rax	vmovdqu [rax],ymm5	c5fe7f28	llvm-mc
+ptr:vmovdqu_st:ymm5:rcx	vmovdqu [rcx],ymm5	c5fe7f29	llvm-mc
+ptr:vmovdqu_st:ymm5:rdi	vmovdqu [rdi],ymm5	c5fe7f2f	llvm-mc
+ptr:vmovdqu_st:ymm6:rax	vmovdqu [rax],ymm6	c5fe7f30	llvm-mc
+ptr:vmovdqu_st:ymm6:rcx	vmovdqu [rcx],ymm6	c5fe7f31	llvm-mc
+ptr:vmovdqu_st:ymm6:rdi	vmovdqu [rdi],ymm6	c5fe7f37	llvm-mc
+ptr:vmovdqu_st:ymm7:rax	vmovdqu [rax],ymm7	c5fe7f38	llvm-mc
+ptr:vmovdqu_st:ymm7:rcx	vmovdqu [rcx],ymm7	c5fe7f39	llvm-mc
+ptr:vmovdqu_st:ymm7:rdi	vmovdqu [rdi],ymm7	c5fe7f3f	llvm-mc
+ptr:add_rax_r11	add rax,r11	4c01d8	llvm-mc
+ptr:sub_rax_r11	sub rax,r11	4c29d8	llvm-mc
+ptr:add_rcx_r11	add rcx,r11	4c01d9	llvm-mc
+ptr:sub_rcx_r11	sub rcx,r11	4c29d9	llvm-mc
+ptr:add_rdi_r11	add rdi,r11	4c01df	llvm-mc
+ptr:sub_rdi_r11	sub rdi,r11	4c29df	llvm-mc
+ptr:walk_init	mov rcx,rbx ; add rcx,r14	4889d94c01f1	llvm-mc
+ptr:walk_rdi	mov rdi,rcx ; add rdi,r13 ; sub rdi,r11	4889cf4c01ef4c29df	llvm-mc
+ptr:walk_rax	mov rax,rcx ; add rax,r13	4889c84c01e8	llvm-mc
+ptr:g4_enter	push r13 ; imul r13,r11,26	41554d6beb1a	llvm-mc
+ptr:g4_leave	pop r13	415d	llvm-mc
+ptr:walk_init32	mov rcx,r14 ; shr rcx,1 ; add rcx,rbx	4c89f148d1e94801d9	llvm-mc
+ptr:st32:ymm6:rcx	vpshufd ymm7,ymm6,136 ; vpermq ymm7,ymm7,8 ; vmovdqu [rcx],xmm7	c5fd70fe88c4e3fd00ff08c5fa7f39	llvm-mc
+ptr:st32:ymm7:rdi	vpshufd ymm7,ymm7,136 ; vpermq ymm7,ymm7,8 ; vmovdqu [rdi],xmm7	c5fd70ff88c4e3fd00ff08c5fa7f3f	llvm-mc
+ptr:st32:ymm0:rax	vpshufd ymm7,ymm0,136 ; vpermq ymm7,ymm7,8 ; vmovdqu [rax],xmm7	c5fd70f888c4e3fd00ff08c5fa7f38	llvm-mc
+ptr:ld:ymm1:r10	vmovdqu ymm1,[r10+r14]	c4817e6f0c32	llvm-mc
+ptr:ld:ymm2:r12	vmovdqu ymm2,[r12+r14]	c4817e6f1434	llvm-mc
+ptr:ld:ymm3:rdx	vmovdqu ymm3,[rdx+r14]	c4a17e6f1c32	llvm-mc
+ptr:ld:ymm0:r15	vmovdqu ymm0,[r15+r14]	c4817e6f0437	llvm-mc
+ptr:prep_d:1	vpsubd ymm6,ymm2,ymm3	c5edfaf3	llvm-mc
+ptr:prep_d:12	vpaddd ymm6,ymm4,ymm3	c5ddfef3	llvm-mc
+ptr:prep_q:3	vpaddq ymm6,ymm2,ymm3	c5edd4f3	llvm-mc

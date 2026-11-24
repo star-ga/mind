@@ -1,0 +1,119 @@
+// Copyright 2026 STARGA Inc.
+// Row ends of the kind 89 i32 walks (bit 2, W = 64). Bit 8 uses the u32 src and dst form.
+
+import std.string;
+import nb_group_sum_enc;
+import nb_x86_vex;
+import nb_group_fuse;
+import nb_group_tail32;
+
+pub fn nbi_ext(code: String, k: i64) -> String {
+    nbg_b4(nbg_b4(code, 196, 227, 125, 57), 68 + k * 8, 36, 240, 1)
+}
+
+pub fn nbi_sext_x(code: String, k: i64) -> String {
+    nbg_b5(code, 196, 226, 125, 37, 192 + 9 * k)
+}
+
+pub fn nbi_sext_m(code: String, k: i64) -> String {
+    nbg_b3(nbg_b4(code, 196, 226, 125, 37), 68 + k * 8, 36, 240)
+}
+
+pub fn nbi_st_add(code: String, k: i64, disp: i64, add: i64) -> String {
+    let c1: String = nbg_rr(code, 137, 0, 12);
+    let c2: String = if add == 1 {
+        nbg_mem(c1, 1, k, 212, k, disp)
+    } else {
+        c1
+    };
+    nbg_mem(c2, 2, 0, 127, k, disp)
+}
+
+pub fn nbi_widen_k(code: String, k: i64, add: i64) -> String {
+    let c1: String = nbi_st_add(nbi_sext_x(nbi_ext(code, k), k), k, k * 64, add);
+    nbi_st_add(nbi_sext_m(c1, k), k, k * 64 + 32, add)
+}
+
+pub fn nbi_widen(code: String, add: i64) -> String {
+    let mut c: String = code;
+    let mut i: i64 = 0;
+    while i < 8 {
+        c = nbi_widen_k(c, i, add);
+        i = i + 1;
+    }
+    c
+}
+
+// One fused group of 4 i64 lanes in ymm k: + the out lanes at r12 + disp when add, then finish.
+pub fn nbx_half(code: String, k: i64, disp: i64, add: i64) -> String {
+    if add == 1 {
+        return nbk_group(nbv_op_rm(code, 1, 212, 1, 0, k, k, 12, disp), k, disp, 0, 0);
+    }
+    nbk_group(code, k, disp, 0, 0)
+}
+
+pub fn nbx_widen(code: String, add: i64, slot: i64) -> String {
+    let u32: i64 = nbg_cell();
+    let done: i64 = nbg_cell();
+    let mut c: String = nbt32_je(nbk_ptrs(code, slot), 8, u32);
+    let mut k: i64 = 0;
+    while k < 8 {
+        c = nbx_half(nbi_sext_x(nbi_ext(c, k), k), k, k * 64, add);
+        c = nbx_half(nbi_sext_m(c, k), k, k * 64 + 32, add);
+        k = k + 1;
+    }
+    c = nbg_jmp(c, done);
+    c = nbg_here(c, u32);
+    let mut j: i64 = 0;
+    while j < 8 {
+        c = nbt32_half(nbi_sext_x(nbi_ext(c, j), j), j, j * 64, add, 0);
+        c = nbt32_half(nbi_sext_m(c, j), j, j * 64 + 32, add, 0);
+        j = j + 1;
+    }
+    nbg_here(c, done)
+}
+
+pub fn nbx_end32(code: String, add: i64, fused: i64, slot: i64) -> String {
+    if fused == 1 {
+        return nbx_widen(code, add, slot);
+    }
+    nbi_widen(code, add)
+}
+
+pub fn nbx_copy(code: String) -> String {
+    let ccell: i64 = nbg_cell();
+    let mut c: String = nbg_b2(code, 49, 246);
+    let chead: i64 = string_len(c);
+    c = nbg_b4(nbg_b4(c, 76, 139, 28, 244), 77, 137, 28, 244);
+    c = nbg_jcc(nbg_b4(nbg_b4(c, 72, 131, 198, 1), 72, 131, 254, 64), 140, ccell);
+    nbg_link(c, ccell, chead)
+}
+
+// Fused fallback row end: the 16 groups of the 512-byte buffer at rsp, lane temp ymm0.
+pub fn nbx_buf(code: String, slot: i64) -> String {
+    let u32: i64 = nbg_cell();
+    let done: i64 = nbg_cell();
+    let mut c: String = nbt32_je(nbk_ptrs(code, slot), 520, u32);
+    let mut g: i64 = 0;
+    while g < 16 {
+        c = nbv_op_rm(c, 1, 111, 2, 0, 0, 0, 4, g * 32);
+        c = nbk_group(c, 0, g * 32, 0, 0);
+        g = g + 1;
+    }
+    c = nbg_jmp(c, done);
+    c = nbg_here(c, u32);
+    let mut h: i64 = 0;
+    while h < 16 {
+        c = nbv_op_rm(c, 1, 111, 2, 0, 0, 0, 4, h * 32);
+        c = nbk_group(c, 0, h * 16, 1, 512);
+        h = h + 1;
+    }
+    nbg_here(c, done)
+}
+
+pub fn nbx_endfb(code: String, fused: i64, slot: i64) -> String {
+    if fused == 1 {
+        return nbx_buf(code, slot);
+    }
+    nbx_copy(code)
+}

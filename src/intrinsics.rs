@@ -444,6 +444,7 @@ pub(crate) const STD_SURFACE_INTRINSICS: &[IntrinsicSpec] = &[
     // --- end rows: shm ---
     IntrinsicSpec::frozen_native_value("__mind_group_bank_i64", "group_bank_i64", FIVE_I64, IntrinsicEffect::MemoryWrite { width_bytes: 8 }, 87),
     IntrinsicSpec::frozen_native_value("__mind_group_acc32_i64", "group_acc32_i64", SIX_I64, IntrinsicEffect::MemoryWrite { width_bytes: 8 }, 88),
+    IntrinsicSpec::frozen_native_value("__mind_group_accrows_i64", "group_accrows_i64", ONE_I64, IntrinsicEffect::MemoryWrite { width_bytes: 8 }, 89),
     // ymm bank rows 70-83 and 94-99: literal ymm, base and disp. Result is discard-only.
     IntrinsicSpec::frozen_native_only("__mind_ymm_vmovdqu_ld", "ymm_vmovdqu_ld", THREE_I64, IntrinsicResult::DiscardOnly, IntrinsicEffect::YmmMemory { reads: 32, writes: 0 }, IntrinsicOffsetPolicy::Any, 70),
     IntrinsicSpec::frozen_native_only("__mind_ymm_vmovdqu_st", "ymm_vmovdqu_st", THREE_I64, IntrinsicResult::DiscardOnly, IntrinsicEffect::YmmMemory { reads: 0, writes: 32 }, IntrinsicOffsetPolicy::Any, 71),

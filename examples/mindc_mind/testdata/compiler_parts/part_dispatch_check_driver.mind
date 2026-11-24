@@ -10,7 +10,7 @@
 //  16 a non-entry fn was touched, or the argv-capture positive control emitted nothing
 //  32 intrinsic ids: a frozen name moved, a part claimed one, an owned name lost its
 //     kind, or a stub claimed a ledger name
-//  64 an owned kind (60..67, 68, 69, 84..86, 90..93) emitted nothing or failed
+//  64 an owned kind (60..67, 68, 69, 84..86, 89, 90..93) emitted nothing or failed
 //     nbp_kind_ok at its arity, a stub kind emitted bytes or passed it, a kind
 //     outside 60..99 failed it, an MC-6 extern row (54..86) is missing, one past
 //     86 appeared, or the guard scan fired
@@ -127,6 +127,9 @@ pub fn pdc_emit(t: i64, k: i64) -> i64 {
     if pdc_measure_kind(k) == 1 {
         return pdc_emit(t, k + 1);
     }
+    if pdc_walk_owned(t, k) == 1 {
+        return pdc_emit(t, k + 1);
+    }
     pdc_mark(t, 6, pdc_eq(string_len(nbp_emit_intrinsic(pdc_code(), k, 0, 0, 0)), 0));
     pdc_mark(t, 6, pdc_eq(string_len(nb_emit_intrinsic(pdc_code(), k, 0, 0)), 0));
     pdc_mark(t, 6, pdc_eq(nbp_kind_ok(k, 1), 0));
@@ -144,6 +147,18 @@ pub fn pdc_shm_owned(t: i64, k: i64) -> i64 {
     pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nbp_emit_intrinsic(pdc_code(), k, ids, 0, 0)) - 3), 0));
     pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nb_emit_intrinsic(pdc_code(), k, ids, 0)) - 3), 0));
     pdc_mark(t, 6, pdc_eq(nbp_kind_ok(k, pdc_shm_arity(k)), 1) * pdc_eq(nbp_kind_ok(k, pdc_shm_arity(k) + 1), 0));
+    1
+}
+
+// Kind 89 (nb_group_walk) is owned: one argument slot, so it passes nbp_kind_ok at
+// arity 1 and not 2, emits bytes for a slot buffer and nothing without one (group 64).
+pub fn pdc_walk_owned(t: i64, k: i64) -> i64 {
+    if k != 89 {
+        return 0;
+    }
+    pdc_mark(t, 6, pdc_eq(nbp_kind_ok(k, 1), 1) * pdc_eq(nbp_kind_ok(k, 2), 0));
+    pdc_mark(t, 6, pdc_eq(pdc_le0(string_len(nbp_emit_intrinsic(pdc_code(), k, pdc_slots(), 7, 0)) - 3), 0));
+    pdc_mark(t, 6, pdc_eq(string_len(nbp_emit_intrinsic(pdc_code(), k, 0, 0, 0)), 0));
     1
 }
 

@@ -1,0 +1,83 @@
+// Pure MIND exact finite harmonic numbers H_n, n in 0..10.
+// Each rational is reduced using gcd; no float or transcendental functions.
+// Deliberately limited to fit signed i64 numerator/denominator products.
+fn gcd_positive(a: i64, b: i64) -> i64 {
+    let mut x: i64 = a;
+    let mut y: i64 = b;
+    while y != 0 {
+        let r: i64 = x % y;
+        x = y;
+        y = r;
+    }
+    return x;
+}
+
+// out is a verified 16-byte allocation: [numerator:i64, denominator:i64].
+fn harmonic_exact(n: i64, out: i64) -> i64 {
+    if n < 0 || n > 10 || out == 0 {
+        return 0;
+    }
+    let mut a: i64 = 0;
+    let mut b: i64 = 1;
+    let mut k: i64 = 1;
+    while k <= n {
+        let raw_num: i64 = a * k + b;
+        let raw_den: i64 = b * k;
+        let divisor: i64 = gcd_positive(raw_num, raw_den);
+        a = raw_num / divisor;
+        b = raw_den / divisor;
+        k = k + 1;
+    }
+    __mind_store_i64(out, a);
+    __mind_store_i64(out + 8, b);
+    return 1;
+}
+
+fn check_fraction(out: i64, n: i64, a: i64, b: i64) -> i64 {
+    if harmonic_exact(n, out) != 1 {
+        return 0;
+    }
+    if __mind_load_i64(out) != a {
+        return 0;
+    }
+    if __mind_load_i64(out + 8) != b {
+        return 0;
+    }
+    return 1;
+}
+
+// Writes the result lines to stdout. The text comes in as a String parameter,
+// the form of a string literal that the native backend accepts.
+fn report_success(message: String) -> i64 {
+    let written: i64 = __mind_write(1, message.addr, message.len, 0 - 1);
+    if written != message.len {
+        return 90;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    let out: i64 = __mind_alloc(16);
+    if out == 0 {
+        return 10;
+    }
+    if check_fraction(out, 0, 0, 1) != 1 {
+        return 1;
+    }
+    if check_fraction(out, 1, 1, 1) != 1 {
+        return 2;
+    }
+    if check_fraction(out, 5, 137, 60) != 1 {
+        return 3;
+    }
+    if check_fraction(out, 8, 761, 280) != 1 {
+        return 4;
+    }
+    if check_fraction(out, 10, 7381, 2520) != 1 {
+        return 5;
+    }
+    if harmonic_exact(-1, out) != 0 || harmonic_exact(11, out) != 0 {
+        return 6;
+    }
+    return report_success("EXAMPLE=HARMONIC_EXACT\nSCOPE=FINITE_EXAMPLE\n");
+}

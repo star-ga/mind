@@ -1,0 +1,381 @@
+// Scalar twin of the f_check edge grid. Same epi_nv formula. No native call
+// in the live path (live = 0). Stdout is the same checksum i64. Exit 0.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    if s == 0 {
+        return v;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn lsl(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    v << s
+}
+
+fn epi_nv(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, src: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr(lsl(x, cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + src
+}
+
+fn aval(i: i64) -> i64 {
+    let k: i64 = i - (i / 11) * 11;
+    if k == 0 {
+        return 0;
+    }
+    if k == 1 {
+        return 1;
+    }
+    if k == 2 {
+        return 0 - 1;
+    }
+    if k == 3 {
+        return 0 - 9223372036854775807 - 1;
+    }
+    if k == 4 {
+        return 9223372036854775807;
+    }
+    if k == 5 {
+        return 2147483648;
+    }
+    if k == 6 {
+        return 0 - 2147483648;
+    }
+    if k == 7 {
+        return 4294967296;
+    }
+    if k == 8 {
+        return 0 - 4294967296;
+    }
+    if k == 9 {
+        return 1099511627776;
+    }
+    4611686018427387904
+}
+
+fn uval(k: i64) -> i64 {
+    if k == 0 {
+        return 0;
+    }
+    if k == 1 {
+        return 1;
+    }
+    if k == 2 {
+        return 2147483648;
+    }
+    if k == 3 {
+        return 4294967295;
+    }
+    if k == 4 {
+        return 4294967301;
+    }
+    0 - 1
+}
+
+fn cval(k: i64) -> i64 {
+    if k == 0 {
+        return 0;
+    }
+    if k == 1 {
+        return 1;
+    }
+    if k == 2 {
+        return 31;
+    }
+    if k == 3 {
+        return 32;
+    }
+    if k == 4 {
+        return 33;
+    }
+    if k == 5 {
+        return 63;
+    }
+    if k == 6 {
+        return 64;
+    }
+    255
+}
+
+fn bqval(k: i64) -> i64 {
+    if k == 0 {
+        return 0 - 9223372036854775807 - 1;
+    }
+    if k == 1 {
+        return 9223372036854775807;
+    }
+    0
+}
+
+fn limval(k: i64) -> i64 {
+    if k == 0 {
+        return 9223372036854775807;
+    }
+    if k == 1 {
+        return 0;
+    }
+    0 - 1
+}
+
+fn lane_a(kind: i64, i: i64) -> i64 {
+    if kind == 0 {
+        return aval(i);
+    }
+    if kind == 1 {
+        return 1099511627776;
+    }
+    if kind == 4 {
+        return 0;
+    }
+    0 - 100
+}
+
+fn lane_s(kind: i64, i: i64, skind: i64) -> i64 {
+    if kind == 0 {
+        return i;
+    }
+    if kind == 1 {
+        return 1;
+    }
+    if kind == 4 {
+        return 0;
+    }
+    if skind == 0 {
+        return 0 - 9223372036854775807 - 1;
+    }
+    9223372036854775807
+}
+
+fn mix(sum: i64, v: i64) -> i64 {
+    let s: i64 = __mind_load_i64(sum) * 131 + v;
+    __mind_store_i64(sum, s);
+    s
+}
+
+fn do_row(sum: i64, w: i64, live: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, lim: i64, kind: i64, skind: i64, mode: i64) -> i64 {
+    let out: i64 = __mind_alloc(w * 8);
+    let src: i64 = __mind_alloc(w * 8);
+    let dst: i64 = __mind_alloc(w * 8);
+    let want: i64 = __mind_alloc(w * 8);
+    let epi: i64 = __mind_alloc(64);
+    let starts: i64 = __mind_alloc(24);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 0);
+    __mind_store_i64(starts + 16, 0);
+    let mut i: i64 = 0;
+    while i < w {
+        let a: i64 = lane_a(kind, i);
+        let sv: i64 = lane_s(kind, i, skind);
+        __mind_store_i64(out + i * 8, a);
+        __mind_store_i64(src + i * 8, sv);
+        __mind_store_i64(want + i * 8, epi_nv(a, um, nm, cl, cr1, cr2, bq, sv));
+        i = i + 1;
+    }
+    let mut dp: i64 = dst;
+    if mode == 1 {
+        dp = out;
+    }
+    if mode == 2 {
+        dp = src;
+    }
+    __mind_store_i64(epi, um);
+    __mind_store_i64(epi + 8, nm);
+    __mind_store_i64(epi + 16, cl);
+    __mind_store_i64(epi + 24, cr1);
+    __mind_store_i64(epi + 32, cr2);
+    __mind_store_i64(epi + 40, bq);
+    __mind_store_i64(epi + 48, src);
+    __mind_store_i64(epi + 56, dp);
+    let mut trip: i64 = 0;
+    let mut bad: i64 = 0;
+    if live == 1 {
+        let mut flags: i64 = 33;
+        if w == 64 {
+            flags = 37;
+        }
+        let d: i64 = __mind_alloc(88);
+        __mind_store_i64(d, out);
+        __mind_store_i64(d + 8, w * 8);
+        __mind_store_i64(d + 16, 0);
+        __mind_store_i64(d + 24, 0);
+        __mind_store_i64(d + 32, starts);
+        __mind_store_i64(d + 40, 0);
+        __mind_store_i64(d + 48, 1);
+        __mind_store_i64(d + 56, flags);
+        __mind_store_i64(d + 64, epi);
+        __mind_store_i64(d + 72, 42);
+        __mind_store_i64(d + 80, lim);
+        let call: i64 = __mind_group_accrows_i64(d);
+        bad = call - call;
+        i = 0;
+        while i < w {
+            let got: i64 = __mind_load_i64(dp + i * 8);
+            let exp: i64 = __mind_load_i64(want + i * 8);
+            if got != exp {
+                bad = bad + 1;
+            }
+            if exp > lim {
+                trip = 0 - 1;
+            }
+            let m: i64 = mix(sum, got);
+            bad = bad + (m - m);
+            i = i + 1;
+        }
+        if __mind_load_i64(d + 72) != trip {
+            bad = bad + 1;
+        }
+        let mt: i64 = mix(sum, __mind_load_i64(d + 72));
+        bad = bad + (mt - mt);
+    }
+    if live == 0 {
+        i = 0;
+        while i < w {
+            let exp: i64 = __mind_load_i64(want + i * 8);
+            if exp > lim {
+                trip = 0 - 1;
+            }
+            let m: i64 = mix(sum, exp);
+            bad = bad + (m - m);
+            i = i + 1;
+        }
+        let mt: i64 = mix(sum, trip);
+        bad = bad + (mt - mt);
+    }
+    bad
+}
+
+fn grid(sum: i64, live: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut iu: i64 = 0;
+    while iu < 6 {
+        let mut inn: i64 = 0;
+        while inn < 2 {
+            let mut nm: i64 = 0;
+            if inn == 1 {
+                nm = 0 - 1;
+            }
+            bad = bad + do_row(sum, 32, live, uval(iu), nm, 0, 32, 0, 0, 9223372036854775807, 0, 0, 0);
+            inn = inn + 1;
+        }
+        iu = iu + 1;
+    }
+    let mut ic: i64 = 0;
+    while ic < 8 {
+        let mut which: i64 = 0;
+        while which < 3 {
+            let mut cl: i64 = 0;
+            let mut cr1: i64 = 0;
+            let mut cr2: i64 = 0;
+            if which == 0 {
+                cl = cval(ic);
+            }
+            if which == 1 {
+                cr1 = cval(ic);
+            }
+            if which == 2 {
+                cr2 = cval(ic);
+            }
+            bad = bad + do_row(sum, 32, live, 4294967295, 0 - 1, cl, cr1, cr2, 0, 9223372036854775807, 1, 0, 0);
+            which = which + 1;
+        }
+        ic = ic + 1;
+    }
+    let mut ib: i64 = 0;
+    while ib < 3 {
+        let mut isrc: i64 = 0;
+        while isrc < 2 {
+            let mut il: i64 = 0;
+            while il < 3 {
+                bad = bad + do_row(sum, 32, live, 7, 0 - 1, 1, 1, 1, bqval(ib), limval(il), 2, isrc, 0);
+                il = il + 1;
+            }
+            isrc = isrc + 1;
+        }
+        ib = ib + 1;
+    }
+    bad = bad + do_row(sum, 32, live, 3, 0, 0, 32, 0, 0, 9223372036854775807, 0, 0, 1);
+    bad = bad + do_row(sum, 32, live, 3, 0 - 1, 0, 32, 0, 1, 9223372036854775807, 0, 0, 2);
+    bad = bad + do_row(sum, 64, live, 1, 0, 0, 32, 0, 0, 9223372036854775807, 0, 0, 0);
+    bad = bad + do_row(sum, 32, live, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0);
+    bad
+}
+
+fn fill7(p: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(p + i * 8, 7);
+        i = i + 1;
+    }
+    0
+}
+
+fn rows_le0(rows: i64) -> i64 {
+    let out: i64 = __mind_alloc(256);
+    let starts: i64 = __mind_alloc(24);
+    fill7(out, 32);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 0);
+    __mind_store_i64(starts + 16, 0);
+    let d: i64 = __mind_alloc(88);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 256);
+    __mind_store_i64(d + 16, 0);
+    __mind_store_i64(d + 24, 0);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 0);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, 33);
+    __mind_store_i64(d + 64, 1);
+    __mind_store_i64(d + 72, 42);
+    __mind_store_i64(d + 80, 0);
+    let c: i64 = __mind_group_accrows_i64(d);
+    let mut bad: i64 = c - c;
+    if __mind_load_i64(d + 72) != 42 {
+        bad = bad + 1;
+    }
+    let mut i: i64 = 0;
+    while i < 32 {
+        if __mind_load_i64(out + i * 8) != 7 {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let sum: i64 = __mind_alloc(8);
+    __mind_store_i64(sum, 0);
+    let bad: i64 = grid(sum, 0);
+    __mind_write(1, sum, 8, 0 - 1);
+    bad
+}

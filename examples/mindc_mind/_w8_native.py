@@ -603,3 +603,179 @@ def extern_symbol_rows(user_lo) -> list[dict]:
         rows.append({**XK_NAME, "id": f"xk_{rid}", "fixture": prog,
                      "refusal": lane_report(key, user_lo + prog.index(at), prog, user_lo, sym=sym, fn=fn)})
     return rows
+
+
+# Kind 89 (__mind_group_accrows_i64, nb_group_walk.mind) and its tail (bit 5 of desc[7], nb_group_epi.mind),
+# family group_sum of native_lane_value_shapes_smoke.py. One AVX2 path, no probe: the Westmere row is the
+# entry guard (132, isa.avx2_missing), not a scalar path. A scalar twin prints the same bytes (the .hex).
+def group_accrows_rows(avx2: str, isa_fail: dict) -> list[dict]:
+    """The group_sum rows; `avx2` is the fixture dir under examples/mindc_mind, `isa_fail` the Westmere row keys."""
+    hexb = lambda stem: bytes.fromhex((HERE / f"{avx2}{stem}.hex").read_text())
+    row = lambda rid, stem, front, **kw: {"id": rid, "family": "group_sum", "direct_feed": True,
+                                         **({"front_door": True} if front else {}), "fixture": f"{avx2}{stem}.mind", **kw}
+    rows_out, alias_out, init3_out = hexb("group_accrows_rows"), hexb("group_accrows_alias"), hexb("group_accrows_init3")
+    return [
+        row("group_accrows_rows", "group_accrows_rows", True, expect_stdout=rows_out),
+        row("group_accrows_rows_westmere", "group_accrows_rows", True, **isa_fail),
+        row("group_accrows_scalar", "group_accrows_scalar", True, expect_stdout=rows_out),
+        row("group_accrows_vs_acc", "group_accrows_vs_acc", True, expect_stdout=rows_out),
+        row("group_accrows_alias", "group_accrows_alias", True, expect_stdout=alias_out),
+        row("group_sum_noprobe", "group_sum_noprobe", True, expect_stdout=hexb("group_sum_noprobe")),
+        row("group_sum_noprobe_westmere", "group_sum_noprobe", False, runner_prefix=isa_fail["runner_prefix"], expect_exit=-4),
+        row("group_accrows_init3", "group_accrows_init3", True, expect_stdout=init3_out),
+        row("group_accrows_init3_scalar", "group_accrows_init3_scalar", False, expect_stdout=init3_out),
+        row("group_accrows_init2", "group_accrows_init2", True, expect_stdout=init3_out),
+        row("group_acc88_init23", "group_acc88_init23", True, expect_stdout=hexb("group_acc88_init23")),
+        row("group_acc88_init23_scalar", "group_acc88_init23_scalar", False, expect_stdout=hexb("group_acc88_init23")),
+        row("f_check", "f_check", True, expect_exit=0),
+        row("f_check_westmere", "f_check", False, **isa_fail),
+        row("f_scalar", "f_scalar", False, expect_exit=0),
+        row("f_rand", "f_rand", False, expect_exit=0, timeout_s=300),
+        row("f_rows", "f_rows", False, expect_exit=0),
+        row("f_fr4", "f_fr4", False, expect_exit=0, timeout_s=300),
+        row("f_perf", "f_perf", False, expect_exit=0, timeout_s=180),
+        row("f_e_shape", "f_e_shape", True, expect_exit=0,
+            objdump_required=["vpmuludq", "vpcmpgtq", "vpandn", "vpbroadcastq"]),
+    ] + group_mode_rows(avx2, isa_fail)
+
+
+# The i32 walk (desc[7] bit 2), the term loop (bits 3, 4), the fused tail (bit 7), the u32 tail (bit 8),
+# kind 87 group bits 5 and 6 and the running row pointers, and the traps on reserved bits of kinds 87-89.
+def group_mode_rows(avx2: str, isa_fail: dict) -> list[dict]:
+    """The mode rows of family group_sum (and avx2_groupsum for the kind 87 pointer forms)."""
+    z8, wm, obj4 = bytes(8), {"runner_prefix": isa_fail["runner_prefix"]}, ["vpaddq", "vpsubq", "vpaddd", "vpsubd"]
+    row = lambda rid, stem, front, **kw: {"id": rid, "family": "group_sum", "direct_feed": True,
+                                         **({"front_door": True} if front else {}), "fixture": f"{avx2}{stem}.mind", **kw}
+    rows = [
+        row("k3_check", "k3_check", True, expect_exit=0, expect_stdout=z8),
+        row("k3_check_westmere", "k3_check", True, **isa_fail),
+        row("k3_rand", "k3_rand", True, expect_exit=0, expect_stdout=bytes.fromhex("a1860100000000000000000000000000")),
+        row("k3_bank", "k3_bank", True, expect_exit=0, expect_stdout=z8),
+        row("k3_bank_westmere", "k3_bank", False, **wm, expect_exit=0, expect_stdout=z8),
+        row("k3_bank_tight", "k3_bank_tight", True, expect_exit=0, expect_stdout=z8),
+        row("k3_bank_tight_westmere", "k3_bank_tight", False, **wm, expect_exit=0, expect_stdout=z8),
+        row("k3_fallback", "k3_fallback", True, expect_exit=0, expect_stdout=bytes(64)),
+        row("k3_fallback_westmere", "k3_fallback", False, **isa_fail),
+        row("k3_bound", "k3_bound", True, expect_exit=0, expect_stdout=z8),
+        row("k3_bound_westmere", "k3_bound", False, **isa_fail),
+        row("t2_check", "t2_check", True, expect_exit=0, expect_stdout=z8),
+        row("t2_check_westmere", "t2_check", True, **isa_fail),
+        row("t2_rand", "t2_rand", True, expect_exit=0, timeout_s=300, expect_stdout=bytes.fromhex("804f1200000000000000000000000000")),
+        row("t2_e_shape", "t2_e_shape", True, expect_exit=0, objdump_required=obj4),
+        row("t16_check", "t16_check", True, expect_exit=0, expect_stdout=z8),
+        row("t16_check_westmere", "t16_check", True, **isa_fail),
+        row("t16_rand", "t16_rand", True, expect_exit=0, timeout_s=300, expect_stdout=bytes.fromhex("40771b00000000000000000000000000")),
+        row("t16_e_shape", "t16_e_shape", True, expect_exit=0, objdump_required=obj4),
+        row("t16_rows", "t16_rows", True, expect_exit=0, expect_stdout=z8),
+        row("t16_alias", "t16_alias", True, expect_exit=0, expect_stdout=bytes(16)),
+        row("t16_alias_westmere", "t16_alias", False, **isa_fail),
+        row("t3_trap_sweep", "t3_trap_sweep", False, expect_exit=0, mark="nbshm001", timeout_s=300, expect_stdout=bytes(40)),
+        row("n32_bank", "n32_bank", True, expect_exit=0, timeout_s=300),
+        row("n32_bank_westmere", "n32_bank", False, **wm, expect_exit=0),
+        row("f_kfuse", "f_kfuse", True, expect_exit=0, timeout_s=300),
+        row("f_kfuse_westmere", "f_kfuse", False, **isa_fail),
+        row("f_kfuse32", "f_kfuse32", False, expect_exit=0, timeout_s=300),
+        row("f_kperf", "f_kperf", False, expect_exit=0, timeout_s=180),
+        {"id": "e1_part_dispatch_group", "family": "parts", "compiler_driver": True, "expect_exit": 0,
+         "fixture": "testdata/compiler_parts/part_dispatch_group_driver.mind", "mlir_expect": "skip"},
+    ]
+    gs = {"family": "avx2_groupsum", "direct_feed": True, "fixture": f"{avx2}group_sum_ptr_twin.mind", "expect_stdout": bytes(8), "timeout_s": 600}
+    rows += [{"id": "gs_ptr_twin", **gs, "runner_prefix": []}, {"id": "gs_ptr_twin_westmere", **gs, **wm},
+             {"id": "gs_ptr_encoder_table", "family": "avx2_groupsum", "fixture": f"{avx2}group_sum_ptr_driver.mind",
+              "encoder_table": f"{avx2}group_sum_ptr_encoder_table.tsv", "parts": ["nb_group_sum_enc.mind", "nb_group_bankw.mind"]}]
+    # Kind 89 reserved desc[7] bits trap by SIGILL (python exit -4) before any store: the 256 sentinel bytes
+    # come out and nothing else. Modes 8 and 24 are the controls: they return and add 8 bytes. Direct feed only.
+    trap_ff, one = b"\xff" * 256, (1).to_bytes(8, "little")
+    for m, e in (("10", -4), ("72", -4), ("264", -4), ("2147483656", -4), ("18", -4), ("80", -4), ("272", -4), ("8", 0), ("24", 0)):
+        rows.append(row(f"t2_trap_{m}" + ("_ok" if e == 0 else ""), "t2_trap", False, args=[m], expect_exit=e,
+                        expect_stdout=trap_ff + (one if e == 0 else b"")))
+    return rows
+
+
+# The probe-skip contract of kinds 87 and 88 (nb_group_sum_enc.mind nbg_probe_skip, nb_group_sum_acc.mind
+# nbg_probe_k1). neg: a negative kind 88 init sets bit 63, a reserved bit, so the first call traps (SIGILL)
+# before any store on both CPUs; the scalar twin keeps the old values. k88only / k87only: one
+# kind alone, so each skip is tested alone on Westmere (SIGILL -4); host stdout = the noprobe.hex halves.
+# wide_group: kind 87 groups 11 and 27 touch nothing (a 3-bit group mask would write group 3); 27 skips the probe.
+def group_probe_skip_rows(avx2: str, isa_fail: dict) -> list[dict]:
+    """The probe-skip rows of family group_sum; same arguments as group_accrows_rows."""
+    hexb = lambda stem: bytes.fromhex((HERE / f"{avx2}{stem}.hex").read_text())
+    row = lambda rid, stem, **kw: {"id": rid, "family": "group_sum", "direct_feed": True, "fixture": f"{avx2}{stem}.mind", **kw}
+    wm, neg, noprobe = isa_fail["runner_prefix"], hexb("group_acc88_neg"), hexb("group_sum_noprobe")
+    return [
+        row("group_acc88_neg", "group_acc88_neg", expect_exit=-4, expect_stdout=b""),
+        row("group_acc88_neg_westmere", "group_acc88_neg", runner_prefix=wm, expect_exit=-4, expect_stdout=b""),
+        row("group_acc88_neg_scalar", "group_acc88_neg_scalar", expect_stdout=neg),
+        row("group_sum_k88only", "group_sum_k88only", expect_stdout=noprobe[:512]),
+        row("group_sum_k88only_westmere", "group_sum_k88only", runner_prefix=wm, expect_exit=-4),
+        row("group_sum_k87only", "group_sum_k87only", expect_stdout=noprobe[512:]),
+        row("group_sum_k87only_westmere", "group_sum_k87only", runner_prefix=wm, expect_exit=-4),
+        row("group_bank_wide_group", "group_bank_wide_group", expect_stdout=hexb("group_bank_wide_group")),
+        row("group_bank_wide_group_scalar", "group_bank_wide_group_scalar", expect_stdout=hexb("group_bank_wide_group")),
+    ]
+
+
+# Programs of the set that have no row: speed loops and shapes (exit 0 with the reference compiler).
+GROUP_NO_ROW = ("group_accrows_perf", "e_walk", "e_i32w", "f_kperf32", "f_kt32", "f_kt32_fuse", "k3_perf",
+                "t16_perf", "t16_perf32", "t2_perf", "t2_perf32")
+
+
+def group_accrows_admitted() -> list[dict]:
+    """Identity admissions: a seed without kind 89 refuses these programs (unsupported construct), and the
+    candidate image must exit as stated. The host rows above (exit 0 unless stated) plus the programs of
+    GROUP_NO_ROW; the Westmere rows run under qemu, not here. A row that takes arguments (t2_trap) admits its
+    program by its own run: its arguments, its exit and its stdout."""
+    avx2 = "testdata/native_avx2/"
+    host = [r for r in group_accrows_rows(avx2, {"runner_prefix": ["qemu"]}) if "runner_prefix" not in r]
+    names = dict.fromkeys([r["fixture"] for r in host if r.get("family") == "group_sum" and "args" not in r]
+                          + [f"{avx2}{n}.mind" for n in GROUP_NO_ROW])
+    exits = {r["fixture"]: r.get("expect_exit", 0) for r in host}
+    return [{"fixture": n, "expect_exit": exits.get(n, 0)} for n in names] + [
+        {k: r[k] for k in ("fixture", "expect_exit", "args", "expect_stdout")} for r in host if r.get("family") == "group_sum" and "args" in r]
+
+
+def _libc_admitted(rows: list) -> tuple[frozenset, dict]:
+    """(names, {name: [(exit, env, args, stdout or None), ...]}) of expect_exit rows that are not a front-door duplicate."""
+    libc, admit = set(), {}
+    for r in rows:
+        if not r.get("fixture") or "expect_exit" not in r or r.get("front_door"):
+            continue
+        name = f"examples/mindc_mind/{r['fixture']}"
+        libc.add(name)
+        admit.setdefault(name, []).append((int(r["expect_exit"]), dict(r.get("env") or {}), tuple(r.get("args") or ()),
+                                           r.get("expect_stdout")))
+    return frozenset(libc), admit
+
+
+# Kinds 87 and 88 carry the probe-skip contract (nb_group_sum_enc.mind nbg_probe_skip, nb_group_sum_acc.mind
+# nbg_probe_k1): against a seed without it, the image of a program that calls either kind changes.
+_GROUP_87_88 = re.compile(r"\b__mind_group_(?:bank|acc32)_i64\s*\(")
+
+
+def group_kernel_change(text: str) -> bool:
+    """True when the code of `text` (// comments removed) calls kind 87 or kind 88."""
+    return _GROUP_87_88.search(re.sub(r"//[^\n]*", "", text)) is not None
+
+
+# Class "group kernel" accepts a run that differs from the seed before the advance ONLY for these programs, each for its
+# reason: (program, reason, the reference exit that the reason states). The candidate must end as the host value-shape
+# row of the program states (exit, and stdout where the row states it). Every other program keeps "exit 0 both".
+GROUP_KERNEL_REASONS = (
+    ("group_acc88_neg", "a reserved init bit traps (kind 88 init bit 63); the seed before the advance ran it", 0),
+    ("k3_bank", "group bit 5: 4-byte bank rows; the seed before the advance lacks the mode (its own check fails)", 1),
+    ("k3_bank_tight", "group bit 5: 4-byte bank rows; the seed before the advance lacks the mode (its own check fails)", 1),
+)
+
+
+def group_kernel_reason(name: str, ref_run: tuple, cand_run: tuple) -> str:
+    """The reason of `name` when it is a GROUP_KERNEL_REASONS program, the reference run ends with the exit of the
+    reason and the candidate run ends as the host row of that program (row id = program name) states; else ""."""
+    avx2, wm = "testdata/native_avx2/", {"runner_prefix": ["qemu"]}
+    rows = {r["id"]: r for r in group_accrows_rows(avx2, wm) + group_probe_skip_rows(avx2, wm)}
+    for stem, why, ref_exit in GROUP_KERNEL_REASONS:
+        row = rows[stem]
+        if name != f"examples/mindc_mind/{avx2}{stem}.mind" or "runner_prefix" in row or ref_run[0] != ref_exit:
+            continue
+        if cand_run[0] == row.get("expect_exit", 0) and row.get("expect_stdout", cand_run[1]) == cand_run[1]:
+            return why
+    return ""

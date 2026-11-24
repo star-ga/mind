@@ -1,0 +1,59 @@
+// Copyright 2026 STARGA Inc.
+// Kind 87 running-pointer forms. The harness composes this file after
+// nb_group_sum_enc.mind and nb_group_bankw.mind and compiles the unit with the
+// compiler under test, so the bytes below come from the compiler's own emitter code.
+// It writes one record per row of group_sum_ptr_encoder_table.tsv, in file order:
+// [length byte][instruction bytes].
+
+fn cat(out: String, piece: String, i: i64) -> String {
+    if i >= string_len(piece) {
+        return out;
+    }
+    cat(string_push_byte(out, string_get_byte(piece, i)), piece, i + 1)
+}
+
+fn rec(out: String, piece: String) -> String {
+    cat(string_push_byte(out, string_len(piece)), piece, 0)
+}
+
+fn rm_of(i: i64) -> i64 {
+    if i == 1 {
+        return 1;
+    }
+    if i == 2 {
+        return 7;
+    }
+    0
+}
+
+// vmovdqu [rm], ymm: ymm 0..7 x rm rax / rcx / rdi.
+fn stores(out: String, y: i64, i: i64) -> String {
+    if y >= 8 {
+        return out;
+    }
+    if i >= 3 {
+        return stores(out, y + 1, 0);
+    }
+    stores(rec(out, nbw_st(string_new(), 0, y, rm_of(i))), y, i + 1)
+}
+
+// add / sub reg, r11 for rax / rcx / rdi.
+fn steps(out: String, i: i64) -> String {
+    if i >= 3 {
+        return out;
+    }
+    steps(rec(rec(out, nbw_row_step(string_new(), rm_of(i), 0)), nbw_row_step(string_new(), rm_of(i), 1)), i + 1)
+}
+
+fn main() -> i64 {
+    let e: String = string_new();
+    let o1: String = steps(stores(string_new(), 0, 0), 0);
+    let o2: String = rec(rec(rec(o1, nbw_init(e, 0)), nbw_walk_rdi(e)), nbw_walk_rax(e));
+    let o3: String = rec(rec(o2, nbw_g4_enter(e, 1)), nbw_g4_leave(e));
+    let o4: String = rec(rec(rec(o3, nbw_init(e, 1)), nbw_st(e, 1, 6, 1)), nbw_st(e, 1, 7, 7));
+    let o5: String = rec(rec(o4, nbw_st(e, 1, 0, 0)), nbw_ld(e, 1, 10));
+    let o6: String = rec(rec(rec(o5, nbw_ld(e, 2, 12)), nbw_ld(e, 3, 2)), nbw_ld(e, 0, 15));
+    let out: String = rec(rec(rec(o6, nbw_z_prep(e, 1, 254, 250)), nbw_z_prep(e, 12, 254, 250)), nbw_z_prep(e, 3, 212, 251));
+    __mind_write(1, string_addr(out), string_len(out), 0 - 1);
+    0
+}

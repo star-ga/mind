@@ -61,9 +61,9 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from _selfhost_sources import capture_bundle, direct_compile, driver_compile  # noqa: E402
-from _selfhost_identity import add_selfhost_args, selfhost_modes_main  # noqa: E402
-from _w8_native import cast_edges_oracle, cast_exprs_oracle, cast_words, extern_key_rows, mint_stage1  # noqa: E402
+from _selfhost_sources import capture_bundle, core_limit_check, core_limit_one, direct_compile, driver_compile  # noqa: E402
+from _selfhost_identity import add_selfhost_args, run_image, selfhost_modes_main  # noqa: E402
+from _w8_native import cast_edges_oracle, cast_exprs_oracle, cast_words, extern_key_rows, group_accrows_rows, group_probe_skip_rows, mint_stage1  # noqa: E402
 FIXTURES = HERE / "testdata" / "native_lane_values"
 MARK = b"\x48\xb8nblane02"
 PRINT_MARK = b"\x48\xb8nbprint1"  # nb_print.mind; without it the native leg must refuse print
@@ -386,6 +386,8 @@ NATIVE_ONLY_CASES += [
                               ("_capture", "main_params_argv_capture.mind", ARGV_CAPTURE + MAIN_PARAMS))
     for host, extra in (("", {"expect_exit": 0}), ("_westmere", ISA_FAIL))
 ]
+# Kind 89, its tail and the probe-skip contract of kinds 87 / 88, family group_sum (rows in _w8_native).
+NATIVE_ONLY_CASES += group_accrows_rows(AVX2, ISA_FAIL) + group_probe_skip_rows(AVX2, ISA_FAIL)
 # R-01b: the bank's ISA guard on both sides, and a name one byte off every real one.
 BANK = {"family": "ymm_bank", "mark": "nbbank01", "direct_feed": True}
 NATIVE_ONLY_CASES += [
@@ -548,7 +550,7 @@ def _build(mindc: str, src: pathlib.Path, out: pathlib.Path, native: bool, env: 
 
 def _run(exe: pathlib.Path, argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(["/usr/bin/prlimit", "--as=2147483648", "--", str(exe), *argv],
-                          capture_output=True, timeout=60, env={"LC_ALL": "C"})
+                          capture_output=True, timeout=60, env={"LC_ALL": "C"}, preexec_fn=core_limit_one())
 
 
 def _tool(argv: list[str], controls: tuple[str, ...]) -> tuple[str, list[str]]:
@@ -593,7 +595,8 @@ def _check_elf(row: dict, exe: pathlib.Path, tmp: pathlib.Path) -> list[str]:
     env.update(_fake_driver(tmp) if row.get("fake_driver") else {})
     try:
         r = subprocess.run([*row.get("runner_prefix", []), str(exe), *row.get("args", [])], capture_output=True, env=env,
-                           timeout=row.get("timeout_s", 60))
+                           timeout=row.get("timeout_s", 60), preexec_fn=core_limit_one(),  # a trap starts no dump handler
+                           cwd=exe.parent if row.get("runner_prefix") else None)  # the emulator's 1-byte core: row dir
     except subprocess.TimeoutExpired:  # a hang is this row's failure, never a harness crash
         return bad + [f"timeout >{row.get('timeout_s', 60)}s (the process outlived its exit)"]
     if r.returncode != row.get("expect_exit", 0):
@@ -740,6 +743,8 @@ def main() -> int:
     env = dict(os.environ, **tools,
                MINDC_NATIVE_ELF=args.compiler, MINDC_STD_DIR=str(REPO / "std"), LC_ALL="C")
     env.pop("MINDC_SO", None)
+    if not core_limit_check(run_image):  # it printed its FAIL line
+        return 1
     cases: list[tuple[str, pathlib.Path | str, list[str], int, bytes | None]] = []
     cases += [(cid, src, [], want, None) for cid, src, want in EXIT_CASES]
     cases.append((ARGV_CASE[0], ARGV_CASE[1], ["a", "b"], ARGV_CASE[2], None))

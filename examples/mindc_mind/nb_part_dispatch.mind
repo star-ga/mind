@@ -11,7 +11,7 @@
 // 77 __mind_ymm_vpsubd_i32x8_r · 78 __mind_ymm_vpaddb_i8x32_r · 79 __mind_ymm_vpshufb_i8x32_r(d,t,m)
 // 80 __mind_ymm_vpaddq_i64x4_m · 81 __mind_ymm_vpsubq_i64x4_m · 82 __mind_ymm_vpaddq_i64x4_r · 83 __mind_ymm_vpsubq_i64x4_r
 // 84 __mind_cpu_relax · 85 __mind_atomic_load_acquire_i64 · 86 __mind_atomic_store_release_i64
-// 87 __mind_group_bank_i64(ptrs,bank,plane,pixels,group) · 88 __mind_group_acc32_i64(out,bank,off,pos,neg,init)
+// 87 __mind_group_bank_i64(ptrs,bank,plane,pixels,group) · 88 __mind_group_acc32_i64(out,bank,off,pos,neg,init) · 89 __mind_group_accrows_i64(desc)
 // sys family: 90 __mind_sys_mmap · 91 __mind_sys_munmap · 92 __mind_sys_sched_setaffinity · 93 __mind_sys_perf_event_open
 //
 // Entry-guard flag word (nb_entry_prefix): bit 0 argv capture, bit 1 ymm rows
@@ -37,6 +37,7 @@ import nb_exit;
 import nb_emit_core;
 import nb_group_sum_bank;
 import nb_group_sum_acc;
+import nb_group_walk;
 
 // Callee span [lo, hi) in buf (already past the `__mind_` prefix guard).
 pub fn nbp_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
@@ -63,6 +64,10 @@ pub fn nbp_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
     let g: i64 = nbg_intrinsic_id(buf, lo, hi);
     if g > 0 {
         return g;
+    }
+    let w: i64 = nbw_intrinsic_id(buf, lo, hi);
+    if w > 0 {
+        return w;
     }
     0 - 1
 }
@@ -115,6 +120,9 @@ pub fn nbp_kind_ok(kind: i64, args_len: i64) -> i64 {
     if kind == 88 {
         return nbg_kind_ok(kind, args_len);
     }
+    if kind == 89 {
+        return nbw_kind_ok(kind, args_len);
+    }
     if kind >= 90 {
         if kind <= 92 {
             return nbs_kind_ok(kind, args_len);
@@ -151,6 +159,9 @@ pub fn nbp_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i
     if kind == 88 {
         return nbg_emit(code, kind, ids, dst_id, ctx);
     }
+    if kind == 89 {
+        return nbw_emit(code, kind, ids, dst_id, ctx);
+    }
     if kind >= 90 {
         if kind <= 92 {
             return nbs_sys_emit(code, kind, ids, dst_id, ctx);
@@ -165,7 +176,7 @@ pub fn nbp_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64, ctx: i
 // Guard bits for the pruned emission set: bit 1 ymm rows, bit 2 rdtscp. Each part
 // answer is normalised to 0/1, so a count can never spill into bit 0 (argv).
 pub fn nbp_fns_use_guard(src_addr: i64, ordered: i64, n_fns: i64) -> i64 {
-    let ymm: i64 = nbp_bit(nbb_or_fns_use_ymm(nbv_fns_use_ymm(src_addr, ordered, n_fns), src_addr, ordered, n_fns));
+    let ymm: i64 = nbp_bit(nbw_fns_use_walk(src_addr, ordered, n_fns) + nbb_or_fns_use_ymm(nbv_fns_use_ymm(src_addr, ordered, n_fns), src_addr, ordered, n_fns));
     let tsc: i64 = nbp_bit(nbm_fns_use_rdtscp(src_addr, ordered, n_fns));
     ymm * 2 + tsc * 4
 }
@@ -239,9 +250,9 @@ pub fn tcp_native_only_span(buf: i64, len: i64) -> i64 {
     if nbp_intrinsic_id(buf, 0, len) > 0 {
         return 1;
     }
-    // The kind 87 / 88 maps also read the call's arity, and the sys family
+    // The kind 87 / 88 / 89 maps also read the call's arity, and the sys family
     // (90-93) has its own map. E2024 registration is by name only.
-    if nbg_bank_name(buf, 0, len) + nbg_acc_name(buf, 0, len) > 0 {
+    if nbg_bank_name(buf, 0, len) + nbg_acc_name(buf, 0, len) + nbw_name(buf, 0, len) > 0 {
         return 1;
     }
     if nbp_sys_intrinsic_id(buf, 0, len) > 0 {

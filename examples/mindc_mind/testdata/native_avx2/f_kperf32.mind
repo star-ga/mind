@@ -1,0 +1,119 @@
+// Tail speed row on the i32-walk walk form: desc[7] bits 2, 3 and 4 (i32 walk, term pairs, u16 lane
+// offsets), W = 64, init 0, with bit 5 (MODE 5) or bit 7 (MODE 7). FILL 1: the caller fills the
+// 64-byte record of every row before every call, as a tile loop must for bit 5. TERMS: walk terms
+// per row (added, then the same count subtracted). The gate sets MODE, FILL and TERMS by text
+// substitution of the three lets in main. 1024 rows, 2000 calls. Init 0, so the dst rows of bit 5
+// and bit 7 are equal for every TERMS. Stdout is the checksum then the lane count. Exit 0.
+
+fn main() -> i64 {
+    let mode: i64 = 7;
+    let fill: i64 = 1;
+    let terms: i64 = 0;
+    let rows: i64 = 1024;
+    let out: i64 = __mind_alloc(rows * 512);
+    let src: i64 = __mind_alloc(rows * 512);
+    let dst: i64 = __mind_alloc(rows * 512);
+    let epi5: i64 = __mind_alloc(rows * 64);
+    let epi7: i64 = __mind_alloc(rows * 48);
+    let starts: i64 = __mind_alloc(rows * 24);
+    let bank: i64 = __mind_alloc(4096);
+    let off: i64 = __mind_alloc(128);
+    let mut r: i64 = 0;
+    while r < 1024 {
+        __mind_store_i32(bank + r * 4, r * 7 - 3000);
+        r = r + 1;
+    }
+    r = 0;
+    while r < 64 {
+        __mind_store_i16(off + r * 2, (r - (r / 15) * 15) * 64);
+        r = r + 1;
+    }
+    r = 0;
+    while r < rows {
+        __mind_store_i64(starts + r * 24, 0);
+        __mind_store_i64(starts + r * 24 + 8, terms);
+        __mind_store_i64(starts + r * 24 + 16, terms + terms);
+        let mut i: i64 = 0;
+        while i < 64 {
+            __mind_store_i64(out + r * 512 + i * 8, i + r);
+            __mind_store_i64(src + r * 512 + i * 8, 1);
+            i = i + 1;
+        }
+        let e: i64 = epi5 + r * 64;
+        __mind_store_i64(e, 1);
+        __mind_store_i64(e + 8, 0);
+        __mind_store_i64(e + 16, 0);
+        __mind_store_i64(e + 24, 32);
+        __mind_store_i64(e + 32, 0);
+        __mind_store_i64(e + 40, 0);
+        __mind_store_i64(e + 48, src + r * 512);
+        __mind_store_i64(e + 56, dst + r * 512);
+        let f: i64 = epi7 + r * 48;
+        __mind_store_i64(f, 1);
+        __mind_store_i64(f + 8, 0);
+        __mind_store_i64(f + 16, 0);
+        __mind_store_i64(f + 24, 32);
+        __mind_store_i64(f + 32, 0);
+        __mind_store_i64(f + 40, 0);
+        r = r + 1;
+    }
+    let d: i64 = __mind_alloc(120);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 72, 0);
+    __mind_store_i64(d + 80, 9223372036854775807);
+    if mode == 5 {
+        __mind_store_i64(d + 56, 60);
+        __mind_store_i64(d + 64, epi5)
+    }
+    if mode == 7 {
+        __mind_store_i64(d + 56, 156);
+        __mind_store_i64(d + 64, epi7);
+        __mind_store_i64(d + 88, src);
+        __mind_store_i64(d + 96, 512);
+        __mind_store_i64(d + 104, dst);
+        __mind_store_i64(d + 112, 512)
+    }
+    let mut n: i64 = 0;
+    while n < 2000 {
+        if mode == 5 {
+            if fill == 1 {
+                r = 0;
+                while r < rows {
+                    let e: i64 = epi5 + r * 64;
+                    __mind_store_i64(e, 1);
+                    __mind_store_i64(e + 8, 0);
+                    __mind_store_i64(e + 16, 0);
+                    __mind_store_i64(e + 24, 32);
+                    __mind_store_i64(e + 32, 0);
+                    __mind_store_i64(e + 40, 0);
+                    __mind_store_i64(e + 48, src + r * 512);
+                    __mind_store_i64(e + 56, dst + r * 512);
+                    r = r + 1;
+                }
+            }
+        }
+        let c: i64 = __mind_group_accrows_i64(d);
+        n = n + 1 + (c - c);
+    }
+    let mut s: i64 = 0;
+    r = 0;
+    while r < rows {
+        let mut i: i64 = 0;
+        while i < 64 {
+            s = s * 31 + __mind_load_i64(dst + r * 512 + i * 8);
+            i = i + 1;
+        }
+        r = r + 1;
+    }
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, s);
+    __mind_store_i64(p + 8, 131072000);
+    __mind_write(1, p, 16, 0 - 1);
+    0
+}

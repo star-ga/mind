@@ -1,0 +1,35 @@
+// Finite propositional truth-table check over two Boolean variables; a teaching example.
+// All 4 assignments to p and q. A valid modus-ponens rule must have
+// no case where p and (p => q) are true while q is false.
+// Negative control: "from p alone infer q" IS invalid (p=1,q=0).
+// No real or complex analysis, axioms, unbounded domains or cryptography.
+fn implies(p: i64, q: i64) -> i64 {
+    if p == 1 && q == 0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn main() -> i64 {
+    let mut assignment: i64 = 0;
+    let mut invalid_rule_counterexamples: i64 = 0;
+    while assignment < 4 {
+        let p: i64 = assignment / 2;
+        let q: i64 = assignment % 2;
+        let p_implies_q: i64 = implies(p, q);
+
+        // A correct MP rule must have no counterexample.
+        if p == 1 && p_implies_q == 1 && q == 0 {
+            return 10;
+        }
+        // Make sure our check can detect a deliberately invalid rule.
+        if p == 1 && q == 0 {
+            invalid_rule_counterexamples = invalid_rule_counterexamples + 1;
+        }
+        assignment = assignment + 1;
+    }
+    if invalid_rule_counterexamples != 1 {
+        return 11;
+    }
+    return 0;
+}

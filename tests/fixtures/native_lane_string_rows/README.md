@@ -5,7 +5,7 @@ A compiler minted from these sources passes every `run` row. The committed seeds
 since the seed advance of this release (row `binding` is refused with `lane.string.binding` on both).
 In this file "the frozen seed" is the seed before that advance (the `compiler_sha256` line of
 `baseline_frozen_seed.tsv`): it has no rule (a refuse row compiles on it), which is why the runner
-self-test feeds that seed; CI reads it from history as the seed file before its last change.
+self-test feeds that seed; CI reads it from history as the seed file of commit e52217f4.
 
 ## Files
 

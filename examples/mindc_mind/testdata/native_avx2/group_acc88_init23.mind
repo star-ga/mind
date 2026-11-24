@@ -1,0 +1,36 @@
+// Kind 88 init 2 and init 3 are zero start. Prior lanes are 7. One add term.
+// Stdout is the init-2 result, then the init-3 result.
+
+fn st(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v);
+    0
+}
+
+fn fill(p: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        st(p, i, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        st(bank, i, 100 + i);
+        i = i + 1;
+    }
+    let off: i64 = __mind_alloc(8);
+    st(off, 0, 0);
+    let out2: i64 = __mind_alloc(256);
+    let out3: i64 = __mind_alloc(256);
+    fill(out2, 32, 7);
+    fill(out3, 32, 7);
+    let r2: i64 = __mind_group_acc32_i64(out2, bank, off, 1, 0, 2);
+    let r3: i64 = __mind_group_acc32_i64(out3, bank, off, 1, 0, 3);
+    __mind_write(1, out2, 256, 0 - 1);
+    __mind_write(1, out3, 256, 0 - 1);
+    r2 + r3
+}

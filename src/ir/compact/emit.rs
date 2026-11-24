@@ -131,12 +131,6 @@ impl MicEmitter {
         }
     }
 
-    #[allow(dead_code)]
-    fn intern_symbol(&mut self, name: &str) -> usize {
-        let next_id = self.symbols.len();
-        *self.symbols.entry(name.to_string()).or_insert(next_id)
-    }
-
     fn intern_scalar_type(&mut self, dtype: &DType) -> usize {
         let key = dtype.as_str().to_string();
         let next_id = self.types.len();

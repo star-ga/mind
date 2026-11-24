@@ -1,0 +1,94 @@
+// i32-walk bound-field contract (nb_group_i32w.mind). One row, lane 0 is read.
+// Stdout: the bad count. Exit 0 when it is 0.
+// i64-walk holds an 8-byte code; bank32 holds the low 32 bits only.
+// r0 i64-walk, code 2^32+5, sum 4294967301.
+// r1 fallback (field 0xFFFFFFFF) on that bank32: the low bits 5, not the i64-walk sum.
+// r2 i64-walk, three codes 2^31-1, sum 6442450941 (partial sum above 2^32).
+// r3 fallback with the saturated field: same sum, 6442450941.
+// r4 field 2^31 (the smallest fallback value): same sum.
+// r5 field 2^31-1 (the largest i32 value) on small codes: the i32 path, sum 6.
+// r6 desc[7] 4, bit 2 only: the i32 path, sum 7.
+// Bit 1 with bit 2 (desc[7] 6) is reserved and traps: t3_trap_sweep.mind owns it.
+
+fn one(bank: i64, step: i64, nterm: i64, init: i64, bound: i64) -> i64 {
+    let off: i64 = __mind_alloc(32);
+    let s: i64 = __mind_alloc(24);
+    let out: i64 = __mind_alloc(512);
+    let mut j: i64 = 0;
+    while j < nterm {
+        __mind_store_i64(off + j * 8, j * step);
+        j = j + 1;
+    }
+    __mind_store_i64(s, 0);
+    __mind_store_i64(s + 8, nterm);
+    __mind_store_i64(s + 16, nterm);
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i64(out + i * 8, 1000);
+        i = i + 1;
+    }
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, s);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 1);
+    __mind_store_i64(d + 56, init);
+    if bound != 0 {
+        __mind_store_i32(d + 60, bound)
+    }
+    let r: i64 = __mind_group_accrows_i64(d);
+    __mind_load_i64(out) + r
+}
+
+fn neq(a: i64, b: i64) -> i64 {
+    if a != b {
+        return 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let w: i64 = __mind_alloc(8);
+    let b64: i64 = __mind_alloc(4096);
+    let b32: i64 = __mind_alloc(2048);
+    let mut i: i64 = 0;
+    while i < 512 {
+        __mind_store_i64(b64 + i * 8, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 512 {
+        __mind_store_i32(b32 + i * 4, 0);
+        i = i + 1;
+    }
+    __mind_store_i64(b64, 4294967301);
+    __mind_store_i32(b32, 4294967301);
+    let mut bad: i64 = neq(one(b64, 512, 1, 0, 0), 4294967301);
+    bad = bad + neq(one(b32, 256, 1, 4, 4294967295), 5);
+    let mut j: i64 = 0;
+    while j < 3 {
+        __mind_store_i64(b64 + j * 512, 2147483647);
+        __mind_store_i32(b32 + j * 256, 2147483647);
+        j = j + 1;
+    }
+    bad = bad + neq(one(b64, 512, 3, 0, 0), 6442450941);
+    bad = bad + neq(one(b32, 256, 3, 4, 4294967295), 6442450941);
+    bad = bad + neq(one(b32, 256, 3, 4, 2147483648), 6442450941);
+    __mind_store_i32(b32, 1);
+    __mind_store_i32(b32 + 256, 2);
+    __mind_store_i32(b32 + 512, 3);
+    bad = bad + neq(one(b32, 256, 3, 4, 2147483647), 6);
+    __mind_store_i32(b32, 7);
+    __mind_store_i32(b32 + 256, 0);
+    __mind_store_i32(b32 + 512, 0);
+    bad = bad + neq(one(b32, 256, 3, 4, 0), 7);
+    __mind_store_i64(w, bad);
+    __mind_write(1, w, 8, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}
