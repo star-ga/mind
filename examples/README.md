@@ -4,6 +4,8 @@ Comprehensive examples demonstrating MIND's capabilities for tensor computation,
 
 ## Quick Start
 
+- [Finite pure-MIND formal-math examples including Willans/Wilson](formal_verification/README.md)
+
 | Example | Description | Difficulty |
 |---------|-------------|------------|
 | `hello_tensor.mind` | Basic tensor operations and device placement | Beginner |

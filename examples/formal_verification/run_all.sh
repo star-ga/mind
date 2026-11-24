@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds and runs the seven bounded examples of this directory with the native
+# Builds and runs the eight bounded examples of this directory with the native
 # backend. The arithmetic and every check are in the MIND programs; this script
 # only builds each one, runs it, and compares its exit status and output.
 set -euo pipefail
@@ -20,7 +20,7 @@ read -r digest _ < "$tmp/sha"
 echo "MINDC_SHA256=$digest"
 count=0
 # implication_truth_table writes nothing; each other program writes its EXAMPLE= and SCOPE= lines.
-for name in implication_truth_table prime_counting divisor_functions mobius_finite harmonic_exact farey_finite goldbach_bounded; do
+for name in implication_truth_table prime_counting divisor_functions mobius_finite harmonic_exact farey_finite goldbach_bounded willans_wilson; do
   source="$root/$name.mind"
   [[ -f "$source" ]] || { echo "EXAMPLES=MISSING_SOURCE_$name" >&2; exit 2; }
   timeout 180 "$compiler" check "$source" > "$tmp/check.out" 2> "$tmp/check.err" || {
@@ -47,5 +47,5 @@ for name in implication_truth_table prime_counting divisor_functions mobius_fini
   echo "EXAMPLE=$name PASS"
   count=$((count + 1))
 done
-[[ "$count" -eq 7 ]] || { echo "EXAMPLES=INCOMPLETE" >&2; exit 1; }
-echo "EXAMPLES_PASSED=7"
+[[ "$count" -eq 8 ]] || { echo "EXAMPLES=INCOMPLETE" >&2; exit 1; }
+echo "EXAMPLES_PASSED=8"
