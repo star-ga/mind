@@ -215,7 +215,8 @@ GATED_EVENTS = ("push", "pull_request")
 # The controls run inside the gate on every run, not in a file of their own.
 # 329 -> 331 counts exactly two tracked files split out of
 # examples/mindc_mind/_selfhost_sources.py. The tree holds these counts:
-# _selfhost_identity.py is 800 lines (the identity tool, its partitions and self-tests, and the compiler-only mode dispatch).
+# _selfhost_identity.py is 657 lines (the identity tool, its partitions and the compiler-only mode dispatch; its
+# self-tests are in _selfhost_identity_selftest.py).
 # _selfhost_string_rows.py is 721 lines (the string-rows runner).
 # _selfhost_sources.py is 714 lines (capture, the compile helpers, the one stdin start helper and the core limit of an image run; 327 at e52217f4).
 # native_lane_value_shapes_smoke.py is 799 lines (800 at e52217f4).
@@ -232,12 +233,15 @@ GATED_EVENTS = ("push", "pull_request")
 # 800-line ceiling): the contract test runs both with its own check and still reports 94 verdicts.
 # 334 -> 335 adds examples/formal_verification/run_all.sh, the build-and-run driver of the seven bounded
 # example programs in that directory (manual, not CI-wired): every check is in the MIND programs.
-# history-lines: examples/mindc_mind/_selfhost_identity.py=800 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=714 examples/mindc_mind/native_lane_value_shapes_smoke.py=799
 # 335 -> 336 adds examples/mindc_mind/_cf_harness.py, the low-level helpers of
 # self_host_native_cf_smoke.py (stdin image, frozen-seed derivations, native/MLIR runners,
 # exec retry, verdict counter, fixture header) moved unchanged out of that gate (800 -> 630
 # lines, the 800-line ceiling); the sections and rows stay in the gate.
-HARNESS_CEILING = 336  # Exact reviewed integration inventory; no spare allowance.
+# 336 -> 337 adds examples/mindc_mind/_selfhost_identity_selftest.py, the planted self-tests of the identity
+# partitions, moved out of _selfhost_identity.py (800 -> 657 lines). The merged selftest now plants
+# one break per group-kernel reason guard.
+# history-lines: examples/mindc_mind/_selfhost_identity.py=657 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=714 examples/mindc_mind/native_lane_value_shapes_smoke.py=799
+HARNESS_CEILING = 337  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.
