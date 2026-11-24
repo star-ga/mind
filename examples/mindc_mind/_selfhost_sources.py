@@ -39,13 +39,15 @@ COMPILER_COMPONENTS: tuple[str, ...] = tuple("examples/mindc_mind/" + name for n
     "nb_emit_core.mind", "nb_part_dispatch.mind", "nb_x86_vex.mind", "nb_x86_ymm_bank.mind", "nb_cpu_features.mind",
     "nb_measure.mind", "nb_shm.mind", "nbx_cuda_rows2.mind", "nbx_libc_rows.mind", "nb_exit.mind",
     "tc_std_surface_table.mind", "nb_x86_ymm_bank_checks.mind", "nb_x86_ymm_bank_walk.mind", "nb_x86_ymm_epi.mind", "nb_ast.mind",
-    "nb_group_sum_enc.mind", "nb_group_sum_bank.mind", "nb_group_sum_acc.mind", "nb_opt_level.mind", "nb_opt_licm_facts.mind",
+    "nb_group_sum_enc.mind", "nb_group_bankw.mind", "nb_group_tail32.mind", "nb_group_fuse.mind", "nb_group_fuse32.mind", "nb_group_i32w.mind",
+    "nb_group_terms.mind", "nb_group_epi.mind", "nb_group_sum_bank.mind", "nb_group_sum_acc.mind", "nb_opt_level.mind", "nb_opt_licm_facts.mind",
     "nb_prim_desc.mind", "nb_narrow_rebind.mind", "nb_opt_licm_scan.mind", "nb_opt_licm_check.mind", "nb_opt_licm.mind",
     "nb_intern_names.mind", "nb_intern_names2.mind", "nb_synth_sha.mind", "nb_synth_sha2.mind",
     "nb_float_lit.mind", "nb_float_lit2.mind", "nb_extern_abi.mind", "nbt_extern_scan.mind", "nbt_extern_keys.mind", "nb_lastdef.mind", "nb_alloc_select.mind", "nb_strtab_index.mind",
     "nb_lower_loop.mind", "nb_lex_scan.mind", "nb_stack_budget.mind", "nbx_bind.mind", "nb_print.mind", "nb_arr_fold.mind",
     "nb_branch_memo.mind", "nb_exit_carry.mind", "nb_value_if_memo.mind", "nbt_jump_table.mind", "nbt_fvc_names.mind",
-    "nb_lane_keys.mind", "nb_lane_report.mind", "nb_lane_scan.mind", "nb_lane_str.mind", "nb_lane_str2.mind", "nb_lane_rules.mind"))
+    "nb_lane_keys.mind", "nb_lane_report.mind", "nb_lane_scan.mind", "nb_lane_str.mind", "nb_lane_str2.mind", "nb_lane_rules.mind",
+    "nb_group_guard.mind", "nb_group_walk.mind"))
 FROZEN_SEED = "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
 LAYOUT_MAGIC = int.from_bytes(b"MINDLAY\x01", "little")
 # Input magics of the stage driver (nb_lane_keys.mind): the 8 bytes before the v1 or v2 header. The host
@@ -389,6 +391,31 @@ def start_child(argv, payload=None, *, popen: bool = False, refusal_control: boo
         feed.write(payload.encode() if isinstance(payload, str) else payload)
         feed.seek(0)
         return subprocess.Popen(argv, stdin=feed, **kwargs)
+
+
+def core_limit_one():
+    """The preexec_fn of an image run: the soft core size limit 1, the hard limit unchanged (soft 0 when the hard limit
+    is 0). Never min(1, hard): RLIM_INFINITY is -1 on some Python versions, and that min gave an unlimited soft limit.
+    At a soft limit of exactly 1 Linux aborts a dump to a core_pattern pipe, and it writes no core file under one page:
+    a trap starts no dump handler, and the exit status (a trap is -4) does not change. qemu-user writes its own 1-byte
+    core file of a trapped guest into its working directory, so an emulator child runs in a temporary directory.
+    The child only sets it; core_limit_check proves the value on one real child."""
+    import resource  # POSIX only: the images are Linux programs
+    hard = resource.getrlimit(resource.RLIMIT_CORE)[1]
+    return lambda: resource.setrlimit(resource.RLIMIT_CORE, (0 if hard == 0 else 1, hard))
+
+
+def core_limit_check(run_image) -> bool:
+    """True when one real child, a script started by `run_image` (the image runner of _selfhost_identity.py, which
+    applies core_limit_one), reads the soft core limit 1 (0 when the hard limit is 0); else False after a named FAIL
+    line. A gate runs it before its first row: a wrong limit sends every trap to the dump handler of the host."""
+    import resource
+    want = 0 if resource.getrlimit(resource.RLIMIT_CORE)[1] == 0 else 1
+    got = run_image(f"#!{sys.executable} -I\nimport resource\nprint(resource.getrlimit(resource.RLIMIT_CORE)[0])\n".encode(), 60)
+    if got is None or got[0] != 0 or got[1].strip() != str(want).encode():
+        print(f"FAIL  core limit start check: the child read the soft core limit {got}, not {want}")
+        return False
+    return True
 
 
 def _refused(argv, payload, **kwargs) -> bool:

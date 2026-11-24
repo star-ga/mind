@@ -1,0 +1,394 @@
+// Fused tail oracle, i64 walks (kind 89, desc[7] bit 7, W = 32). Each case runs the same rows
+// twice: bit 5 (walk + epilogue tail, 64-byte records: the reference route) and bit 7 (fused
+// finish in registers, 48-byte records, src and dst as base + step). dst rows and desc[9] of
+// both must equal the scalar twin, lane by lane. Paths: plain rows, and the term loop with
+// bit 3 (pairs) and bit 4 (u16 lane offsets). Odd seeds set bit 5 too (bit 7 wins). Flavors:
+// 0 own dst rows, 1 dst is the out row, 2 dst is the src row. The bit-7 out row keeps its bytes.
+// Stdout: lanes compared, bad. Exit 0 when bad is 0 and every lane ran.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    if s == 0 {
+        return v;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn lsl(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    v << s
+}
+
+fn epi_nv(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, src: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr(lsl(x, cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + src
+}
+
+fn rnd(p: i64) -> i64 {
+    let s: i64 = __mind_load_i64(p);
+    let n: i64 = s * 6364136223846793005 + 1;
+    __mind_store_i64(p, n);
+    n
+}
+
+fn minv() -> i64 {
+    0 - 9223372036854775807 - 1
+}
+
+// Edge operand tables at p + 8: a 0..10, um 11..16, counts 17..24, bq 25..27, src 28..31.
+fn tput(t: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(t + i * 8, v);
+    t
+}
+
+fn tables() -> i64 {
+    let t: i64 = __mind_alloc(256);
+    let mx: i64 = 9223372036854775807;
+    tput(tput(tput(tput(t, 0, 0), 1, 1), 2, 0 - 1), 3, minv());
+    tput(tput(tput(tput(t, 4, mx), 5, 2147483648), 6, 0 - 2147483648), 7, 4294967296);
+    tput(tput(tput(t, 8, 0 - 4294967296), 9, 1099511627776), 10, 4611686018427387904);
+    tput(tput(tput(tput(t, 11, 0), 12, 1), 13, 2147483648), 14, 4294967295);
+    tput(tput(t, 15, 4294967301), 16, 0 - 1);
+    tput(tput(tput(tput(t, 17, 0), 18, 1), 19, 31), 20, 32);
+    tput(tput(tput(tput(t, 21, 33), 22, 63), 23, 64), 24, 255);
+    tput(tput(tput(t, 25, minv()), 26, mx), 27, 0);
+    tput(tput(tput(tput(t, 28, minv()), 29, mx), 30, 0), 31, 1)
+}
+
+// Entry i of the edge table, i drawn from the next random word in [0, n).
+fn edge(p: i64, sp: i64, base: i64, n: i64) -> i64 {
+    __mind_load_i64(__mind_load_i64(p + 8) + (base + (rnd(sp) & 255) % n) * 8)
+}
+
+fn copy_words(dst: i64, src: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    n
+}
+
+fn sx32(u: i64) -> i64 {
+    let v: i64 = u & 4294967295;
+    if v >= 2147483648 {
+        return v - 4294967296;
+    }
+    v
+}
+
+// The i64 code of term t, lane k: i64 bank (wide 0) or a sign-extended 4-byte bank (wide 1).
+fn code(bank: i64, ob: i64, k: i64, wide: i64) -> i64 {
+    if wide == 1 {
+        return sx32(__mind_load_i32(bank + ob + k * 4));
+    }
+    __mind_load_i64(bank + ob + k * 8)
+}
+
+// The row of a flavor: 0 its own rows, 1 the out row, 2 the src row.
+fn rowp(flavor: i64, own: i64, ostep: i64, outp: i64, step: i64, srcp: i64, sstep: i64, r: i64) -> i64 {
+    if flavor == 1 {
+        return outp + r * step;
+    }
+    if flavor == 2 {
+        return srcp + r * sstep;
+    }
+    own + r * ostep
+}
+
+fn mkdesc(out: i64, step: i64, bank: i64, off: i64, starts: i64, rows: i64, flags: i64, epi: i64, lim: i64) -> i64 {
+    let d: i64 = __mind_alloc(120);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, step);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 7);
+    __mind_store_i64(d + 80, lim);
+    d
+}
+
+fn rec(e: i64, sp: i64, egrid: i64, p: i64) -> i64 {
+    let mut nm: i64 = 0;
+    if rnd(sp) < 0 {
+        nm = 0 - 1;
+    }
+    let mut cl: i64 = (rnd(sp) & 63);
+    let mut cr1: i64 = (rnd(sp) & 63);
+    let mut cr2: i64 = (rnd(sp) & 63);
+    if (rnd(sp) & 1) == 1 {
+        cl = rnd(sp) & 3;
+        cr1 = 28 + (rnd(sp) & 7);
+        cr2 = rnd(sp) & 31;
+    }
+    let mut bq: i64 = rnd(sp);
+    if (rnd(sp) & 1) == 1 {
+        bq = rnd(sp) & 255;
+    }
+    let mut um: i64 = rnd(sp);
+    if egrid == 1 {
+        um = edge(p, sp, 11, 6);
+        cl = edge(p, sp, 17, 8);
+        cr1 = edge(p, sp, 17, 8);
+        cr2 = edge(p, sp, 17, 8);
+        bq = edge(p, sp, 25, 3);
+    }
+    __mind_store_i64(e, um);
+    __mind_store_i64(e + 8, nm);
+    __mind_store_i64(e + 16, cl);
+    __mind_store_i64(e + 24, cr1);
+    __mind_store_i64(e + 32, cr2);
+    __mind_store_i64(e + 40, bq);
+    e
+}
+
+// One case: the bit-5 route (walk + epilogue, 64-byte records) is the reference; the bit-7 route
+// (fused, 48-byte records, src/dst as base + step) must give the same dst rows and desc[9], and
+// both must equal the scalar twin. wide 1 = i32 walk (bit 2, W 64), tm = term bits (8, 16),
+// big 1 = bound field 0xFFFFFFFF (the exact fallback). Returns bad. p[0] counts compared lanes.
+fn kcase(seed: i64, rows: i64, wide: i64, tm: i64, big: i64, flavor: i64, init: i64, lmode: i64, egrid: i64, p: i64) -> i64 {
+    let w: i64 = 32 + 32 * wide;
+    let step: i64 = w * 8 + (seed % 3) * 8;
+    let ss: i64 = w * 8 + 16;
+    let ds: i64 = w * 8 + 8;
+    let sstep: i64 = ss - (flavor / 2) * 8;
+    let dstep: i64 = rowp(flavor, 0, ds, 0, step, 0, sstep, 1);
+    let cells: i64 = step / 8;
+    let out0: i64 = __mind_alloc(rows * step);
+    let out_a: i64 = __mind_alloc(rows * step);
+    let out_b: i64 = __mind_alloc(rows * step);
+    let src_a: i64 = __mind_alloc(rows * sstep);
+    let src_b: i64 = __mind_alloc(rows * sstep);
+    let dst_a: i64 = __mind_alloc(rows * ds);
+    let dst_b: i64 = __mind_alloc(rows * ds);
+    let want: i64 = __mind_alloc(rows * w * 8);
+    let epi5: i64 = __mind_alloc(rows * 64);
+    let epi7: i64 = __mind_alloc(rows * 48);
+    let starts: i64 = __mind_alloc(rows * 24);
+    // bank 4096 bytes, the byte offset list (i64) 192, the u16 lane list 48, the random state 8.
+    let bank: i64 = __mind_alloc(4096 + 248);
+    let off: i64 = bank + 4096;
+    let o16: i64 = off + 192;
+    let sp: i64 = o16 + 48;
+    __mind_store_i64(sp, seed);
+    let mut i: i64 = 0;
+    while i < 512 {
+        let v: i64 = rnd(sp);
+        __mind_store_i64(bank + i * 8, v);
+        if wide - big == 1 {
+            __mind_store_i32(bank + i * 8, v >> 41);
+            __mind_store_i32(bank + i * 8 + 4, (v << 7) >> 41)
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < 24 {
+        let k: i64 = rnd(sp) & 15;
+        __mind_store_i64(off + i * 8, k * 256);
+        __mind_store_i16(o16 + i * 2, k * w);
+        i = i + 1;
+    }
+    let mut top: i64 = minv();
+    let mut r: i64 = 0;
+    while r < rows {
+        let j0: i64 = rnd(sp) & 7;
+        let j1: i64 = j0 + (rnd(sp) & 7);
+        let j2: i64 = j1 + (rnd(sp) & 7);
+        __mind_store_i64(starts + r * 24, j0);
+        __mind_store_i64(starts + r * 24 + 8, j1);
+        __mind_store_i64(starts + r * 24 + 16, j2);
+        let e5: i64 = rec(epi5 + r * 64, sp, egrid, p);
+        copy_words(epi7 + r * 48, e5, 6);
+        let mut j: i64 = 0;
+        while j < cells {
+            let mut cv: i64 = 987654321 + j;
+            if j < w {
+                cv = rnd(sp);
+                let mut sv: i64 = rnd(sp);
+                if egrid == 1 {
+                    cv = edge(p, sp, 0, 11);
+                    sv = edge(p, sp, 28, 4);
+                }
+                if egrid == 0 {
+                    if (rnd(sp) & 1) == 1 {
+                        sv = sv & 1023;
+                    }
+                }
+                __mind_store_i64(src_a + r * sstep + j * 8, sv);
+                __mind_store_i64(src_b + r * sstep + j * 8, sv)
+            }
+            __mind_store_i64(out0 + r * step + j * 8, cv);
+            j = j + 1;
+        }
+        // want: the scalar twin of walk plus tail (init 1 keeps the out lane on every path).
+        let mut k: i64 = 0;
+        while k < w {
+            let mut a: i64 = 0;
+            if init == 1 {
+                a = __mind_load_i64(out0 + r * step + k * 8);
+            }
+            let mut t: i64 = j0;
+            while t < j1 {
+                a = a + code(bank, __mind_load_i64(off + t * 8), k, wide);
+                t = t + 1;
+            }
+            while t < j2 {
+                a = a - code(bank, __mind_load_i64(off + t * 8), k, wide);
+                t = t + 1;
+            }
+            let sv: i64 = __mind_load_i64(src_a + r * sstep + k * 8);
+            let nv: i64 = epi_nv(a, __mind_load_i64(e5), __mind_load_i64(e5 + 8), __mind_load_i64(e5 + 16), __mind_load_i64(e5 + 24), __mind_load_i64(e5 + 32), __mind_load_i64(e5 + 40), sv);
+            __mind_store_i64(want + (r * w + k) * 8, nv);
+            if nv > top {
+                top = nv;
+            }
+            k = k + 1;
+        }
+        r = r + 1;
+    }
+    copy_words(out_a, out0, rows * cells);
+    copy_words(out_b, out0, rows * cells);
+    let mut lim: i64 = top;
+    if lmode == 1 {
+        lim = top - 1;
+    }
+    if egrid == 1 {
+        lim = __mind_load_i64(__mind_load_i64(p + 8) + (3 + (seed & 1)) * 8);
+        if (seed & 2) == 2 {
+            lim = 0 - 1 - (seed & 1);
+        }
+    }
+    r = 0;
+    while r < rows {
+        __mind_store_i64(epi5 + r * 64 + 48, src_a + r * sstep);
+        __mind_store_i64(epi5 + r * 64 + 56, rowp(flavor, dst_a, ds, out_a, step, src_a, sstep, r));
+        r = r + 1;
+    }
+    let mode: i64 = init + tm + 4 * wide + big * (4294967295 << 32);
+    let lst: i64 = off + ((tm / 16) % 2) * 192;
+    let da: i64 = mkdesc(out_a, step, bank, lst, starts, rows, mode + 32, epi5, lim);
+    let db: i64 = mkdesc(out_b, step, bank, lst, starts, rows, mode + 128 + (seed & 1) * 32, epi7, lim);
+    __mind_store_i64(db + 88, src_b);
+    __mind_store_i64(db + 96, sstep);
+    __mind_store_i64(db + 104, rowp(flavor, dst_b, ds, out_b, step, src_b, sstep, 0));
+    __mind_store_i64(db + 112, dstep);
+    let ca: i64 = __mind_group_accrows_i64(da);
+    let cb: i64 = __mind_group_accrows_i64(db);
+    let mut bad: i64 = (ca - ca) + (cb - cb);
+    let mut trip: i64 = 0;
+    r = 0;
+    while r < rows {
+        let ra: i64 = rowp(flavor, dst_a, ds, out_a, step, src_a, sstep, r);
+        let rb: i64 = rowp(flavor, dst_b, ds, out_b, step, src_b, sstep, r);
+        let mut k: i64 = 0;
+        while k < w {
+            let nv: i64 = __mind_load_i64(want + (r * w + k) * 8);
+            if nv > lim {
+                trip = 0 - 1;
+            }
+            if __mind_load_i64(ra + k * 8) != nv {
+                bad = bad + 1;
+            }
+            if __mind_load_i64(rb + k * 8) != nv {
+                bad = bad + 1;
+            }
+            k = k + 1;
+        }
+        if flavor == 0 {
+            // Padding lane of the dst row keeps the zero fill of the allocation.
+            if __mind_load_i64(dst_b + r * ds + w * 8) != 0 {
+                bad = bad + 1;
+            }
+        }
+        r = r + 1;
+    }
+    if __mind_load_i64(da + 72) != trip {
+        bad = bad + 1;
+    }
+    if __mind_load_i64(db + 72) != trip {
+        bad = bad + 1;
+    }
+    if flavor != 1 {
+        // The fused path does not write the out row.
+        i = 0;
+        while i < rows * cells {
+            if __mind_load_i64(out_b + i * 8) != __mind_load_i64(out0 + i * 8) {
+                bad = bad + 1;
+            }
+            i = i + 1;
+        }
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + rows * w);
+    bad
+}
+
+// rows <= 0 with bit 7: nothing is read or written, desc[9] keeps its sentinel 7.
+fn krows(rows: i64) -> i64 {
+    let o: i64 = __mind_alloc(256);
+    __mind_store_i64(o, 5);
+    let d: i64 = mkdesc(o, 256, 0, 0, 0, rows, 129, 0, 0);
+    let c: i64 = __mind_group_accrows_i64(d);
+    let mut bad: i64 = c - c;
+    if __mind_load_i64(d + 72) != 7 {
+        bad = bad + 1;
+    }
+    if __mind_load_i64(o) != 5 {
+        bad = bad + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 0);
+    __mind_store_i64(p + 8, tables());
+    let mut bad: i64 = krows(0) + krows(0 - 3);
+    let mut n: i64 = 0;
+    while n < 24 {
+        let tm: i64 = (n % 4) * 8;
+        bad = bad + kcase(305419896 + n, 64, 0, tm, 0, n % 3, (n / 4) % 2, (n / 8) % 2, 0, p);
+        bad = bad + kcase(900 + n, 1 + n % 3, 0, tm, 0, (n + 1) % 3, (n / 3) % 2, 2, 1, p);
+        n = n + 1;
+    }
+    __mind_store_i64(p + 8, bad);
+    __mind_write(1, p, 16, 0 - 1);
+    if __mind_load_i64(p) != 24 * 64 * 32 + 48 * 32 {
+        return 2;
+    }
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

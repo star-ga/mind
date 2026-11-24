@@ -13,5 +13,6 @@ This directory collects deep technical documentation for the MIND language, comp
 - [std.procgroup: run many child processes](std-procgroup.md)
 - [Benchmarks](benchmarks.md)
 - [Roadmap](roadmap.md)
+- [Bounded formal-mathematics examples](../examples/formal_verification/README.md)
 
 For historical design notes see [`design/`](design/) and [`rfcs/`](rfcs/). Reference material for the surface language lives in [`specs/`](specs/).

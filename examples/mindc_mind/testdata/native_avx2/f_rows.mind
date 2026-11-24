@@ -1,0 +1,301 @@
+// Multi-row epilogue rows with a padded out_step and trips in chosen lanes.
+// Stdout: 3 i64 words (calls, lanes, mix). Exit 0 when every lane, every pad cell and desc[9] match.
+// The twin is epi_nv. The out_step is W*8 + pad, so the row step is not the lane run length.
+// A trip is planted in one lane only (row 0 lane 0, last row last lane, row 1 lane 5, last row lane 0, row 0 last lane).
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    if s == 0 {
+        return v;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn lsl(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    v << s
+}
+
+fn epi_nv(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, src: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr(lsl(x, cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + src
+}
+
+fn rnd(p: i64) -> i64 {
+    let s: i64 = __mind_load_i64(p);
+    let n: i64 = s * 6364136223846793005 + 1;
+    __mind_store_i64(p, n);
+    n
+}
+
+fn pick_cl(r: i64) -> i64 {
+    let k: i64 = r & 3;
+    if k == 1 {
+        return 32;
+    }
+    if k == 3 {
+        return 3;
+    }
+    0
+}
+
+fn pick_cr1(r: i64) -> i64 {
+    let k: i64 = r & 3;
+    if k == 0 {
+        return 32;
+    }
+    if k == 1 {
+        return 0;
+    }
+    if k == 2 {
+        return 1;
+    }
+    5
+}
+
+fn pick_cr2(r: i64) -> i64 {
+    let k: i64 = r & 3;
+    if k == 2 {
+        return 1;
+    }
+    if k == 3 {
+        return 2;
+    }
+    0
+}
+
+// tk 0: no trip. tk 1..5: one lane trips (see the header). Returns the row (low word) of the trip lane.
+fn trip_row(tk: i64, rows: i64) -> i64 {
+    if tk == 2 {
+        return rows - 1;
+    }
+    if tk == 3 {
+        return 1;
+    }
+    if tk == 4 {
+        return rows - 1;
+    }
+    0
+}
+
+fn trip_lane(tk: i64, w: i64) -> i64 {
+    if tk == 2 {
+        return w - 1;
+    }
+    if tk == 3 {
+        return 5;
+    }
+    if tk == 5 {
+        return w - 1;
+    }
+    0
+}
+
+fn mix(sum: i64, v: i64) -> i64 {
+    let s: i64 = __mind_load_i64(sum) * 131 + v;
+    __mind_store_i64(sum, s);
+    s
+}
+
+fn run_case(sum: i64, w: i64, rows: i64, pad: i64, tk: i64, inplace: i64, seed: i64) -> i64 {
+    let step: i64 = w * 8 + pad;
+    let cells: i64 = step / 8;
+    let out: i64 = __mind_alloc(rows * step);
+    let orig: i64 = __mind_alloc(rows * step);
+    let src: i64 = __mind_alloc(rows * w * 8);
+    let dst: i64 = __mind_alloc(rows * w * 8);
+    let epi: i64 = __mind_alloc(rows * 64);
+    let starts: i64 = __mind_alloc(24);
+    let sp: i64 = __mind_alloc(8);
+    __mind_store_i64(sp, seed);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 0);
+    __mind_store_i64(starts + 16, 0);
+    let lim: i64 = 2305843009213693952;
+    let mut r: i64 = 0;
+    while r < rows {
+        let mut j: i64 = 0;
+        while j < cells {
+            let mut cv: i64 = 123456789 + j;
+            if j < w {
+                cv = (rnd(sp) & 1099511627775) - 549755813888;
+                __mind_store_i64(src + (r * w + j) * 8, rnd(sp) & 1023)
+            }
+            __mind_store_i64(out + r * step + j * 8, cv);
+            __mind_store_i64(orig + r * step + j * 8, cv);
+            j = j + 1;
+        }
+        let e: i64 = epi + r * 64;
+        let mut nm: i64 = 0;
+        if (r & 1) == 1 {
+            nm = 0 - 1;
+        }
+        __mind_store_i64(e, 3 + r * 5);
+        __mind_store_i64(e + 8, nm);
+        __mind_store_i64(e + 16, pick_cl(r));
+        __mind_store_i64(e + 24, pick_cr1(r));
+        __mind_store_i64(e + 32, pick_cr2(r));
+        __mind_store_i64(e + 40, rnd(sp) & 255);
+        __mind_store_i64(e + 48, src + r * w * 8);
+        let mut dp: i64 = dst + r * w * 8;
+        if inplace == 1 {
+            dp = out + r * step;
+        }
+        __mind_store_i64(e + 56, dp);
+        r = r + 1;
+    }
+    if tk > 0 {
+        __mind_store_i64(src + (trip_row(tk, rows) * w + trip_lane(tk, w)) * 8, 4611686018427387904)
+    }
+    let mut flags: i64 = 33;
+    if w == 64 {
+        flags = 37;
+    }
+    let d: i64 = __mind_alloc(88);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, step);
+    __mind_store_i64(d + 16, 0);
+    __mind_store_i64(d + 24, 0);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 0);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 7);
+    __mind_store_i64(d + 80, lim);
+    let call: i64 = __mind_group_accrows_i64(d);
+    let mut bad: i64 = call - call;
+    let mut trip: i64 = 0;
+    r = 0;
+    while r < rows {
+        let e: i64 = epi + r * 64;
+        let um: i64 = __mind_load_i64(e);
+        let nm: i64 = __mind_load_i64(e + 8);
+        let cl: i64 = __mind_load_i64(e + 16);
+        let cr1: i64 = __mind_load_i64(e + 24);
+        let cr2: i64 = __mind_load_i64(e + 32);
+        let bq: i64 = __mind_load_i64(e + 40);
+        let mut j: i64 = 0;
+        while j < cells {
+            if j < w {
+                let a: i64 = __mind_load_i64(orig + r * step + j * 8);
+                let sv: i64 = __mind_load_i64(src + (r * w + j) * 8);
+                let nv: i64 = epi_nv(a, um, nm, cl, cr1, cr2, bq, sv);
+                let mut got: i64 = __mind_load_i64(dst + (r * w + j) * 8);
+                if inplace == 1 {
+                    got = __mind_load_i64(out + r * step + j * 8);
+                }
+                if got != nv {
+                    bad = bad + 1;
+                }
+                if nv > lim {
+                    trip = 0 - 1;
+                }
+                let m: i64 = mix(sum, got);
+                bad = bad + (m - m);
+            }
+            if j >= w {
+                if __mind_load_i64(out + r * step + j * 8) != 123456789 + j {
+                    bad = bad + 1;
+                }
+            }
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    if __mind_load_i64(d + 72) != trip {
+        bad = bad + 1;
+    }
+    if tk > 0 {
+        if trip != 0 - 1 {
+            bad = bad + 1;
+        }
+    }
+    if tk == 0 {
+        if trip != 0 {
+            bad = bad + 1;
+        }
+    }
+    let mt: i64 = mix(sum, __mind_load_i64(d + 72));
+    bad + (mt - mt)
+}
+
+fn main() -> i64 {
+    let sum: i64 = __mind_alloc(8);
+    __mind_store_i64(sum, 0);
+    let mut bad: i64 = 0;
+    let mut calls: i64 = 0;
+    let mut lanes: i64 = 0;
+    let mut wi: i64 = 0;
+    while wi < 2 {
+        let w: i64 = 32 + wi * 32;
+        let mut ri: i64 = 0;
+        while ri < 3 {
+            let mut rows: i64 = 2;
+            if ri == 1 {
+                rows = 3;
+            }
+            if ri == 2 {
+                rows = 6;
+            }
+            let mut pi: i64 = 0;
+            while pi < 2 {
+                let mut pad: i64 = 8;
+                if pi == 1 {
+                    pad = 320;
+                }
+                let mut tk: i64 = 0;
+                while tk < 6 {
+                    let mut ip: i64 = 0;
+                    while ip < 2 {
+                        bad = bad + run_case(sum, w, rows, pad, tk, ip, 1000 + calls * 7);
+                        calls = calls + 1;
+                        lanes = lanes + rows * w;
+                        ip = ip + 1;
+                    }
+                    tk = tk + 1;
+                }
+                pi = pi + 1;
+            }
+            ri = ri + 1;
+        }
+        wi = wi + 1;
+    }
+    let p: i64 = __mind_alloc(24);
+    __mind_store_i64(p, calls);
+    __mind_store_i64(p + 8, lanes);
+    __mind_store_i64(p + 16, __mind_load_i64(sum));
+    __mind_write(1, p, 24, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

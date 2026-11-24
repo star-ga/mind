@@ -1,0 +1,88 @@
+// 8760 calls, 64 rows, 10 add terms and 10 sub terms. One checksum.
+
+fn pf_fill(dst: i64, words: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        __mind_store_i64(dst + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn pf_bank(bank: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 20 {
+        pf_block(bank, j);
+        j = j + 1;
+    }
+    0
+}
+
+fn pf_block(bank: i64, j: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(bank + j * 256 + i * 8, (j + 3) * 17 + i);
+        i = i + 1;
+    }
+    0
+}
+
+fn pf_off(off: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 20 {
+        __mind_store_i64(off + j * 8, j * 256);
+        j = j + 1;
+    }
+    0
+}
+
+fn pf_starts(starts: i64) -> i64 {
+    let mut r: i64 = 0;
+    while r < 64 {
+        let b: i64 = starts + r * 72;
+        __mind_store_i64(b, 0);
+        __mind_store_i64(b + 8, 10);
+        __mind_store_i64(b + 16, 20);
+        r = r + 1;
+    }
+    0
+}
+
+fn pf_sum(buf: i64, words: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < words {
+        s = s * 31 + __mind_load_i64(buf + i * 8);
+        i = i + 1;
+    }
+    s
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(5120);
+    let off: i64 = __mind_alloc(160);
+    let starts: i64 = __mind_alloc(4608);
+    let out: i64 = __mind_alloc(36864);
+    pf_bank(bank);
+    pf_off(off);
+    pf_starts(starts);
+    pf_fill(out, 4608, 1);
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 576);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 72);
+    __mind_store_i64(d + 48, 64);
+    __mind_store_i64(d + 56, 1);
+    let mut n: i64 = 0;
+    while n < 8760 {
+        __mind_group_accrows_i64(d);
+        n = n + 1;
+    }
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, pf_sum(out, 4608));
+    __mind_write(1, w, 8, 0 - 1);
+    0
+}

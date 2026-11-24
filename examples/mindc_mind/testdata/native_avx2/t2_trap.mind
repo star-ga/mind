@@ -1,0 +1,55 @@
+// Bit 3 or bit 4 with a reserved bit (bit 1 or bits 6..31). Bit 4 traps only
+// in the bit 3 step. The call dies by SIGILL before any store. Argv is the decimal desc[7]. Stdout is the sentinel
+// written before the call. A return would append eight 1 bytes.
+
+fn tt_num(p: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut n: i64 = 0;
+    let mut b: i64 = __mind_load_i8(p + i);
+    while b != 0 {
+        n = n * 10 + (b - 48);
+        i = i + 1;
+        b = __mind_load_i8(p + i);
+    }
+    n
+}
+
+fn tt_fill(buf: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(buf + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn main(argc: i64, argv: i64) -> i64 {
+    let mut mode: i64 = 10;
+    if argc == 2 {
+        mode = tt_num(__mind_argv(1));
+    }
+    let out: i64 = __mind_alloc(256);
+    let bank: i64 = __mind_alloc(256);
+    let off: i64 = __mind_alloc(16);
+    let starts: i64 = __mind_alloc(24);
+    tt_fill(out, 32, 0 - 1);
+    __mind_store_i64(off, 0);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 1);
+    __mind_store_i64(starts + 16, 1);
+    __mind_store_i64(bank, 4);
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 256);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 1);
+    __mind_store_i64(d + 56, mode);
+    __mind_write(1, out, 256, 0 - 1);
+    let r: i64 = __mind_group_accrows_i64(d);
+    __mind_store_i64(out, 1);
+    __mind_write(1, out, 8, 0 - 1);
+    r
+}

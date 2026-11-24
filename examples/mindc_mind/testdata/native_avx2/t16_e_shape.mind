@@ -1,0 +1,69 @@
+// Bits 3+4 shape. Two add terms and two sub terms, u16 lists, i64 walk and i32
+// walk. The pair body is the objdump count (20 instructions, 0 frame operands).
+
+fn ts_i64(bank: i64, j: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(bank + j * 256 + i * 8, j * 10 + i + 1);
+        i = i + 1;
+    }
+    0
+}
+
+fn ts_i32(bank: i64, j: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i32(bank + j * 256 + i * 4, j + i);
+        i = i + 1;
+    }
+    0
+}
+
+fn ts_offs(off: i64, mul: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 4 {
+        __mind_store_i16(off + j * 2, j * mul);
+        j = j + 1;
+    }
+    0
+}
+
+fn ts_run(bank: i64, off: i64, starts: i64, out: i64, flags: i64, wide: i64, mul: i64) -> i64 {
+    if wide == 1 {
+        ts_i32(bank, 0);
+        ts_i32(bank, 1);
+        ts_i32(bank, 2);
+        ts_i32(bank, 3)
+    }
+    if wide == 0 {
+        ts_i64(bank, 0);
+        ts_i64(bank, 1);
+        ts_i64(bank, 2);
+        ts_i64(bank, 3)
+    }
+    ts_offs(off, mul);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 2);
+    __mind_store_i64(starts + 16, 4);
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 1);
+    __mind_store_i64(d + 56, flags);
+    __mind_group_accrows_i64(d)
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(1024);
+    let b32: i64 = __mind_alloc(1024);
+    let off: i64 = __mind_alloc(64);
+    let starts: i64 = __mind_alloc(24);
+    let out: i64 = __mind_alloc(512);
+    let a: i64 = ts_run(bank, off, starts, out, 24, 0, 32);
+    let b: i64 = ts_run(b32, off, starts, out, 28, 1, 64);
+    a + b
+}

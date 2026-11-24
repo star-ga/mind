@@ -11,6 +11,16 @@
 // when out overlaps bank or off.
 // Registers: r12 out, rbx bank, rdx off (then off + pos*8), r9 pos, r14 neg,
 // r11 init, rsi j, rcx i, r8 the AVX2 flag.
+// Caller contract: K1 = 4611686018427387904 (1 << 62) skips the CPUID probe
+// and forces the AVX2 path (r8 = 1). Skip iff (init >> 62) == 1, so
+// 2^62 <= init < 2^63. After that arm an init above 3 (bits 2..61, bit 63,
+// negatives included) traps with ud2 before any store.
+// The skip arm clears bit 62, then sets r8 = 1. Keep out iff the value then
+// equals 1 (cmp r11, 1). 0 zero+probe; 1 keep+probe; 2 zero+probe;
+// 3 zero+probe; K1 zero, no probe; K1 + 1 keep, no probe. Bit 1 is not a flag.
+// Set K1 only in a program that also holds a guarded row (any ymm row or kind
+// 89). Without one, a CPU with no AVX2 dies on the first VEX op (SIGILL,
+// status 132) and prints no isa.avx2_missing line.
 
 import std.string;
 import nb_group_sum_enc;
@@ -162,6 +172,27 @@ pub fn nbg_acc_scalar(code: String) -> String {
     nbg_u32(nbg_b3(nbg_i_tail(c, h2, d2), 72, 129, 196), 256)
 }
 
+// mov rax, r11 ; shr rax, 62 ; cmp rax, 1 ; je skip. Skip: btr r11, 62 ; mov r8d, 1.
+// Else nbg_cpuid_r8 sets r8. rax is dead here; cpuid writes rax.
+pub fn nbg_probe_k1(code: String) -> String {
+    let skip: i64 = nbg_cell();
+    let done: i64 = nbg_cell();
+    let mut c: String = nbg_b3(code, 76, 137, 216);
+    c = nbg_b4(c, 72, 193, 232, 62);
+    c = nbg_jcc(nbg_b4(c, 72, 131, 248, 1), 132, skip);
+    c = nbg_jmp(nbg_cpuid_r8(c), done);
+    c = nbg_b5(nbg_here(c, skip), 73, 15, 186, 243, 62);
+    c = nbg_u32(nbg_b2(c, 65, 184), 1);
+    nbg_here(c, done)
+}
+
+// cmp r11, 3 ; jbe ok ; ud2. After the K1 arm every init above 3 (bits 2..61, bit 63) traps.
+pub fn nbg_trap_init(code: String) -> String {
+    let ok: i64 = nbg_cell();
+    let c: String = nbg_jcc(nbg_b4(code, 73, 131, 251, 3), 134, ok);
+    nbg_here(nbg_b2(c, 15, 11), ok)
+}
+
 pub fn nbg_emit_acc(code: String, s_out: i64, s_bank: i64, s_off: i64, s_pos: i64, s_neg: i64, s_init: i64, id: i64) -> String {
     let scalar: i64 = nbg_cell();
     let load: i64 = nbg_cell();
@@ -169,8 +200,8 @@ pub fn nbg_emit_acc(code: String, s_out: i64, s_bank: i64, s_off: i64, s_pos: i6
     let epi: i64 = nbg_cell();
     let mut c: String = nbg_slot(nbg_slot(nbg_prologue(code), s_out, 12), s_bank, 15);
     c = nbg_slot(nbg_slot(nbg_slot(c, s_pos, 9), s_neg, 14), s_init, 11);
-    // rdx is loaded after the probe: cpuid writes edx.
-    c = nbg_slot(nbg_rr(nbg_cpuid_r8(c), 137, 3, 15), s_off, 2);
+    // rdx is loaded after the probe: cpuid writes edx. K1 skips the probe.
+    c = nbg_slot(nbg_rr(nbg_trap_init(nbg_probe_k1(c)), 137, 3, 15), s_off, 2);
     c = nbg_jcc(nbg_b4(c, 73, 131, 248, 1), 133, scalar);
     c = nbg_jcc(nbg_b4(c, 73, 131, 251, 1), 132, load);
     let mut i: i64 = 0;

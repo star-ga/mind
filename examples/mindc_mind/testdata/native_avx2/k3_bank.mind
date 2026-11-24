@@ -1,0 +1,245 @@
+// Kind 87 with group bit 5. Stdout is the bad-store count. Exit 0 when every
+// stored i32 equals the low 32 bits of the i64 code. Pixels 5 hits the vector
+// step and the scalar tail. Group 4 is the second call.
+
+fn kb_a(p: i64) -> i64 {
+    if p == 0 {
+        return 549755813888;
+    }
+    if p == 1 {
+        return 3;
+    }
+    if p == 2 {
+        return 0 - 5;
+    }
+    if p == 3 {
+        return 9;
+    }
+    if p == 4 {
+        return 1;
+    }
+    0
+}
+
+fn kb_b(p: i64) -> i64 {
+    if p == 0 {
+        return 8;
+    }
+    if p == 1 {
+        return 1;
+    }
+    if p == 2 {
+        return 4;
+    }
+    if p == 3 {
+        return 0;
+    }
+    if p == 4 {
+        return 2;
+    }
+    0
+}
+
+fn kb_c(p: i64) -> i64 {
+    if p == 0 {
+        return 7;
+    }
+    if p == 1 {
+        return 0 - 2;
+    }
+    if p == 2 {
+        return 6;
+    }
+    if p == 3 {
+        return 1;
+    }
+    if p == 4 {
+        return 0;
+    }
+    0
+}
+
+fn kb_x(p: i64) -> i64 {
+    if p == 0 {
+        return 11;
+    }
+    if p == 1 {
+        return 0 - 4;
+    }
+    if p == 2 {
+        return 2;
+    }
+    if p == 3 {
+        return 8;
+    }
+    0
+}
+
+fn kb_z(k: i64, a: i64, b: i64, c: i64) -> i64 {
+    if k == 0 {
+        return c;
+    }
+    if k == 1 {
+        return b - c;
+    }
+    if k == 2 {
+        return b;
+    }
+    if k == 3 {
+        return b + c;
+    }
+    if k == 4 {
+        return a - b - c;
+    }
+    if k == 5 {
+        return a - b;
+    }
+    if k == 6 {
+        return a - b + c;
+    }
+    if k == 7 {
+        return a - c;
+    }
+    if k == 8 {
+        return a;
+    }
+    if k == 9 {
+        return a + c;
+    }
+    if k == 10 {
+        return a + b - c;
+    }
+    if k == 11 {
+        return a + b;
+    }
+    a + b + c
+}
+
+fn kb_low(tmp: i64, v: i64) -> i64 {
+    __mind_store_i64(tmp, v);
+    __mind_load_i32(tmp)
+}
+
+fn kb_neq(a: i64, b: i64) -> i64 {
+    if a != b {
+        return 1;
+    }
+    0
+}
+
+fn kb_plane(n: i64, which: i64) -> i64 {
+    let dst: i64 = __mind_alloc(n * 8 + 8);
+    let mut p: i64 = 0;
+    while p < n {
+        kb_store_p(dst, p, which);
+        p = p + 1;
+    }
+    dst
+}
+
+fn kb_store_p(dst: i64, p: i64, which: i64) -> i64 {
+    let mut v: i64 = kb_x(p);
+    if which == 0 {
+        v = kb_a(p);
+    }
+    if which == 1 {
+        v = kb_b(p);
+    }
+    if which == 2 {
+        v = kb_c(p);
+    }
+    __mind_store_i64(dst + p * 8, v);
+    0
+}
+
+fn kb_ptrs(n: i64) -> i64 {
+    let ptrs: i64 = __mind_alloc(32);
+    __mind_store_i64(ptrs, kb_plane(n, 0));
+    __mind_store_i64(ptrs + 8, kb_plane(n, 1));
+    __mind_store_i64(ptrs + 16, kb_plane(n, 2));
+    __mind_store_i64(ptrs + 24, kb_plane(n, 3));
+    ptrs
+}
+
+fn kb_bad3(bank: i64, plane: i64, n: i64, tmp: i64) -> i64 {
+    let mut p: i64 = 0;
+    let mut bad: i64 = 0;
+    while p < n {
+        bad = bad + kb_bad3_p(bank, plane, p, tmp);
+        p = p + 1;
+    }
+    bad
+}
+
+fn kb_bad3_p(bank: i64, plane: i64, p: i64, tmp: i64) -> i64 {
+    let a: i64 = kb_a(p);
+    let b: i64 = kb_b(p);
+    let c: i64 = kb_c(p);
+    let mut k: i64 = 0;
+    let mut bad: i64 = 0;
+    while k < 13 {
+        let got: i64 = __mind_load_i32(bank + k * plane + p * 4);
+        bad = bad + kb_neq(got, kb_low(tmp, kb_z(k, a, b, c)));
+        k = k + 1;
+    }
+    bad
+}
+
+fn kb_bad4(bank: i64, plane: i64, n: i64, tmp: i64) -> i64 {
+    let mut p: i64 = 0;
+    let mut bad: i64 = 0;
+    while p < n {
+        bad = bad + kb_bad4_p(bank, plane, p, tmp);
+        p = p + 1;
+    }
+    bad
+}
+
+fn kb_bad4_p(bank: i64, plane: i64, p: i64, tmp: i64) -> i64 {
+    let a: i64 = kb_a(p);
+    let b: i64 = kb_b(p);
+    let c: i64 = kb_c(p);
+    let x: i64 = kb_x(p);
+    let mut k: i64 = 0;
+    let mut bad: i64 = 0;
+    while k < 13 {
+        bad = bad + kb_bad4_k(bank, plane, p, tmp, a, b, c, x, k);
+        k = k + 1;
+    }
+    let g26: i64 = __mind_load_i32(bank + 26 * plane + p * 4);
+    bad + kb_neq(g26, kb_low(tmp, x))
+}
+
+fn kb_bad4_k(bank: i64, plane: i64, p: i64, tmp: i64, a: i64, b: i64, c: i64, x: i64, k: i64) -> i64 {
+    let z: i64 = kb_z(k, a, b, c);
+    let g0: i64 = __mind_load_i32(bank + k * plane + p * 4);
+    let g1: i64 = __mind_load_i32(bank + (25 - k) * plane + p * 4);
+    let g2: i64 = __mind_load_i32(bank + (27 + k) * plane + p * 4);
+    kb_neq(g0, kb_low(tmp, z)) + kb_neq(g1, kb_low(tmp, x - z)) + kb_neq(g2, kb_low(tmp, x + z))
+}
+
+fn main() -> i64 {
+    let tmp: i64 = __mind_alloc(8);
+    let b3: i64 = __mind_alloc(1024);
+    let b4: i64 = __mind_alloc(2048);
+    let mut i: i64 = 0;
+    while i < 128 {
+        __mind_store_i64(b3 + i * 8, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 256 {
+        __mind_store_i64(b4 + i * 8, 0);
+        i = i + 1;
+    }
+    let r3: i64 = __mind_group_bank_i64(kb_ptrs(5), b3, 40, 5, 35);
+    let r4: i64 = __mind_group_bank_i64(kb_ptrs(4), b4, 32, 4, 36);
+    let bad: i64 = kb_bad3(b3, 40, 5, tmp) + kb_bad4(b4, 32, 4, tmp);
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, bad);
+    __mind_write(1, w, 8, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    r3 + r4
+}

@@ -1,0 +1,41 @@
+// Kind 89 keeps prior lanes only when init == 1.
+// init 3 is zero start. This row zeros the lanes, then adds term 0.
+// Kind 88 uses the same keep rule: init 3 is zero start.
+
+fn st(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v);
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        st(bank, i, 100 + i);
+        i = i + 1;
+    }
+    let off: i64 = __mind_alloc(8);
+    st(off, 0, 0);
+    let starts: i64 = __mind_alloc(72);
+    st(starts, 0, 0);
+    st(starts, 1, 1);
+    st(starts, 2, 1);
+    let out: i64 = __mind_alloc(256);
+    i = 0;
+    while i < 32 {
+        st(out, i, 7);
+        i = i + 1;
+    }
+    let d: i64 = __mind_alloc(64);
+    st(d, 0, out);
+    st(d, 1, 576);
+    st(d, 2, bank);
+    st(d, 3, off);
+    st(d, 4, starts);
+    st(d, 5, 72);
+    st(d, 6, 1);
+    st(d, 7, 3);
+    let r: i64 = __mind_group_accrows_i64(d);
+    __mind_write(1, out, 256, 0 - 1);
+    r
+}

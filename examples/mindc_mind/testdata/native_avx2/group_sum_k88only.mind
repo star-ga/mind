@@ -1,0 +1,37 @@
+// Probe-skip, kind 88 only. K1 = 4611686018427387904 (zero start, no probe) and
+// K1 + 1 (keep, no probe), the same two calls as group_sum_noprobe. No kind 87
+// call and no guarded row, so on a CPU with no AVX2 the skipped probe dies at the
+// first VEX op (SIGILL). Stdout = the first 512 bytes of group_sum_noprobe.hex.
+
+fn gs_block(dst: i64, base: i64, step: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(dst + i * 8, base + step * i);
+        i = i + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(1312);
+    gs_block(bank + 8, 10, 1);
+    gs_block(bank + 264, 5, 0);
+    gs_block(bank + 528, 3, 0);
+    gs_block(bank + 784, 4, 0);
+    gs_block(bank + 1048, 8, 0);
+    let off: i64 = __mind_alloc(40);
+    __mind_store_i64(off, 8);
+    __mind_store_i64(off + 8, 264);
+    __mind_store_i64(off + 16, 528);
+    __mind_store_i64(off + 24, 784);
+    __mind_store_i64(off + 32, 1048);
+    let out1: i64 = __mind_alloc(256);
+    gs_block(out1, 1000, 7);
+    let out2: i64 = __mind_alloc(256);
+    gs_block(out2, 0, 1);
+    let r1: i64 = __mind_group_acc32_i64(out1, bank, off, 2, 2, 4611686018427387904);
+    let r2: i64 = __mind_group_acc32_i64(out2, bank, off + 32, 1, 0, 4611686018427387905);
+    __mind_write(1, out1, 256, 0 - 1);
+    __mind_write(1, out2, 256, 0 - 1);
+    r1 + r2
+}

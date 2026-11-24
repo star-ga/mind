@@ -515,12 +515,19 @@ def long_token_program(kind: str, n: int) -> tuple:
     """Census X1, one giant TOKEN: a string literal, identifier, digit run or
     comment line of `n` bytes. The lexer walked each one stack frame per byte
     (480 B per byte for a string literal: SIGSEGV at ~839 KB in the bounded
-    profile) and the token-count stack budget cannot see a single token."""
+    profile) and the token-count stack budget cannot see a single token. The
+    string literal is the argument of a String parameter, the place the native
+    lane admits a literal (in an i64 slot it is lane.source.string); the value
+    is the decoded length `n`, so a cut or a lost byte gives a wrong exit code.
+    `s.len` reads the std String layout, so an unseeded image refuses it:
+    "str_unused" passes the same token to a parameter that it does not read."""
     head = "fn f(a: i64) -> i64 {\n"
     tail = "fn main() -> i64 { f(1) % 251 }\n"
     if kind == "str":
-        body = f'    let s: i64 = __mind_write(1, "{"A" * n}", 0, 0 - 1);\n    s + 1\n}}\n'
-        return head + body + tail, (1, b"")
+        src = f'fn f(s: String) -> i64 {{\n    s.len\n}}\nfn main() -> i64 {{ f("{"A" * n}") % 251 }}\n'
+        return src, (n % 251, b"")
+    if kind == "str_unused":
+        return f'fn f(s: String) -> i64 {{\n    7\n}}\nfn main() -> i64 {{ f("{"A" * n}") }}\n', (7, b"")
     if kind == "ident":
         name = "x" * n
         return head + f"    let {name}: i64 = a + 1;\n    {name}\n}}\n" + tail, (2, b"")
@@ -645,7 +652,7 @@ def capacity_cases():
         ("8100 small functions (SSA tables, ~105 KB of arena each)", many_fn_program(8100, "inc"), True, True),
         ("10000 functions x 100 lets (27 MB)", many_fn_program(10000, "lets100"), True, True),
         ("1 MB string literal", long_token_program("str", 1000000), False, True),
-        ("1 MB string literal, unseeded image", long_token_program("str", 1000000), False, False),
+        ("1 MB string literal, unseeded image", long_token_program("str_unused", 1000000), False, False),
         ("8 MB string literal", long_token_program("str", 8000000), True, True),
         ("4 MB identifier", long_token_program("ident", 4000000), True, True),
         ("4 MB digit run", long_token_program("digits", 4000000), True, True),
@@ -665,7 +672,7 @@ def default_capacity_cases():
     return [
         ("10000 functions x 100 lets (27 MB): the lexer ran the arena out (SIGILL)",
          many_fn_program(10000, "lets100"), True, True),
-        ("1 MB string literal", long_token_program("str", 1000000), True, True),
+        ("1 MB string literal", long_token_program("str", 1000000), False, True),
         ("balanced 65536-leaf `+` tree in one expression", balanced_sum_program(16), True, True),
     ] + recovery_capacity_cases()
 

@@ -1,0 +1,300 @@
+// Kind 89 multi-row value check. Exit 0 when every mode matches the scalar twin
+// over three rows. Stdout is the bad-word count.
+
+fn t_neq(a: i64, b: i64) -> i64 {
+    if a != b {
+        return 1;
+    }
+    0
+}
+
+fn t_sext(u: i64) -> i64 {
+    if u >= 2147483648 {
+        return u - 4294967296;
+    }
+    u
+}
+
+fn t_ld32(addr: i64) -> i64 {
+    t_sext(__mind_load_i32(addr))
+}
+
+fn t_add32(s: i64, v: i64) -> i64 {
+    let u: i64 = (s + v) & 4294967295;
+    t_sext(u)
+}
+
+fn t_fill(buf: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(buf + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn t_bad(got: i64, exp: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < n {
+        bad = bad + t_neq(__mind_load_i64(got + i * 8), __mind_load_i64(exp + i * 8));
+        i = i + 1;
+    }
+    bad
+}
+
+fn t_mode(d: i64, flags: i64, bound: i64) -> i64 {
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i32(d + 60, bound);
+    0
+}
+
+fn t_put(starts: i64, j0: i64, j1: i64, j2: i64) -> i64 {
+    __mind_store_i64(starts, j0);
+    __mind_store_i64(starts + 8, j1);
+    __mind_store_i64(starts + 16, j2);
+    0
+}
+
+fn t_sum64(bank: i64, off: i64, j0: i64, j1: i64, lane: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = j0;
+    while j < j1 {
+        s = s + __mind_load_i64(bank + __mind_load_i64(off + j * 8) + lane * 8);
+        j = j + 1;
+    }
+    s
+}
+
+fn t_row64(bank: i64, off: i64, j0: i64, j1: i64, j2: i64, exp: i64, base: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 32 {
+        let s: i64 = t_sum64(bank, off, j0, j1, lane) - t_sum64(bank, off, j1, j2, lane) + base;
+        __mind_store_i64(exp + lane * 8, s);
+        lane = lane + 1;
+    }
+    0
+}
+
+fn t_sum32(bank: i64, off: i64, j0: i64, j1: i64, lane: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = j0;
+    while j < j1 {
+        s = t_add32(s, t_ld32(bank + __mind_load_i64(off + j * 8) + lane * 4));
+        j = j + 1;
+    }
+    s
+}
+
+fn t_row32(bank: i64, off: i64, j0: i64, j1: i64, j2: i64, exp: i64, base: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        let s: i64 = t_add32(t_sum32(bank, off, j0, j1, lane), 0 - t_sum32(bank, off, j1, j2, lane));
+        __mind_store_i64(exp + lane * 8, s + base);
+        lane = lane + 1;
+    }
+    0
+}
+
+fn t_code64(j: i64, lane: i64) -> i64 {
+    if j == 4 {
+        if lane == 0 {
+            return (0 - 9223372036854775807) - 1;
+        }
+        if lane == 1 {
+            return 9223372036854775807;
+        }
+        return 1;
+    }
+    (j + 1) * 10 + lane
+}
+
+fn t_fill64(bank: i64, off: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 8 {
+        __mind_store_i64(off + j * 8, j * 256);
+        t_fill64_j(bank, j);
+        j = j + 1;
+    }
+    0
+}
+
+fn t_fill64_j(bank: i64, j: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 32 {
+        __mind_store_i64(bank + j * 256 + lane * 8, t_code64(j, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn t_code32(j: i64, lane: i64) -> i64 {
+    if j == 4 {
+        return 2147483647;
+    }
+    if j == 5 {
+        return 2147483647;
+    }
+    if j == 6 {
+        if lane == 0 {
+            return 0 - 2147483648;
+        }
+        return 0;
+    }
+    if j == 7 {
+        if lane == 0 {
+            return 0 - 2147483647;
+        }
+        return 1;
+    }
+    (j + 1) + lane
+}
+
+fn t_fill32(bank: i64, off: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 8 {
+        __mind_store_i64(off + j * 8, j * 256);
+        t_fill32_j(bank, j);
+        j = j + 1;
+    }
+    0
+}
+
+fn t_fill32_j(bank: i64, j: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        __mind_store_i32(bank + j * 256 + lane * 4, t_code32(j, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn t_desc(out: i64, bank: i64, off8: i64, off16: i64, starts: i64, rows: i64) -> i64 {
+    let d: i64 = __mind_alloc(80);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off8);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, 0);
+    __mind_store_i64(d + 64, off8);
+    __mind_store_i64(d + 72, off16);
+    d
+}
+
+fn t_lanes(off8: i64, off16: i64, n: i64, div: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < n {
+        let v: i64 = __mind_load_i64(off8 + j * 8) / div;
+        __mind_store_i16(off16 + j * 2, v);
+        j = j + 1;
+    }
+    0
+}
+
+fn t_sumw(bank: i64, off: i64, j0: i64, j1: i64, lane: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = j0;
+    while j < j1 {
+        s = s + t_ld32(bank + __mind_load_i64(off + j * 8) + lane * 4);
+        j = j + 1;
+    }
+    s
+}
+
+fn t_roww(bank: i64, off: i64, j0: i64, j1: i64, j2: i64, exp: i64, base: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        let s: i64 = t_sumw(bank, off, j0, j1, lane) - t_sumw(bank, off, j1, j2, lane) + base;
+        __mind_store_i64(exp + lane * 8, s);
+        lane = lane + 1;
+    }
+    0
+}
+
+// Kind 89 term path, three rows in one call. The out step (512 B) and the starts
+// step (24 B) must advance by row on every term path: bits 3+4, bit 3, bit 4 and
+// bit clear, in the i64 and the i32 walk, with and without add-to-out. Row 0 adds
+// j 0..3, row 1 adds j 1 and subtracts j 2..3, row 2 adds j 4..5. Stdout is the
+// bad-word count over 192 words per call, so a row that is skipped, repeated or
+// stored at the wrong step shows.
+
+fn t_mexp(bank: i64, off8: i64, is32: i64, wide: i64, exp: i64, base: i64) -> i64 {
+    if wide == 1 {
+        t_roww(bank, off8, 0, 3, 3, exp, base);
+        t_roww(bank, off8, 1, 2, 4, exp + 512, base);
+        t_roww(bank, off8, 4, 6, 6, exp + 1024, base);
+        return 0;
+    }
+    if is32 == 1 {
+        t_row32(bank, off8, 0, 3, 3, exp, base);
+        t_row32(bank, off8, 1, 2, 4, exp + 512, base);
+        t_row32(bank, off8, 4, 6, 6, exp + 1024, base);
+        return 0;
+    }
+    t_row64(bank, off8, 0, 3, 3, exp, base);
+    t_row64(bank, off8, 1, 2, 4, exp + 512, base);
+    t_row64(bank, off8, 4, 6, 6, exp + 1024, base);
+    0
+}
+
+fn t_mrun(d: i64, buf: i64, flags: i64, bound: i64, base: i64) -> i64 {
+    t_fill(buf, 192, base);
+    __mind_store_i64(d, buf);
+    t_mode(d, flags, bound);
+    let bit4: i64 = flags & 16;
+    if bit4 != 0 {
+        __mind_store_i64(d + 24, __mind_load_i64(d + 72));
+        return __mind_group_accrows_i64(d);
+    }
+    __mind_store_i64(d + 24, __mind_load_i64(d + 64));
+    __mind_group_accrows_i64(d)
+}
+
+fn t_mone(d: i64, exp: i64, flags: i64, bound: i64, base: i64) -> i64 {
+    let got: i64 = __mind_alloc(1536);
+    t_mrun(d, got, flags, bound, base);
+    t_bad(got, exp, 192)
+}
+
+fn t_multi(d: i64, bank: i64, off8: i64, is32: i64, lo: i64, bound: i64, base: i64) -> i64 {
+    let starts: i64 = __mind_alloc(72);
+    let exp: i64 = __mind_alloc(1536);
+    t_put(starts, 0, 3, 3);
+    t_put(starts + 24, 1, 2, 4);
+    t_put(starts + 48, 4, 6, 6);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 48, 3);
+    t_fill(exp, 192, base);
+    let wide: i64 = bound / 2147483648;
+    t_mexp(bank, off8, is32, wide, exp, base);
+    let bad: i64 = t_mone(d, exp, lo + 24, bound, base) + t_mone(d, exp, lo + 16, bound, base) + t_mone(d, exp, lo + 8, bound, base) + t_mone(d, exp, lo, bound, base);
+    __mind_store_i64(d + 48, 1);
+    bad
+}
+
+fn main() -> i64 {
+    let b64: i64 = __mind_alloc(2048);
+    let b32: i64 = __mind_alloc(2048);
+    let off8: i64 = __mind_alloc(64);
+    let off16: i64 = __mind_alloc(16);
+    let starts: i64 = __mind_alloc(24);
+    let out: i64 = __mind_alloc(512);
+    t_fill64(b64, off8);
+    t_lanes(off8, off16, 8, 8);
+    let d: i64 = t_desc(out, b64, off8, off16, starts, 1);
+    let mut bad: i64 = t_multi(d, b64, off8, 0, 0, 0, 0) + t_multi(d, b64, off8, 0, 1, 0, 5);
+    t_fill32(b32, off8);
+    t_lanes(off8, off16, 8, 4);
+    __mind_store_i64(d + 16, b32);
+    bad = bad + t_multi(d, b32, off8, 1, 4, 0, 0) + t_multi(d, b32, off8, 1, 5, 0, 7) + t_multi(d, b32, off8, 1, 4, 2147483648, 0) + t_multi(d, b32, off8, 1, 5, 2147483648, 7);
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, bad);
+    __mind_write(1, w, 8, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

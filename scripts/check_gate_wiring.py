@@ -215,10 +215,10 @@ GATED_EVENTS = ("push", "pull_request")
 # The controls run inside the gate on every run, not in a file of their own.
 # 329 -> 331 counts exactly two tracked files split out of
 # examples/mindc_mind/_selfhost_sources.py. The tree holds these counts:
-# _selfhost_identity.py is 797 lines (the identity tool, its partitions and self-tests, and the compiler-only mode dispatch).
+# _selfhost_identity.py is 800 lines (the identity tool, its partitions and self-tests, and the compiler-only mode dispatch).
 # _selfhost_string_rows.py is 721 lines (the string-rows runner).
-# _selfhost_sources.py is 687 lines (capture, the compile helpers and the one stdin start helper; 327 at e52217f4).
-# native_lane_value_shapes_smoke.py is 794 lines (800 at e52217f4).
+# _selfhost_sources.py is 714 lines (capture, the compile helpers, the one stdin start helper and the core limit of an image run; 327 at e52217f4).
+# native_lane_value_shapes_smoke.py is 799 lines (800 at e52217f4).
 # The bodies run only through that smoke.
 # 331 -> 332 adds examples/mindc_mind/_selfhost_alloc_rows.py, the rows of the allocator-class
 # smoke (its generated default-profile programs and its planted changes), moved unchanged out of the
@@ -230,8 +230,10 @@ GATED_EVENTS = ("push", "pull_request")
 # 333 -> 334 adds tests/_gate_floor_cases.py, the flip-gate leg case and the declared-VERDICTS case of the
 # count contract, moved unchanged out of tests/gate_assert_count_contract_test.py (816 -> 747 lines; the
 # 800-line ceiling): the contract test runs both with its own check and still reports 94 verdicts.
-# history-lines: examples/mindc_mind/_selfhost_identity.py=797 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=687 examples/mindc_mind/native_lane_value_shapes_smoke.py=794
-HARNESS_CEILING = 334  # Exact reviewed integration inventory; no spare allowance.
+# 334 -> 335 adds examples/formal_verification/run_all.sh, the build-and-run driver of the seven bounded
+# example programs in that directory (manual, not CI-wired): every check is in the MIND programs.
+# history-lines: examples/mindc_mind/_selfhost_identity.py=800 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=714 examples/mindc_mind/native_lane_value_shapes_smoke.py=799
+HARNESS_CEILING = 335  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

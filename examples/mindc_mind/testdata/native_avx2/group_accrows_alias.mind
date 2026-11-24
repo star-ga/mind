@@ -1,0 +1,66 @@
+// Kind 89 with out inside the bank. Same bytes as the scalar twin.
+
+fn al_fill(dst: i64, words: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        __mind_store_i64(dst + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn al_ramp(dst: i64, n: i64, base: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(dst + i * 8, base + i);
+        i = i + 1;
+    }
+    0
+}
+
+fn al_prep(bank: i64, off: i64, starts: i64) -> i64 {
+    al_fill(bank, 512, 7);
+    al_ramp(bank + 1024, 32, 1000);
+    al_ramp(bank + 2048, 32, 5);
+    __mind_store_i64(off, 1024);
+    __mind_store_i64(off + 8, 0);
+    __mind_store_i64(off + 16, 2048);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 1);
+    __mind_store_i64(starts + 16, 1);
+    __mind_store_i64(starts + 72, 1);
+    __mind_store_i64(starts + 80, 2);
+    __mind_store_i64(starts + 88, 2);
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(4096);
+    let off: i64 = __mind_alloc(64);
+    let starts: i64 = __mind_alloc(160);
+    al_prep(bank, off, starts);
+    let d0: i64 = __mind_alloc(64);
+    __mind_store_i64(d0, bank);
+    __mind_store_i64(d0 + 8, 256);
+    __mind_store_i64(d0 + 16, bank);
+    __mind_store_i64(d0 + 24, off);
+    __mind_store_i64(d0 + 32, starts);
+    __mind_store_i64(d0 + 40, 72);
+    __mind_store_i64(d0 + 48, 2);
+    __mind_store_i64(d0 + 56, 0);
+    __mind_group_accrows_i64(d0);
+    let out2: i64 = bank + 2048;
+    let d1: i64 = __mind_alloc(64);
+    __mind_store_i64(d1, out2);
+    __mind_store_i64(d1 + 8, 256);
+    __mind_store_i64(d1 + 16, bank);
+    __mind_store_i64(d1 + 24, off + 16);
+    __mind_store_i64(d1 + 32, starts);
+    __mind_store_i64(d1 + 40, 72);
+    __mind_store_i64(d1 + 48, 1);
+    __mind_store_i64(d1 + 56, 1);
+    __mind_group_accrows_i64(d1);
+    __mind_write(1, bank, 512, 0 - 1);
+    __mind_write(1, out2, 256, 0 - 1);
+    0
+}

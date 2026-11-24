@@ -1,0 +1,292 @@
+// Reserved-bit trap sweep for kinds 87, 88 and 89. One fork per case; a trapped case dies
+// by SIGILL (wait status & 127 == 4) before any store. Stdout is five i64 masks, all 0 when
+// the contract holds: [0] kind 89 mode bits 1, 6 and 8..31 not trapped (bit 7: the fused
+// tail, a control that trapped), [1] kind 89 desc[7] bits 32..63 (bit 2 clear) not trapped,
+// [2] kind 87 group bits 6..63 not trapped (bit 6 alone; bit 6 with bit 5 is N32: control 200),
+// [3] kind 88 init bits 2..61 and 63 not trapped, [4] control calls (valid values) that trapped.
+// Bit b of a mask is bit b of the value. Kind 89 bit 1 is flagged in [0] bit 1 for the cases
+// 6, 10 and 18 (bit 1 with bit 2, 3 or 4). Bit 1 alone (init 2), bit 5 and bit 7 are valid.
+// The desc has 15 words so the bit-7 case reads a real record, src and dst.
+
+fn ts_bit(b: i64) -> i64 {
+    1 << b
+}
+
+fn ts_cx() -> i64 {
+    let cx: i64 = __mind_alloc(64);
+    let ptrs: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 4 {
+        let p: i64 = __mind_alloc(128);
+        __mind_store_i64(p, 1);
+        __mind_store_i64(ptrs + i * 8, p);
+        i = i + 1;
+    }
+    let off: i64 = __mind_alloc(16);
+    __mind_store_i64(off, 0);
+    __mind_store_i64(off + 8, 0);
+    let starts: i64 = __mind_alloc(24);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 1);
+    __mind_store_i64(starts + 16, 1);
+    __mind_store_i64(cx, ptrs);
+    __mind_store_i64(cx + 8, __mind_alloc(8192));
+    __mind_store_i64(cx + 16, __mind_alloc(512));
+    __mind_store_i64(cx + 24, off);
+    __mind_store_i64(cx + 32, starts);
+    __mind_store_i64(cx + 40, __mind_alloc(120));
+    __mind_store_i64(cx + 48, __mind_alloc(48));
+    __mind_store_i64(cx + 56, __mind_alloc(512));
+    cx
+}
+
+fn ts_k89(cx: i64, v: i64) -> i64 {
+    let d: i64 = __mind_load_i64(cx + 40);
+    __mind_store_i64(d, __mind_load_i64(cx + 16));
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, __mind_load_i64(cx + 8));
+    __mind_store_i64(d + 24, __mind_load_i64(cx + 24));
+    __mind_store_i64(d + 32, __mind_load_i64(cx + 32));
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 1);
+    __mind_store_i64(d + 56, v);
+    __mind_store_i64(d + 64, __mind_load_i64(cx + 48));
+    __mind_store_i64(d + 80, 0);
+    __mind_store_i64(d + 88, __mind_load_i64(cx + 16));
+    __mind_store_i64(d + 96, 512);
+    __mind_store_i64(d + 104, __mind_load_i64(cx + 56));
+    __mind_store_i64(d + 112, 512);
+    __mind_group_accrows_i64(d)
+}
+
+fn ts_call(cx: i64, kind: i64, v: i64) -> i64 {
+    if kind == 87 {
+        return __mind_group_bank_i64(__mind_load_i64(cx), __mind_load_i64(cx + 8), 128, 8, v);
+    }
+    if kind == 88 {
+        return __mind_group_acc32_i64(__mind_load_i64(cx + 16), __mind_load_i64(cx + 8), __mind_load_i64(cx + 24), 1, 0, v);
+    }
+    ts_k89(cx, v)
+}
+
+// 100: this is the child (it returns up to main, which ends the process). 1: the case did not trap.
+fn ts_one(cx: i64, kind: i64, v: i64) -> i64 {
+    let pid: i64 = __mind_sys_fork();
+    if pid < 0 {
+        return 2;
+    }
+    if pid == 0 {
+        ts_call(cx, kind, v);
+        return 100;
+    }
+    let st: i64 = __mind_alloc(8);
+    __mind_store_i64(st, 255);
+    if __mind_sys_wait4(pid, st, 0, 0) != pid {
+        return 3;
+    }
+    if __mind_load_i64(st) % 128 == 4 {
+        return 0;
+    }
+    1
+}
+
+// Case i: 0..25 kind 89 bits 6..31 (case 1, bit 7, must run: a control); 26..28 bit 1 with
+// bit 2, 3, 4; 29..60 kind 89 bits 32..63;
+// 61..118 kind 87 bits 6..63; 119..178 kind 88 bits 2..61; 179 kind 88 bit 63; 180.. controls
+// (200: kind 87 N32, group 3 + 32 + 64).
+fn ts_kind(i: i64) -> i64 {
+    if i == 200 {
+        return 87;
+    }
+    if i < 61 {
+        return 89;
+    }
+    if i < 119 {
+        return 87;
+    }
+    if i < 180 {
+        return 88;
+    }
+    if i < 189 {
+        return 89;
+    }
+    if i < 194 {
+        return 87;
+    }
+    88
+}
+
+fn ts_ctl89(c: i64) -> i64 {
+    if c == 0 {
+        return 0;
+    }
+    if c == 1 {
+        return 1;
+    }
+    if c == 2 {
+        return 2;
+    }
+    if c == 3 {
+        return 3;
+    }
+    if c == 4 {
+        return 4;
+    }
+    if c == 5 {
+        return 8;
+    }
+    if c == 6 {
+        return 16;
+    }
+    if c == 7 {
+        return 20;
+    }
+    4 + ts_bit(32)
+}
+
+fn ts_ctl87(c: i64) -> i64 {
+    if c == 0 {
+        return 3;
+    }
+    if c == 1 {
+        return 4;
+    }
+    if c == 2 {
+        return 5;
+    }
+    if c == 3 {
+        return 19;
+    }
+    35
+}
+
+fn ts_ctl88(c: i64) -> i64 {
+    if c == 0 {
+        return 0;
+    }
+    if c == 1 {
+        return 1;
+    }
+    if c == 2 {
+        return 2;
+    }
+    if c == 3 {
+        return 3;
+    }
+    if c == 4 {
+        return ts_bit(62);
+    }
+    ts_bit(62) + 1
+}
+
+fn ts_val(i: i64) -> i64 {
+    if i == 200 {
+        return 3 + 32 + 64;
+    }
+    if i < 26 {
+        return ts_bit(6 + i);
+    }
+    if i == 26 {
+        return 6;
+    }
+    if i == 27 {
+        return 10;
+    }
+    if i == 28 {
+        return 18;
+    }
+    if i < 61 {
+        return ts_bit(32 + i - 29);
+    }
+    if i < 119 {
+        return 3 + ts_bit(6 + i - 61);
+    }
+    if i < 179 {
+        return ts_bit(2 + i - 119);
+    }
+    if i == 179 {
+        return ts_bit(63);
+    }
+    if i < 189 {
+        return ts_ctl89(i - 180);
+    }
+    if i < 194 {
+        return ts_ctl87(i - 189);
+    }
+    ts_ctl88(i - 194)
+}
+
+// The mask word of case i and the bit inside it.
+fn ts_word(i: i64) -> i64 {
+    if i < 29 {
+        return 0;
+    }
+    if i < 61 {
+        return 1;
+    }
+    if i < 119 {
+        return 2;
+    }
+    if i < 180 {
+        return 3;
+    }
+    4
+}
+
+fn ts_pos(i: i64) -> i64 {
+    if i < 26 {
+        return 6 + i;
+    }
+    if i < 29 {
+        return 1;
+    }
+    if i < 61 {
+        return 32 + i - 29;
+    }
+    if i < 119 {
+        return 6 + i - 61;
+    }
+    if i < 179 {
+        return 2 + i - 119;
+    }
+    if i == 179 {
+        return 63;
+    }
+    i - 180
+}
+
+// ts_one gives 0 for a trapped case and 1 for one that ran to the end. Reserved values must give 0,
+// controls (valid values) must give 1.
+fn ts_expect(i: i64) -> i64 {
+    if i == 1 {
+        return 1;
+    }
+    if i < 180 {
+        return 0;
+    }
+    1
+}
+
+fn main() -> i64 {
+    let cx: i64 = ts_cx();
+    let res: i64 = __mind_alloc(40);
+    let mut k: i64 = 0;
+    while k < 5 {
+        __mind_store_i64(res + k * 8, 0);
+        k = k + 1;
+    }
+    let mut i: i64 = 0;
+    while i < 201 {
+        let t: i64 = ts_one(cx, ts_kind(i), ts_val(i));
+        if t == 100 {
+            return 0;
+        }
+        if t != ts_expect(i) {
+            let at: i64 = res + ts_word(i) * 8;
+            __mind_store_i64(at, __mind_load_i64(at) + ts_bit(ts_pos(i)))
+        }
+        i = i + 1;
+    }
+    __mind_write(1, res, 40, 0 - 1);
+    0
+}

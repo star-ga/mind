@@ -1,0 +1,229 @@
+// i32-walk value check. Exit 0 when kind 89 matches the scalar twin and kind 89 with
+// the mode bit clear (i64-walk) on both 32-lane halves. Stdout is the bad-lane count.
+// Lane 4 holds 4 and -3 in two add terms and in one add and one sub term: the
+// low-half carry or borrow reaches lane 5 under vpaddq or vpsubq (the first and the last row).
+
+fn k3_sext(u: i64) -> i64 {
+    if u >= 2147483648 {
+        return u - 4294967296;
+    }
+    u
+}
+
+fn k3_ld32(addr: i64) -> i64 {
+    k3_sext(__mind_load_i32(addr))
+}
+
+fn k3_span(bank: i64, off: i64, j0: i64, j1: i64, j2: i64, lane: i64, step: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = j0;
+    while j < j1 {
+        let at: i64 = bank + __mind_load_i64(off + j * 8) + lane * step;
+        s = s + k3_ld32(at);
+        j = j + 1;
+    }
+    while j < j2 {
+        let at: i64 = bank + __mind_load_i64(off + j * 8) + lane * step;
+        s = s - k3_ld32(at);
+        j = j + 1;
+    }
+    s
+}
+
+fn k3_span64(bank: i64, off: i64, j0: i64, j1: i64, j2: i64, lane: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = j0;
+    while j < j1 {
+        s = s + __mind_load_i64(bank + __mind_load_i64(off + j * 8) + lane * 8);
+        j = j + 1;
+    }
+    while j < j2 {
+        s = s - __mind_load_i64(bank + __mind_load_i64(off + j * 8) + lane * 8);
+        j = j + 1;
+    }
+    s
+}
+
+fn k3_neq(a: i64, b: i64) -> i64 {
+    if a != b {
+        return 1;
+    }
+    0
+}
+
+fn k3_code(j: i64, lane: i64) -> i64 {
+    if j == 0 {
+        if lane == 0 {
+            return 2147483647;
+        }
+        if lane == 1 {
+            return 0 - 1;
+        }
+        if lane == 2 {
+            return 0 - 2147483648;
+        }
+        if lane == 3 {
+            return 42;
+        }
+        return lane;
+    }
+    if j == 1 {
+        if lane == 3 {
+            return 2;
+        }
+        if lane == 4 {
+            return 0 - 3;
+        }
+        return 0;
+    }
+    if lane == 0 {
+        return 1073741824;
+    }
+    0
+}
+
+fn k3_fill(b32: i64, lo: i64, hi: i64, off: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 4 {
+        k3_fill_j(b32, lo, hi, off, j);
+        j = j + 1;
+    }
+    0
+}
+
+fn k3_store_lane(b32: i64, lo: i64, hi: i64, j: i64, lane: i64, v: i64) -> i64 {
+    __mind_store_i32(b32 + j * 256 + lane * 4, v);
+    if lane < 32 {
+        __mind_store_i64(lo + j * 256 + lane * 8, v);
+        return 0;
+    }
+    __mind_store_i64(hi + j * 256 + (lane - 32) * 8, v);
+    0
+}
+
+fn k3_fill_j(b32: i64, lo: i64, hi: i64, off: i64, j: i64) -> i64 {
+    __mind_store_i64(off + j * 8, j * 256);
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        k3_store_lane(b32, lo, hi, j, lane, k3_code(j, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn k3_desc(out: i64, bank: i64, off: i64, starts: i64, rows: i64, init: i64) -> i64 {
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, init);
+    d
+}
+
+fn k3_put(starts: i64, row: i64, j0: i64, j1: i64, j2: i64) -> i64 {
+    let b: i64 = starts + row * 24;
+    __mind_store_i64(b, j0);
+    __mind_store_i64(b + 8, j1);
+    __mind_store_i64(b + 16, j2);
+    0
+}
+
+fn k3_zero(buf: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(buf + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+fn k3_bad_row(got: i64, exp: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < n {
+        bad = bad + k3_neq(__mind_load_i64(got + i * 8), __mind_load_i64(exp + i * 8));
+        i = i + 1;
+    }
+    bad
+}
+
+fn k3_scalar_row(b32: i64, off: i64, j0: i64, j1: i64, j2: i64, exp: i64, base: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        let s: i64 = k3_span(b32, off, j0, j1, j2, lane, 4) + base;
+        __mind_store_i64(exp + lane * 8, s);
+        lane = lane + 1;
+    }
+    0
+}
+
+fn k3_k2_row(lo: i64, hi: i64, off: i64, j0: i64, j1: i64, j2: i64, exp: i64, base: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 32 {
+        let a: i64 = k3_span64(lo, off, j0, j1, j2, lane) + base;
+        let b: i64 = k3_span64(hi, off, j0, j1, j2, lane) + base;
+        __mind_store_i64(exp + lane * 8, a);
+        __mind_store_i64(exp + (lane + 32) * 8, b);
+        lane = lane + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let b32: i64 = __mind_alloc(1024);
+    let lo: i64 = __mind_alloc(1024);
+    let hi: i64 = __mind_alloc(1024);
+    let off: i64 = __mind_alloc(32);
+    let starts: i64 = __mind_alloc(24);
+    let out: i64 = __mind_alloc(512);
+    let exp: i64 = __mind_alloc(512);
+    k3_fill(b32, lo, hi, off);
+    k3_put(starts, 0, 0, 1, 2);
+    k3_zero(out, 64);
+    let d32: i64 = k3_desc(out, b32, off, starts, 1, 4);
+    let r0: i64 = __mind_group_accrows_i64(d32);
+    k3_scalar_row(b32, off, 0, 1, 2, exp, 0);
+    let mut bad: i64 = k3_bad_row(out, exp, 64);
+    k3_k2_row(lo, hi, off, 0, 1, 2, exp, 0);
+    bad = bad + k3_bad_row(out, exp, 64);
+    k3_zero(out, 64);
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i64(out + i * 8, 7);
+        i = i + 1;
+    }
+    __mind_store_i64(d32 + 56, 5);
+    k3_put(starts, 0, 0, 1, 1);
+    let r1: i64 = __mind_group_accrows_i64(d32);
+    k3_scalar_row(b32, off, 0, 1, 1, exp, 7);
+    bad = bad + k3_bad_row(out, exp, 64);
+    k3_zero(out, 64);
+    k3_put(starts, 0, 2, 4, 4);
+    __mind_store_i64(d32 + 56, 4);
+    __mind_store_i32(d32 + 60, 2147483648);
+    let r2: i64 = __mind_group_accrows_i64(d32);
+    k3_scalar_row(b32, off, 2, 4, 4, exp, 0);
+    bad = bad + k3_bad_row(out, exp, 64);
+    k3_k2_row(lo, hi, off, 2, 4, 4, exp, 0);
+    bad = bad + k3_bad_row(out, exp, 64);
+    k3_zero(out, 64);
+    k3_put(starts, 0, 0, 2, 2);
+    __mind_store_i64(d32 + 56, 4);
+    __mind_store_i32(d32 + 60, 0);
+    let r3: i64 = __mind_group_accrows_i64(d32);
+    k3_scalar_row(b32, off, 0, 2, 2, exp, 0);
+    bad = bad + k3_bad_row(out, exp, 64);
+    k3_k2_row(lo, hi, off, 0, 2, 2, exp, 0);
+    bad = bad + k3_bad_row(out, exp, 64);
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, bad);
+    __mind_write(1, w, 8, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    r0 + r1 + r2 + r3
+}

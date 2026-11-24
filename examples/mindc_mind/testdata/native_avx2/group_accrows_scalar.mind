@@ -1,0 +1,184 @@
+// Scalar twin of group_accrows_rows. Plain loops, same stdout.
+// Inverted bounds: starts {3, 1, 2} and {0, 4, 1}. init == 1 keeps out.
+
+fn ga_fill(dst: i64, words: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        __mind_store_i64(dst + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn ga_bank() -> i64 {
+    let bank: i64 = __mind_alloc(10240);
+    let mut j: i64 = 0;
+    while j < 40 {
+        ga_block(bank, j);
+        j = j + 1;
+    }
+    bank
+}
+
+fn ga_block(bank: i64, j: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(bank + j * 256 + i * 8, (j + 1) * 100 + i);
+        i = i + 1;
+    }
+    0
+}
+
+fn ga_off() -> i64 {
+    let off: i64 = __mind_alloc(320);
+    let mut j: i64 = 0;
+    while j < 40 {
+        __mind_store_i64(off + j * 8, j * 256);
+        j = j + 1;
+    }
+    off
+}
+
+fn ga_put(starts: i64, r: i64, j0: i64, j1: i64, j2: i64) -> i64 {
+    let b: i64 = starts + r * 72;
+    __mind_store_i64(b, j0);
+    __mind_store_i64(b + 8, j1);
+    __mind_store_i64(b + 16, j2);
+    0
+}
+
+fn ga_starts() -> i64 {
+    let s: i64 = __mind_alloc(504);
+    ga_fill(s, 63, 0);
+    ga_put(s, 0, 0, 0, 0);
+    ga_put(s, 1, 0, 1, 1);
+    ga_put(s, 2, 0, 7, 7);
+    ga_put(s, 3, 0, 40, 40);
+    ga_put(s, 4, 5, 5, 12);
+    ga_put(s, 5, 3, 1, 2);
+    ga_put(s, 6, 0, 4, 1);
+    s
+}
+
+fn ga_lanes(out: i64, r: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(out + r * 576 + i * 8, r * 17 + i + 3);
+        i = i + 1;
+    }
+    0
+}
+
+fn ga_init1(out: i64) -> i64 {
+    ga_fill(out, 464, 1);
+    let mut r: i64 = 0;
+    while r < 7 {
+        ga_lanes(out, r);
+        r = r + 1;
+    }
+    0
+}
+
+fn ga_desc(out: i64, bank: i64, off: i64, starts: i64, rows: i64, init: i64) -> i64 {
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 576);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 72);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, init);
+    d
+}
+
+fn ga_tap(acc: i64, bank: i64, base: i64, sign: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        let v: i64 = __mind_load_i64(bank + base + i * 8);
+        let a: i64 = __mind_load_i64(acc + i * 8);
+        if sign == 1 {
+            __mind_store_i64(acc + i * 8, a + v)
+        }
+        if sign == 0 {
+            __mind_store_i64(acc + i * 8, a - v)
+        }
+        i = i + 1;
+    }
+    0
+}
+
+fn ga_range(acc: i64, bank: i64, off: i64, j0: i64, j1: i64, sign: i64) -> i64 {
+    let mut j: i64 = j0;
+    while j < j1 {
+        ga_tap(acc, bank, __mind_load_i64(off + j * 8), sign);
+        j = j + 1;
+    }
+    0
+}
+
+fn ga_copy(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+fn ga_row(out: i64, bank: i64, off: i64, starts: i64, init: i64) -> i64 {
+    let j0: i64 = __mind_load_i64(starts);
+    let j1: i64 = __mind_load_i64(starts + 8);
+    let j2: i64 = __mind_load_i64(starts + 16);
+    let acc: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        let mut v: i64 = 0;
+        if init == 1 {
+            v = __mind_load_i64(out + i * 8);
+        }
+        __mind_store_i64(acc + i * 8, v);
+        i = i + 1;
+    }
+    ga_range(acc, bank, off, j0, j1, 1);
+    ga_range(acc, bank, off, j1, j2, 0);
+    ga_copy(out, acc)
+}
+
+fn ga_all(out: i64, bank: i64, off: i64, starts: i64, rows: i64, init: i64) -> i64 {
+    let mut r: i64 = 0;
+    while r < rows {
+        ga_row(out + r * 576, bank, off, starts + r * 72, init);
+        r = r + 1;
+    }
+    0
+}
+
+fn ga_run(bank: i64, off: i64, starts: i64, init: i64) -> i64 {
+    let out: i64 = __mind_alloc(3712);
+    if init == 1 {
+        ga_init1(out)
+    }
+    if init == 0 {
+        ga_fill(out, 464, 9)
+    }
+    let d: i64 = ga_desc(out, bank, off, starts, 7, init);
+    let r: i64 = ga_all(out, bank, off, starts, 7, init);
+    __mind_write(1, out, 3712, 0 - 1);
+    r
+}
+
+fn main() -> i64 {
+    let bank: i64 = ga_bank();
+    let off: i64 = ga_off();
+    let starts: i64 = ga_starts();
+    let r0: i64 = ga_run(bank, off, starts, 0);
+    let r1: i64 = ga_run(bank, off, starts, 1);
+    let sent: i64 = __mind_alloc(256);
+    ga_fill(sent, 32, 42);
+    let r2: i64 = ga_all(sent, 0, 0, 0, 0, 0);
+    let r3: i64 = ga_all(sent, 0, 0, 0, 0 - 1, 0);
+    let r4: i64 = ga_all(sent, 0, 0, 0, 0 - 9223372036854775807 - 1, 0);
+    __mind_write(1, sent, 256, 0 - 1);
+    r0 + r1 + r2 + r3 + r4
+}

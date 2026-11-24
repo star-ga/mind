@@ -108,7 +108,8 @@ fi
 info "Extracting ..."
 tar -xzf "${tmp}/${asset}" -C "$tmp" || err "extraction failed"
 
-# The tarball contains the bare 'mindc' binary.
+# The archive holds the 'mindc' binary, std/, stdlib_manifest.txt and SHA256SUMS.
+# This script installs only the binary.
 [ -f "${tmp}/mindc" ] || err "expected 'mindc' inside ${asset} but it was not found"
 
 mkdir -p "$install_dir"

@@ -1,0 +1,17 @@
+// Scalar twin of group_acc88_init23. init 2 and init 3 zero, then add term 0.
+
+fn st(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v);
+    0
+}
+
+fn main() -> i64 {
+    let out: i64 = __mind_alloc(512);
+    let mut i: i64 = 0;
+    while i < 64 {
+        st(out, i, 100 + (i % 32));
+        i = i + 1;
+    }
+    __mind_write(1, out, 512, 0 - 1);
+    0
+}

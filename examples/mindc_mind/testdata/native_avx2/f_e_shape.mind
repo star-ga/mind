@@ -1,0 +1,97 @@
+// Epilogue shape row. One call, 32 lanes, empty walk, init bit 0 set.
+// The objdump count is the group loop. Exit 0 when lane 0 matches the scalar twin.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    if s == 0 {
+        return v;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn lsl(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    v << s
+}
+
+fn epi_nv(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, src: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr(lsl(x, cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + src
+}
+
+fn main() -> i64 {
+    let out: i64 = __mind_alloc(256);
+    let src: i64 = __mind_alloc(256);
+    let dst: i64 = __mind_alloc(256);
+    let epi: i64 = __mind_alloc(64);
+    let starts: i64 = __mind_alloc(24);
+    let mut i: i64 = 0;
+    while i < 3 {
+        __mind_store_i64(starts + i * 8, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < 32 {
+        __mind_store_i64(out + i * 8, 8 + i);
+        __mind_store_i64(src + i * 8, i);
+        i = i + 1;
+    }
+    __mind_store_i64(epi, 1);
+    __mind_store_i64(epi + 8, 0);
+    __mind_store_i64(epi + 16, 0);
+    __mind_store_i64(epi + 24, 32);
+    __mind_store_i64(epi + 32, 0);
+    __mind_store_i64(epi + 40, 0);
+    __mind_store_i64(epi + 48, src);
+    __mind_store_i64(epi + 56, dst);
+    let d: i64 = __mind_alloc(88);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 256);
+    __mind_store_i64(d + 16, 0);
+    __mind_store_i64(d + 24, 0);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 0);
+    __mind_store_i64(d + 48, 1);
+    __mind_store_i64(d + 56, 33);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 42);
+    __mind_store_i64(d + 80, 9223372036854775807);
+    let r: i64 = __mind_group_accrows_i64(d);
+    let want: i64 = epi_nv(8, 1, 0, 0, 32, 0, 0, 0);
+    let got: i64 = __mind_load_i64(dst);
+    if got != want {
+        return 1;
+    }
+    if __mind_load_i64(d + 72) != 0 {
+        return 1;
+    }
+    r
+}

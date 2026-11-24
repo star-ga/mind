@@ -1,0 +1,78 @@
+// Pure MIND exact divisor sum sigma(n), Euler phi(n), and gcd.
+// Explicit finite input domain 1..1000, no floating-point approximations.
+fn gcd_positive(a: i64, b: i64) -> i64 {
+    let mut x: i64 = a;
+    let mut y: i64 = b;
+    while y != 0 {
+        let rem: i64 = x % y;
+        x = y;
+        y = rem;
+    }
+    return x;
+}
+
+fn sigma_bounded(n: i64) -> i64 {
+    if n < 1 || n > 1000 {
+        return -1;
+    }
+    let mut result: i64 = 0;
+    let mut d: i64 = 1;
+    while d <= n {
+        if n % d == 0 {
+            result = result + d;
+        }
+        d = d + 1;
+    }
+    return result;
+}
+
+fn phi_bounded(n: i64) -> i64 {
+    if n < 1 || n > 1000 {
+        return -1;
+    }
+    let mut result: i64 = 0;
+    let mut k: i64 = 1;
+    while k <= n {
+        if gcd_positive(k, n) == 1 {
+            result = result + 1;
+        }
+        k = k + 1;
+    }
+    return result;
+}
+
+// Writes the result lines to stdout. The text comes in as a String parameter,
+// the form of a string literal that the native backend accepts.
+fn report_success(message: String) -> i64 {
+    let written: i64 = __mind_write(1, message.addr, message.len, 0 - 1);
+    if written != message.len {
+        return 90;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    if sigma_bounded(1) != 1 || phi_bounded(1) != 1 {
+        return 1;
+    }
+    if sigma_bounded(12) != 28 || phi_bounded(9) != 6 {
+        return 2;
+    }
+    if sigma_bounded(28) != 56 || phi_bounded(36) != 12 {
+        return 3;
+    }
+    if sigma_bounded(30) != 72 || phi_bounded(30) != 8 {
+        return 4;
+    }
+    if gcd_positive(54, 24) != 6 {
+        return 5;
+    }
+    if sigma_bounded(0) != -1 || phi_bounded(1001) != -1 {
+        return 6;
+    }
+    // Negative control: sigma and phi are not interchangeable.
+    if sigma_bounded(28) == phi_bounded(28) {
+        return 7;
+    }
+    return report_success("EXAMPLE=DIVISOR_FUNCTIONS\nSCOPE=FINITE_EXAMPLE\n");
+}

@@ -1,0 +1,113 @@
+// Scalar twin of the alias fixture. out sits inside bank.
+// Call 1, init 0, two rows: row 0 reads bank+1024 into bank+0;
+// row 1 reads that store (off 0) into bank+256.
+// Call 2, init 1, one row at bank+2048 whose term reads that same out.
+
+fn al_fill(dst: i64, words: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < words {
+        __mind_store_i64(dst + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn al_ramp(dst: i64, n: i64, base: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(dst + i * 8, base + i);
+        i = i + 1;
+    }
+    0
+}
+
+fn al_prep(bank: i64, off: i64, starts: i64) -> i64 {
+    al_fill(bank, 512, 7);
+    al_ramp(bank + 1024, 32, 1000);
+    al_ramp(bank + 2048, 32, 5);
+    __mind_store_i64(off, 1024);
+    __mind_store_i64(off + 8, 0);
+    __mind_store_i64(off + 16, 2048);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 1);
+    __mind_store_i64(starts + 16, 1);
+    __mind_store_i64(starts + 72, 1);
+    __mind_store_i64(starts + 80, 2);
+    __mind_store_i64(starts + 88, 2);
+    0
+}
+
+fn al_row(out: i64, bank: i64, off: i64, starts: i64, init: i64) -> i64 {
+    let j0: i64 = __mind_load_i64(starts);
+    let j1: i64 = __mind_load_i64(starts + 8);
+    let j2: i64 = __mind_load_i64(starts + 16);
+    let acc: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        let mut v: i64 = 0;
+        if init == 1 {
+            v = __mind_load_i64(out + i * 8);
+        }
+        __mind_store_i64(acc + i * 8, v);
+        i = i + 1;
+    }
+    al_span(acc, bank, off, j0, j1, 1);
+    al_span(acc, bank, off, j1, j2, 0);
+    al_copy(out, acc)
+}
+
+fn al_copy(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+fn al_tap(acc: i64, bank: i64, base: i64, sign: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        let v: i64 = __mind_load_i64(bank + base + i * 8);
+        let a: i64 = __mind_load_i64(acc + i * 8);
+        if sign == 1 {
+            __mind_store_i64(acc + i * 8, a + v)
+        }
+        if sign == 0 {
+            __mind_store_i64(acc + i * 8, a - v)
+        }
+        i = i + 1;
+    }
+    0
+}
+
+fn al_span(acc: i64, bank: i64, off: i64, j0: i64, j1: i64, sign: i64) -> i64 {
+    let mut j: i64 = j0;
+    while j < j1 {
+        al_tap(acc, bank, __mind_load_i64(off + j * 8), sign);
+        j = j + 1;
+    }
+    0
+}
+
+fn al_all(out: i64, bank: i64, off: i64, starts: i64, rows: i64, step: i64, init: i64) -> i64 {
+    let mut r: i64 = 0;
+    while r < rows {
+        al_row(out + r * step, bank, off, starts + r * 72, init);
+        r = r + 1;
+    }
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(4096);
+    let off: i64 = __mind_alloc(64);
+    let starts: i64 = __mind_alloc(160);
+    al_prep(bank, off, starts);
+    al_all(bank, bank, off, starts, 2, 256, 0);
+    let out2: i64 = bank + 2048;
+    al_all(out2, bank, off + 16, starts, 1, 256, 1);
+    __mind_write(1, bank, 512, 0 - 1);
+    __mind_write(1, out2, 256, 0 - 1);
+    0
+}

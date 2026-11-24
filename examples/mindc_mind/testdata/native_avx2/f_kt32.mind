@@ -1,0 +1,361 @@
+// K89-TAIL32 known answers. Bit 8 selects u32 src and dst. The scalar twin is the bit-5
+// epilogue with three changes: src is a zero-extended u32, the trip test is unsigned,
+// and dst stores the low 32 bits. Stdout is two i64 words: lanes compared, bad.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s <= 0 {
+        return v;
+    }
+    if s > 63 {
+        return 0;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn ugt(a: i64, b: i64) -> i64 {
+    let ah: i64 = if a < 0 {
+        1
+    } else {
+        0
+    };
+    let bh: i64 = if b < 0 {
+        1
+    } else {
+        0
+    };
+    if ah != bh {
+        return ah;
+    }
+    if a > b {
+        return 1;
+    }
+    0
+}
+
+fn epi_v(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr((x << cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v
+}
+
+fn zext(u: i64) -> i64 {
+    lo32(u)
+}
+
+fn rec(p: i64, bq: i64, src: i64, dst: i64) -> i64 {
+    __mind_store_i64(p, 1);
+    __mind_store_i64(p + 8, 0);
+    __mind_store_i64(p + 16, 0);
+    __mind_store_i64(p + 24, 0);
+    __mind_store_i64(p + 32, 0);
+    __mind_store_i64(p + 40, bq);
+    __mind_store_i64(p + 48, src);
+    __mind_store_i64(p + 56, dst);
+    p
+}
+
+fn desc(out: i64, step: i64, rows: i64, flags: i64, epi: i64, lim: i64) -> i64 {
+    let d: i64 = __mind_alloc(128);
+    let st: i64 = __mind_alloc(32);
+    __mind_store_i64(st, 0);
+    __mind_store_i64(st + 8, 0);
+    __mind_store_i64(st + 16, 0);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, step);
+    __mind_store_i64(d + 16, __mind_alloc(64));
+    __mind_store_i64(d + 24, __mind_alloc(16));
+    __mind_store_i64(d + 32, st);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 7);
+    __mind_store_i64(d + 80, lim);
+    d
+}
+
+fn put_i32(p: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i32(p + i * 4, v);
+        i = i + 1;
+    }
+    n
+}
+
+fn fill_out(p: i64, n: i64, a0: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(p + i * 8, a0 + i);
+        i = i + 1;
+    }
+    n
+}
+
+fn check_u32(dst: i64, out: i64, src: i64, w: i64, bq: i64, lim: i64, d: i64, p: i64) -> i64 {
+    let mut bad: i64 = 0;
+    let mut trip: i64 = 0;
+    let mut i: i64 = 0;
+    while i < w {
+        let a: i64 = __mind_load_i64(out + i * 8);
+        let nv: i64 = epi_v(a, 1, 0, 0, 0, 0, bq) + zext(__mind_load_i32(src + i * 4));
+        if ugt(nv, lim) == 1 {
+            trip = 0 - 1;
+        }
+        if lo32(__mind_load_i32(dst + i * 4)) != lo32(nv) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    if __mind_load_i32(dst + w * 4) != 1515870810 {
+        bad = bad + 1;
+    }
+    if __mind_load_i64(d + 72) != trip {
+        bad = bad + 1;
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + w);
+    bad
+}
+
+fn one_row(w: i64, flags: i64, bq: i64, srcv: i64, lim: i64, a0: i64, p: i64) -> i64 {
+    let out: i64 = __mind_alloc(w * 8 + 64);
+    let src: i64 = __mind_alloc(w * 4 + 16);
+    let dst: i64 = __mind_alloc(w * 4 + 16);
+    if a0 < 0 {
+        let mut z: i64 = 0;
+        while z < w {
+            __mind_store_i64(out + z * 8, 0);
+            z = z + 1;
+        }
+    } else {
+        fill_out(out, w, a0)
+    }
+    put_i32(src, w, srcv);
+    put_i32(dst, w + 1, 0);
+    __mind_store_i32(dst + w * 4, 1515870810);
+    let epi: i64 = rec(__mind_alloc(64), bq, src, dst);
+    let d: i64 = desc(out, w * 8, 1, flags, epi, lim);
+    let _c: i64 = __mind_group_accrows_i64(d);
+    check_u32(dst, out, src, w, bq, lim, d, p)
+}
+
+fn t2(p: i64) -> i64 {
+    let w: i64 = 32;
+    let out: i64 = __mind_alloc(w * 8 + 32);
+    let src32: i64 = __mind_alloc(w * 4 + 8);
+    let src64: i64 = __mind_alloc(w * 8);
+    let d32: i64 = __mind_alloc(w * 4 + 8);
+    let d64: i64 = __mind_alloc(w * 8 + 8);
+    fill_out(out, w, 3);
+    let mut i: i64 = 0;
+    while i < w {
+        __mind_store_i32(src32 + i * 4, 5);
+        __mind_store_i64(src64 + i * 8, 5);
+        __mind_store_i32(d32 + i * 4, 0);
+        i = i + 1;
+    }
+    __mind_store_i32(d32 + w * 4, 1515870810);
+    let e32: i64 = rec(__mind_alloc(64), 9, src32, d32);
+    let e64: i64 = rec(__mind_alloc(64), 9, src64, d64);
+    let a: i64 = desc(out, w * 8, 1, 289, e32, 4294967295);
+    let b: i64 = desc(out, w * 8, 1, 33, e64, 4294967295);
+    let _x: i64 = __mind_group_accrows_i64(a);
+    fill_out(out, w, 3);
+    let _y: i64 = __mind_group_accrows_i64(b);
+    let mut bad: i64 = 0;
+    i = 0;
+    while i < w {
+        if lo32(__mind_load_i32(d32 + i * 4)) != lo32(__mind_load_i64(d64 + i * 8)) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    if __mind_load_i64(a + 72) != __mind_load_i64(b + 72) {
+        bad = bad + 1;
+    }
+    if __mind_load_i64(a + 72) != 0 {
+        bad = bad + 1;
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + w);
+    bad
+}
+
+fn t4(p: i64) -> i64 {
+    let src32: i64 = __mind_alloc(160);
+    let src64: i64 = __mind_alloc(288);
+    let d32: i64 = __mind_alloc(160);
+    let d64: i64 = __mind_alloc(288);
+    let out: i64 = __mind_alloc(288);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i32(src32 + i * 4, 1);
+        __mind_store_i64(src64 + i * 8, 1);
+        i = i + 1;
+    }
+    __mind_store_i32(d32 + 128, 1515870810);
+    let bq: i64 = 9223372036854775807;
+    let e32: i64 = rec(__mind_alloc(64), bq, src32, d32);
+    let e64: i64 = rec(__mind_alloc(64), bq, src64, d64);
+    let a: i64 = desc(out, 256, 1, 288, e32, 4294967295);
+    let b: i64 = desc(out, 256, 1, 32, e64, 4294967295);
+    let _x: i64 = __mind_group_accrows_i64(a);
+    let _y: i64 = __mind_group_accrows_i64(b);
+    let mut bad: i64 = 0;
+    if __mind_load_i64(a + 72) != 0 - 1 {
+        bad = bad + 1;
+    }
+    if lo32(__mind_load_i32(d32)) != 0 {
+        bad = bad + 1;
+    }
+    if __mind_load_i64(b + 72) != 0 {
+        bad = bad + 1;
+    }
+    if __mind_load_i64(d64) == 0 {
+        bad = bad + 1;
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + 32);
+    bad
+}
+
+fn t5(p: i64) -> i64 {
+    let w: i64 = 32;
+    let buf: i64 = __mind_alloc(w * 4 + 8);
+    let out: i64 = __mind_alloc(w * 8);
+    put_i32(buf, w, 4);
+    __mind_store_i32(buf + w * 4, 1515870810);
+    let epi: i64 = rec(__mind_alloc(64), 2, buf, buf);
+    let d: i64 = desc(out, w * 8, 1, 288, epi, 4294967295);
+    let _c: i64 = __mind_group_accrows_i64(d);
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < w {
+        if lo32(__mind_load_i32(buf + i * 4)) != 6 {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + w);
+    bad
+}
+
+fn child_dies(flags: i64, lim: i64) -> i64 {
+    let page: i64 = __mind_sys_mmap(0, 4096, 3, 33, 0 - 1, 0);
+    if page <= 0 {
+        return 1;
+    }
+    __mind_store_i64(page, 1515870810);
+    let pid: i64 = __mind_sys_fork();
+    if pid < 0 {
+        return 1;
+    }
+    if pid == 0 {
+        let out: i64 = __mind_alloc(256);
+        let epi: i64 = rec(__mind_alloc(64), 1, page + 64, page);
+        let d: i64 = desc(out, 256, 1, flags, epi, lim);
+        let _c: i64 = __mind_group_accrows_i64(d);
+        return 100;
+    }
+    let st: i64 = __mind_alloc(8);
+    __mind_store_i64(st, 255);
+    if __mind_sys_wait4(pid, st, 0, 0) != pid {
+        return 1;
+    }
+    if __mind_load_i64(st) % 128 != 4 {
+        return 1;
+    }
+    if __mind_load_i64(page) != 1515870810 {
+        return 1;
+    }
+    0
+}
+
+fn f1(p: i64) -> i64 {
+    let base: i64 = __mind_alloc(4096);
+    let desc_p: i64 = base + 256;
+    let out: i64 = desc_p - 192;
+    let src: i64 = __mind_alloc(160);
+    let dst: i64 = __mind_alloc(160);
+    put_i32(src, 32, 3);
+    put_i32(dst, 33, 0);
+    __mind_store_i32(dst + 128, 1515870810);
+    let epi: i64 = rec(__mind_alloc(64), 8, src, dst);
+    let st: i64 = __mind_alloc(32);
+    __mind_store_i64(st, 0);
+    __mind_store_i64(st + 8, 0);
+    __mind_store_i64(st + 16, 0);
+    __mind_store_i64(desc_p, out);
+    __mind_store_i64(desc_p + 8, 256);
+    __mind_store_i64(desc_p + 16, __mind_alloc(64));
+    __mind_store_i64(desc_p + 24, __mind_alloc(16));
+    __mind_store_i64(desc_p + 32, st);
+    __mind_store_i64(desc_p + 40, 24);
+    __mind_store_i64(desc_p + 48, 1);
+    __mind_store_i64(desc_p + 56, 288);
+    __mind_store_i64(desc_p + 64, epi);
+    __mind_store_i64(desc_p + 72, 7);
+    __mind_store_i64(desc_p + 80, 100);
+    let _c: i64 = __mind_group_accrows_i64(desc_p);
+    let mut bad: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 32 {
+        if lo32(__mind_load_i32(dst + i * 4)) != 11 {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    if __mind_load_i64(desc_p + 72) != 0 {
+        bad = bad + 1;
+    }
+    __mind_store_i64(p, __mind_load_i64(p) + 32);
+    bad
+}
+
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(16);
+    __mind_store_i64(p, 0);
+    let mut bad: i64 = 0;
+    bad = bad + one_row(32, 289, 10, 4, 4294967295, 1, p);
+    bad = bad + one_row(32, 288, 0, 2147483648, 4294967295, 0 - 1, p);
+    bad = bad + one_row(64, 293, 10, 4, 4294967295, 2, p);
+    bad = bad + one_row(32, 288, 4294967296, 0, 4294967295, 0 - 1, p);
+    bad = bad + t2(p);
+    bad = bad + t4(p);
+    bad = bad + t5(p);
+    bad = bad + f1(p);
+    let s0: i64 = child_dies(256, 1);
+    if s0 == 100 {
+        return 9;
+    }
+    let s1: i64 = child_dies(288, 4294967296);
+    if s1 == 100 {
+        return 9;
+    }
+    let s2: i64 = child_dies(288, 0 - 1);
+    if s2 == 100 {
+        return 9;
+    }
+    bad = bad + s0 + s1 + s2;
+    __mind_store_i64(p + 8, bad);
+    __mind_write(1, p, 16, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

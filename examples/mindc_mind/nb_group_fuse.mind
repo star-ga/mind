@@ -1,0 +1,161 @@
+// Copyright 2026 STARGA Inc.
+// Kind 89 fused tail. Bit 7 of desc[7] (value 128). One AVX2 path (the kind 89 entry guard).
+// Bit 7 runs the epilogue of bit 5 on each row while its accumulators are still in ymm0-7:
+// no store of the row, no reload, no 64-byte record per row. The call is the LAST call of
+// its rows (init 1 keeps the partial sums of earlier calls). Bit 7 implies the epilogue,
+// bit 5 may be 0 or 1. The bit-5 tail does not run on this path.
+// desc is i64[15]: desc[0..7] as the walk. desc[8] = epi, the address of `rows` records of
+// 48 bytes: um, nm, cl, cr1, cr2, bq (i64 each), so a layer builds the table once and a tile
+// passes epi + 48 * row0. desc[9] is WRITTEN: 0 when no lane trips, -1 when one or more trip.
+// desc[10] = lim. desc[11] = src0, desc[12] = src_step, desc[13] = dst0, desc[14] = dst_step
+// (bytes). Row r (r = 0 for the first row of this call) uses the record at epi + 48 r, the
+// src row at src0 + r src_step, the dst row at dst0 + r dst_step. rows <= 0: nothing is
+// read and nothing is written (desc[9] included).
+// Per lane the arithmetic is word for word the bit-5 epilogue (nb_group_epi.mind): the
+// result in dst and in desc[9] is bit-identical to bit 5 on the same inputs. W = 32 lanes per
+// row here (plain and term i64 walks); the i32 walks (desc[7] bit 2, W = 64) finish their rows
+// in nb_group_fuse32.mind. The out row is NOT written by this path (its bytes
+// keep the value they had); dst may equal the out row or the src row, any other overlap
+// (src with the out row, dst with the bank, with a later row, with a record) is the
+// caller's error. Each group reads a and src before it writes dst.
+// Registers: ymm0-7 accumulators (ymm0 is the lane temp of a buffered row), ymm8 um,
+// ymm9 nm, ymm10 bq, ymm11 one, ymm12 lim, ymm13 and ymm14 temps, ymm15 trip. Counts cl,
+// cr1, cr2 are m128 memory operands of the record (the low 64 bits count; shifts above 63
+// give 0). r13 record, rsi src, rdi dst, rcx row index, rax desc. r13, rsi, rdi, rcx and
+// rax are dead at the end of a walk row on every path (each row reloads its j0, j1, j2).
+// llvm-mc --triple=x86_64 -x86-asm-syntax=intel -mattr=+avx2 -show-encoding
+// (the gate also checks every register and displacement the emitter uses, ymm0-7 x disp 0..224)
+// test r11b, 128                               41 f6 c3 80
+// test r10, r10                                4d 85 d2
+// mov rcx, 1                                   48 c7 c1 01 00 00 00
+// push rcx                                     51
+// vpbroadcastq ymm11, qword ptr [rsp]          c4 62 7d 59 1c 24
+// pop rcx                                      59
+// mov rax, qword ptr [rbp - 200]               48 8b 85 38 ff ff ff
+// vpbroadcastq ymm12, qword ptr [rax + 80]     c4 62 7d 59 60 50
+// vpxor ymm15, ymm15, ymm15                    c4 41 05 ef ff
+// mov rax, qword ptr [rbp - 200]               48 8b 85 38 ff ff ff
+// mov rcx, qword ptr [rax + 48]                48 8b 48 30
+// sub rcx, r10                                 4c 29 d1
+// imul r13, rcx, 48                            4c 6b e9 30
+// add r13, qword ptr [rax + 64]                4c 03 68 40
+// mov rsi, rcx                                 48 89 ce
+// imul rsi, qword ptr [rax + 96]               48 0f af 70 60
+// add rsi, qword ptr [rax + 88]                48 03 70 58
+// mov rdi, rcx                                 48 89 cf
+// imul rdi, qword ptr [rax + 112]              48 0f af 78 70
+// add rdi, qword ptr [rax + 104]               48 03 78 68
+// vpbroadcastq ymm8, qword ptr [r13]           c4 42 7d 59 45 00
+// vpbroadcastq ymm9, qword ptr [r13 + 8]       c4 42 7d 59 4d 08
+// vpbroadcastq ymm10, qword ptr [r13 + 40]     c4 42 7d 59 55 28
+// vpxor ymm13, ymm13, ymm13                    c4 41 15 ef ed
+// vpcmpgtq ymm13, ymm13, ymm0                  c4 62 15 37 e8
+// vpxor ymm0, ymm13, ymm0                      c5 95 ef c0
+// vpsubq ymm0, ymm0, ymm13                     c4 c1 7d fb c5
+// vpsrlq ymm14, ymm0, 32                       c5 8d 73 d0 20
+// vpmuludq ymm14, ymm14, ymm8                  c4 41 0d f4 f0
+// vpmuludq ymm0, ymm8, ymm0                    c5 bd f4 c0
+// vpsllq ymm14, ymm14, xmmword ptr [r13 + 16]  c4 41 0d f3 75 10
+// vpsrlq ymm0, ymm0, xmmword ptr [r13 + 24]    c4 c1 7d d3 45 18
+// vpaddq ymm14, ymm14, ymm0                    c5 0d d4 f0
+// vpsrlq ymm14, ymm14, xmmword ptr [r13 + 32]  c4 41 0d d3 75 20
+// vpaddq ymm14, ymm11, ymm14                   c4 41 25 d4 f6
+// vpsrlq ymm14, ymm14, 1                       c4 c1 0d 73 d6 01
+// vpxor ymm13, ymm9, ymm13                     c4 41 35 ef ed
+// vpxor ymm14, ymm14, ymm13                    c4 41 0d ef f5
+// vpsubq ymm14, ymm14, ymm13                   c4 41 0d fb f5
+// vpaddq ymm14, ymm10, ymm14                   c4 41 2d d4 f6
+// vpxor ymm0, ymm0, ymm0                       c5 fd ef c0
+// vpcmpgtq ymm0, ymm0, ymm14                   c4 c2 7d 37 c6
+// vpandn ymm14, ymm0, ymm14                    c4 41 7d df f6
+// vpaddq ymm14, ymm14, ymmword ptr [rsi + 224] c5 0d d4 b6 e0 00 00 00
+// vpcmpgtq ymm0, ymm14, ymm12                  c4 c2 0d 37 c4
+// vpor ymm15, ymm15, ymm0                      c5 05 eb f8
+// vmovdqu ymmword ptr [rdi + 224], ymm14       c5 7e 7f b7 e0 00 00 00
+// mov rdx, rax                                 48 89 c2
+// xor eax, eax                                 31 c0
+// vmovmskpd ecx, ymm15                         c4 c1 7d 50 cf
+// test ecx, ecx                                85 c9
+// or rax, -1                                   48 83 c8 ff
+// mov qword ptr [rdx + 72], rax                48 89 42 48
+
+import std.string;
+import nb_group_sum_enc;
+import nb_x86_vex;
+import nb_group_tail32;
+
+// Row pointers from desc and the row index (rows - r10), and the record broadcasts.
+pub fn nbk_ptrs(code: String, slot: i64) -> String {
+    let mut c: String = nbg_u32(nbg_b3(code, 72, 139, 133), 0 - 8 * (slot + 1));
+    c = nbg_b4(c, 72, 139, 72, 48);
+    c = nbg_b3(c, 76, 41, 209);
+    c = nbg_b4(c, 76, 107, 233, 48);
+    c = nbg_b4(c, 76, 3, 104, 64);
+    c = nbg_b3(c, 72, 137, 206);
+    c = nbg_b5(c, 72, 15, 175, 112, 96);
+    c = nbg_b4(c, 72, 3, 112, 88);
+    c = nbg_b3(c, 72, 137, 207);
+    c = nbg_b5(c, 72, 15, 175, 120, 112);
+    c = nbg_b4(c, 72, 3, 120, 104);
+    c = nbk_bc(c, 8, 13, 0);
+    c = nbk_bc(c, 9, 13, 8);
+    nbk_bc(c, 10, 13, 40)
+}
+
+// The 8 register groups of an i64 walk row (lanes 4k..4k+3 in ymm k).
+// One test of the fused u32 flag per row. The call tested bit 8 once, in nbk_enter.
+pub fn nbk_row(code: String, slot: i64) -> String {
+    let u32: i64 = nbg_cell();
+    let done: i64 = nbg_cell();
+    let mut c: String = nbt32_je(nbk_ptrs(code, slot), 8, u32);
+    let mut k: i64 = 0;
+    while k < 8 {
+        c = nbk_group(c, k, k * 32, 0, 0);
+        k = k + 1;
+    }
+    c = nbg_jmp(c, done);
+    c = nbg_here(c, u32);
+    let mut j: i64 = 0;
+    while j < 8 {
+        c = nbk_group(c, j, j * 16, 1, 0);
+        j = j + 1;
+    }
+    nbg_here(c, done)
+}
+
+// rows <= 0 jumps to `none` (before any read or write). Then one, lim and the trip mask.
+// The entry guard (nbw_guard) may leave desc[7] >> 32 in rax: reload desc from its slot.
+pub fn nbk_enter(code: String, none: i64, slot: i64) -> String {
+    let mut c: String = nbg_jcc(nbg_rr(code, 133, 10, 10), 142, none);
+    c = nbg_u32(nbg_b3(c, 72, 199, 193), 1);
+    c = nbg_push(c, 81);
+    c = nbk_bc(c, 11, 4, 0);
+    c = nbg_push(c, 89);
+    c = nbg_u32(nbg_b3(c, 72, 139, 133), 0 - 8 * (slot + 1));
+    c = nbk_bc(c, 12, 0, 80);
+    c = nbk_rrr(c, 1, 239, 15, 15, 15);
+    let z8: i64 = nbg_cell();
+    let join: i64 = nbg_cell();
+    c = nbg_jcc(nbg_u32(nbg_b3(c, 65, 247, 195), 256), 132, z8);
+    c = nbg_jmp(nbg_b5(c, 198, 68, 36, 8, 1), join);
+    c = nbg_b5(nbg_here(c, z8), 198, 68, 36, 8, 0);
+    nbg_here(c, join)
+}
+
+// desc[9] = -1 when any lane tripped, else 0. The walk row loop has ended.
+pub fn nbk_close(code: String, slot: i64) -> String {
+    let store: i64 = nbg_cell();
+    let mut c: String = nbg_slot(code, slot, 2);
+    c = nbg_b2(c, 49, 192);
+    c = nbv_op_rrr(c, 1, 80, 1, 0, 1, 0, 15);
+    c = nbg_b2(c, 133, 201);
+    c = nbg_jcc(c, 132, store);
+    c = nbg_b4(c, 72, 131, 200, 255);
+    c = nbg_here(c, store);
+    nbg_b4(c, 72, 137, 66, 72)
+}
+
+// Entry test: bit 7 of r11 (desc[7]) jumps to the fused rows.
+pub fn nbk_open(code: String, fused: i64) -> String {
+    nbg_jcc(nbg_b4(code, 65, 246, 195, 128), 133, fused)
+}

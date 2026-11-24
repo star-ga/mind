@@ -1,0 +1,23 @@
+// Scalar twin of group_accrows_init3. init == 1 keeps out. init 2 and init 3 zero, then add term 0.
+
+fn st(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v);
+    0
+}
+
+fn main() -> i64 {
+    let bank: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        st(bank, i, 100 + i);
+        i = i + 1;
+    }
+    let out: i64 = __mind_alloc(256);
+    i = 0;
+    while i < 32 {
+        st(out, i, 100 + i);
+        i = i + 1;
+    }
+    __mind_write(1, out, 256, 0 - 1);
+    0
+}

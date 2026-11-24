@@ -1,0 +1,81 @@
+// Kind 87 group bit 5 with a tight plane (plane == pixels * 4),
+// against kind 87 bit clear (i64 bank). A guard word after the last row must stay.
+// Stdout: bad count. Exit 0 when bad == 0.
+
+fn xv(p: i64, w: i64) -> i64 {
+    let t: i64 = p * 7919 + w * 104729;
+    let m: i64 = t - (t / 100003) * 100003;
+    if p == 3 {
+        if w == 0 {
+            return 34359738368 + 17;
+        }
+    }
+    if p == 9 {
+        if w == 1 {
+            return 0 - 4294967299;
+        }
+    }
+    m - 50001
+}
+
+fn xplanes(n: i64) -> i64 {
+    let ptrs: i64 = __mind_alloc(32);
+    let mut w: i64 = 0;
+    while w < 4 {
+        let d: i64 = __mind_alloc(n * 8 + 8);
+        let mut p: i64 = 0;
+        while p < n {
+            __mind_store_i64(d + p * 8, xv(p, w));
+            p = p + 1;
+        }
+        __mind_store_i64(ptrs + w * 8, d);
+        w = w + 1;
+    }
+    ptrs
+}
+
+fn xcase(n: i64, g: i64, rows: i64) -> i64 {
+    let ptrs: i64 = xplanes(n);
+    let b64: i64 = __mind_alloc(rows * n * 8 + 64);
+    let b32: i64 = __mind_alloc(rows * n * 4 + 64);
+    let mut i: i64 = 0;
+    while i < rows * n + 8 {
+        __mind_store_i64(b64 + i * 8, 0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < rows * n + 16 {
+        __mind_store_i32(b32 + i * 4, 1515870810);
+        i = i + 1;
+    }
+    let r1: i64 = __mind_group_bank_i64(ptrs, b64, n * 8, n, g);
+    let r2: i64 = __mind_group_bank_i64(ptrs, b32, n * 4, n, g + 32);
+    let mut bad: i64 = 0;
+    i = 0;
+    while i < rows * n {
+        let lo: i64 = __mind_load_i32(b64 + i * 8);
+        if __mind_load_i32(b32 + i * 4) != lo {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    i = rows * n;
+    while i < rows * n + 16 {
+        if __mind_load_i32(b32 + i * 4) != 1515870810 {
+            bad = bad + 1000;
+        }
+        i = i + 1;
+    }
+    bad + r1 + r2
+}
+
+fn main() -> i64 {
+    let bad: i64 = xcase(8, 3, 13) + xcase(7, 3, 13) + xcase(64, 3, 13) + xcase(8, 4, 40) + xcase(13, 4, 40) + xcase(64, 4, 40);
+    let w: i64 = __mind_alloc(8);
+    __mind_store_i64(w, bad);
+    __mind_write(1, w, 8, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

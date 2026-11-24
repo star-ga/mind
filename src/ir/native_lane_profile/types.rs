@@ -308,6 +308,7 @@ fn intrinsic_signature(name: &str) -> Option<Signature> {
         // --- rows: group_sum (0.10.3) ---
         "__mind_group_bank_i64" => (vec![I64; 5], I64),
         "__mind_group_acc32_i64" => (vec![I64; 6], I64),
+        "__mind_group_accrows_i64" => (vec![I64; 1], I64),
         // --- end rows: group_sum ---
         _ => return None,
     };

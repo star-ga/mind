@@ -1,0 +1,74 @@
+// Pure MIND Mobius mu(n) on integers 1..10000 and finite Mertens sums.
+// The values of finite M(N) never imply an infinite asymptotic bound.
+fn mobius_bounded(n: i64) -> i64 {
+    // 2 is a deliberately impossible result for a valid mu(n).
+    if n < 1 || n > 10000 {
+        return 2;
+    }
+    let mut remaining: i64 = n;
+    let mut p: i64 = 2;
+    let mut sign: i64 = 1;
+    while p <= remaining / p {
+        if remaining % p == 0 {
+            remaining = remaining / p;
+            // A repeated prime factor makes n nonsquarefree.
+            if remaining % p == 0 {
+                return 0;
+            }
+            sign = 0 - sign;
+        }
+        p = p + 1;
+    }
+    if remaining > 1 {
+        sign = 0 - sign;
+    }
+    return sign;
+}
+
+fn mertens_finite(limit: i64) -> i64 {
+    if limit < 0 || limit > 100 {
+        return 10001;
+    }
+    let mut total: i64 = 0;
+    let mut n: i64 = 1;
+    while n <= limit {
+        total = total + mobius_bounded(n);
+        n = n + 1;
+    }
+    return total;
+}
+
+// Writes the result lines to stdout. The text comes in as a String parameter,
+// the form of a string literal that the native backend accepts.
+fn report_success(message: String) -> i64 {
+    let written: i64 = __mind_write(1, message.addr, message.len, 0 - 1);
+    if written != message.len {
+        return 90;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    if mobius_bounded(1) != 1 || mobius_bounded(2) != -1 {
+        return 1;
+    }
+    if mobius_bounded(4) != 0 || mobius_bounded(36) != 0 {
+        return 2;
+    }
+    if mobius_bounded(6) != 1 || mobius_bounded(30) != -1 {
+        return 3;
+    }
+    if mobius_bounded(210) != 1 {
+        return 4;
+    }
+    if mertens_finite(0) != 0 || mertens_finite(10) != -1 {
+        return 5;
+    }
+    if mobius_bounded(0) != 2 || mobius_bounded(10001) != 2 {
+        return 6;
+    }
+    if mertens_finite(101) != 10001 {
+        return 7;
+    }
+    return report_success("EXAMPLE=MOBIUS_FINITE\nSCOPE=FINITE_EXAMPLE\n");
+}

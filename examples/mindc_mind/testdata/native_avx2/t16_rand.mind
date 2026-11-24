@@ -1,0 +1,220 @@
+// Fixed-seed bit 4 oracle (u16 offset lists). 18 calls, 100000 terms each. Term
+// count is 1800000. Modes per case: bits 3+4, bit 4, bit clear. i64 and i32,
+// init 0 and 1, i32 bound above and below 2^31. Each call matches the bit-clear
+// walk on the byte list and the scalar twin. Stdout: count, bad.
+
+fn tr_neq(a: i64, b: i64) -> i64 {
+    if a != b {
+        return 1;
+    }
+    0
+}
+
+fn tr_sext(u: i64) -> i64 {
+    if u >= 2147483648 {
+        return u - 4294967296;
+    }
+    u
+}
+
+fn tr_add32(s: i64, v: i64) -> i64 {
+    t_sext_local(s, v)
+}
+
+fn t_sext_local(s: i64, v: i64) -> i64 {
+    let u: i64 = (s + v) & 4294967295;
+    tr_sext(u)
+}
+
+fn tr_lcg(s: i64) -> i64 {
+    s * 1103515245 + 12345
+}
+
+fn tr_val(j: i64, lane: i64) -> i64 {
+    ((j * 13 + lane * 3) & 7) - 3
+}
+
+fn tr_fill_off(off: i64, n: i64) -> i64 {
+    let mut j: i64 = 0;
+    let mut s: i64 = 1;
+    while j < n {
+        s = tr_lcg(s);
+        __mind_store_i64(off + j * 8, (s & 255) * 256);
+        j = j + 1;
+    }
+    0
+}
+
+fn tr_fill32(bank: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 256 {
+        tr_fill32_j(bank, j);
+        j = j + 1;
+    }
+    0
+}
+
+fn tr_fill32_j(bank: i64, j: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        __mind_store_i32(bank + j * 256 + lane * 4, tr_val(j, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn tr_fill64(bank: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 256 {
+        tr_fill64_j(bank, j);
+        j = j + 1;
+    }
+    0
+}
+
+fn tr_fill64_j(bank: i64, j: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 32 {
+        __mind_store_i64(bank + j * 256 + lane * 8, tr_val(j, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn tr_sc32(bank: i64, off: i64, n: i64, lane: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = 0;
+    while j < n {
+        let at: i64 = bank + __mind_load_i64(off + j * 8) + lane * 4;
+        s = tr_add32(s, tr_sext(__mind_load_i32(at)));
+        j = j + 1;
+    }
+    s
+}
+
+fn tr_sc64(bank: i64, off: i64, n: i64, lane: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut j: i64 = 0;
+    while j < n {
+        s = s + __mind_load_i64(bank + __mind_load_i64(off + j * 8) + lane * 8);
+        j = j + 1;
+    }
+    s
+}
+
+fn tr_exp32(bank: i64, off: i64, n: i64, exp: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 64 {
+        __mind_store_i64(exp + lane * 8, tr_sc32(bank, off, n, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn tr_exp64(bank: i64, off: i64, n: i64, exp: i64) -> i64 {
+    let mut lane: i64 = 0;
+    while lane < 32 {
+        __mind_store_i64(exp + lane * 8, tr_sc64(bank, off, n, lane));
+        lane = lane + 1;
+    }
+    0
+}
+
+fn tr_fill(buf: i64, n: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(buf + i * 8, v);
+        i = i + 1;
+    }
+    0
+}
+
+fn tr_bad(got: i64, exp: i64, n: i64, base: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut bad: i64 = 0;
+    while i < n {
+        let want: i64 = __mind_load_i64(exp + i * 8) + base;
+        bad = bad + tr_neq(__mind_load_i64(got + i * 8), want);
+        i = i + 1;
+    }
+    bad
+}
+
+fn tr_lanes(off: i64, off16: i64, n: i64, div: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < n {
+        __mind_store_i16(off16 + j * 2, __mind_load_i64(off + j * 8) / div);
+        j = j + 1;
+    }
+    0
+}
+
+fn tr_call(d: i64, out: i64, flags: i64, bound: i64, base: i64, n: i64) -> i64 {
+    tr_fill(out, n, base);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i32(d + 60, bound);
+    let bit4: i64 = flags & 16;
+    if bit4 != 0 {
+        __mind_store_i64(d + 24, __mind_load_i64(d + 72));
+        return __mind_group_accrows_i64(d);
+    }
+    __mind_store_i64(d + 24, __mind_load_i64(d + 64));
+    __mind_group_accrows_i64(d)
+}
+
+fn tr_trio(d: i64, out: i64, alt: i64, rf: i64, exp: i64, lo: i64, bound: i64, base: i64, n: i64) -> i64 {
+    tr_call(d, out, lo + 24, bound, base, n);
+    tr_call(d, alt, lo + 16, bound, base, n);
+    tr_call(d, rf, lo, bound, base, n);
+    tr_bad(out, exp, n, base) + tr_bad(alt, exp, n, base) + tr_bad(rf, exp, n, base) + tr_bad(out, rf, n, 0)
+}
+
+fn main() -> i64 {
+    let n: i64 = 100000;
+    let b32: i64 = __mind_alloc(65536);
+    let b64: i64 = __mind_alloc(65536);
+    let off: i64 = __mind_alloc(800000);
+    let starts: i64 = __mind_alloc(24);
+    let out: i64 = __mind_alloc(512);
+    let alt: i64 = __mind_alloc(512);
+    let exp: i64 = __mind_alloc(512);
+    let rf: i64 = __mind_alloc(512);
+    let off16: i64 = __mind_alloc(200000);
+    let d: i64 = __mind_alloc(80);
+    tr_fill_off(off, n);
+    tr_fill32(b32);
+    tr_fill64(b64);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, n);
+    __mind_store_i64(starts + 16, n);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 64, off);
+    __mind_store_i64(d + 72, off16);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 1);
+    tr_exp64(b64, off, n, exp);
+    tr_lanes(off, off16, n, 8);
+    __mind_store_i64(d + 16, b64);
+    let mut bad: i64 = 0;
+    bad = bad + tr_trio(d, out, alt, rf, exp, 0, 0, 0, 32);
+    bad = bad + tr_trio(d, out, alt, rf, exp, 1, 0, 7, 32);
+    tr_exp32(b32, off, n, exp);
+    tr_lanes(off, off16, n, 4);
+    __mind_store_i64(d + 16, b32);
+    bad = bad + tr_trio(d, out, alt, rf, exp, 4, 0, 0, 64);
+    bad = bad + tr_trio(d, out, alt, rf, exp, 5, 0, 7, 64);
+    bad = bad + tr_trio(d, out, alt, rf, exp, 4, 2147483648, 0, 64);
+    bad = bad + tr_trio(d, out, alt, rf, exp, 5, 2147483648, 7, 64);
+    let w: i64 = __mind_alloc(16);
+    __mind_store_i64(w, 1800000);
+    __mind_store_i64(w + 8, bad);
+    __mind_write(1, w, 16, 0 - 1);
+    if bad != 0 {
+        return 1;
+    }
+    0
+}

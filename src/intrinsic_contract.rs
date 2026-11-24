@@ -300,6 +300,7 @@ mod tests {
                 "cpu_features_v1",
                 "cpu_relax",
                 "group_acc32_i64",
+                "group_accrows_i64",
                 "group_bank_i64",
                 "lfence_v1",
                 "load8",
@@ -369,6 +370,7 @@ mod tests {
             ("cpu_relax", 84),
             ("group_bank_i64", 87),
             ("group_acc32_i64", 88),
+            ("group_accrows_i64", 89),
             ("atomic_load_acquire_i64", 85),
             ("atomic_store_release_i64", 86),
             ("sys_mmap", 90),
@@ -427,6 +429,10 @@ mod tests {
             ),
             (
                 "group_acc32_i64",
+                IntrinsicEffect::MemoryWrite { width_bytes: 8 },
+            ),
+            (
+                "group_accrows_i64",
                 IntrinsicEffect::MemoryWrite { width_bytes: 8 },
             ),
             ("sys_mmap", IntrinsicEffect::HostState),
@@ -502,6 +508,7 @@ mod tests {
             ("__mind_cpu_features_v1", 0),
             ("__mind_group_bank_i64", 5),
             ("__mind_group_acc32_i64", 6),
+            ("__mind_group_accrows_i64", 1),
         ] {
             let spec = STD_SURFACE_INTRINSICS
                 .iter()

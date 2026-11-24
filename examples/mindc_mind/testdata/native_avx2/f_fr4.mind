@@ -1,0 +1,274 @@
+// The kind 89 epilogue against one lane of a fixed-point row finisher, operators as written there.
+// The body in fr4_lane is the loop body of that row finisher, with
+// the same >> and << and the same sign handling. The domain is the one that finisher states:
+// |acc| < 2^50, |m| < 2^24, sh in 16..96. The guard is nv >= 2^40 (act_limit), so lim = 2^40 - 1.
+// Outside that domain the tail follows the header semantics of nb_group_epi.mind, not the finisher.
+// Stdout: 6 i64 words (lanes, bad_dst_vs_verbatim, bad_dst_vs_twin, trip_calls, notrip_calls, bad_trip).
+// Exit 0 when the three bad words are 0 and both trip outcomes were seen.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    if s == 0 {
+        return v;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn lsl(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    v << s
+}
+
+fn epi_nv(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, src: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr(lsl(x, cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + src
+}
+
+// One iteration of the finisher loop, up to nv (the guard test is made by the caller).
+fn fr4_lane(a: i64, m: i64, sh: i64, bq: i64, srcv: i64) -> i64 {
+    let mut um: i64 = m;
+    let mut mneg: i64 = 0;
+    if m < 0 {
+        um = 0 - m;
+        mneg = 1;
+    }
+    let s: i64 = sh - 1;
+    let t: i64 = s - 32;
+    let mut ua: i64 = a;
+    let mut neg: i64 = mneg;
+    if a < 0 {
+        ua = 0 - a;
+        neg = 1 - neg;
+    }
+    let x: i64 = (ua >> 32) * um;
+    let lo: i64 = (ua & 4294967295) * um;
+    let mut q: i64 = 0;
+    if s >= 32 {
+        if t <= 62 {
+            q = (x + (lo >> 32)) >> t;
+        }
+    } else {
+        q = (x << (32 - s)) + (lo >> s);
+    }
+    let mut v: i64 = (q + 1) >> 1;
+    if neg == 1 {
+        v = 0 - v;
+    }
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + srcv
+}
+
+fn rnd(p: i64) -> i64 {
+    let s: i64 = __mind_load_i64(p);
+    let n: i64 = s * 6364136223846793005 + 1;
+    __mind_store_i64(p, n);
+    n
+}
+
+fn sh_of(k: i64) -> i64 {
+    let mut sh: i64 = k & 127;
+    if sh > 80 {
+        sh = sh - 81;
+    }
+    sh + 16
+}
+
+fn mk_desc(out: i64, rows: i64, epi: i64, lim: i64) -> i64 {
+    let starts: i64 = __mind_alloc(24);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 0);
+    __mind_store_i64(starts + 16, 0);
+    let d: i64 = __mind_alloc(88);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 256);
+    __mind_store_i64(d + 16, 0);
+    __mind_store_i64(d + 24, 0);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 0);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, 33);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 7);
+    __mind_store_i64(d + 80, lim);
+    d
+}
+
+// res: +0 bad_verbatim, +8 bad_twin, +16 trip calls, +24 notrip calls, +32 bad_trip.
+fn batch(res: i64, seed: i64, rows: i64, amask: i64, mmask: i64) -> i64 {
+    let w: i64 = 32;
+    let step: i64 = 256;
+    let out: i64 = __mind_alloc(rows * step);
+    let src: i64 = __mind_alloc(rows * step);
+    let dst: i64 = __mind_alloc(rows * step);
+    let epi: i64 = __mind_alloc(rows * 64);
+    let ms: i64 = __mind_alloc(rows * 8);
+    let shs: i64 = __mind_alloc(rows * 8);
+    let sp: i64 = __mind_alloc(8);
+    __mind_store_i64(sp, seed);
+    let mut r: i64 = 0;
+    while r < rows {
+        let um0: i64 = rnd(sp) & mmask;
+        let mut m: i64 = um0;
+        if rnd(sp) < 0 {
+            m = 0 - um0;
+        }
+        let mut um: i64 = m;
+        let mut nm: i64 = 0;
+        if m < 0 {
+            um = 0 - m;
+            nm = 0 - 1;
+        }
+        let sh: i64 = sh_of(rnd(sp));
+        let s: i64 = sh - 1;
+        let mut cl: i64 = 0;
+        let mut cr1: i64 = 32;
+        let mut cr2: i64 = 64;
+        if s >= 32 {
+            if s - 32 <= 62 {
+                cr2 = s - 32;
+            }
+        }
+        if s < 32 {
+            cl = 32 - s;
+            cr1 = s;
+            cr2 = 0;
+        }
+        __mind_store_i64(ms + r * 8, m);
+        __mind_store_i64(shs + r * 8, sh);
+        let e: i64 = epi + r * 64;
+        __mind_store_i64(e, um);
+        __mind_store_i64(e + 8, nm);
+        __mind_store_i64(e + 16, cl);
+        __mind_store_i64(e + 24, cr1);
+        __mind_store_i64(e + 32, cr2);
+        __mind_store_i64(e + 40, rnd(sp) & 1023);
+        __mind_store_i64(e + 48, src + r * step);
+        __mind_store_i64(e + 56, dst + r * step);
+        let mut i: i64 = 0;
+        while i < w {
+            let mag: i64 = rnd(sp) & amask;
+            let mut a: i64 = mag;
+            if rnd(sp) < 0 {
+                a = 0 - mag;
+            }
+            __mind_store_i64(out + r * step + i * 8, a);
+            __mind_store_i64(src + r * step + i * 8, rnd(sp) & 1023);
+            i = i + 1;
+        }
+        r = r + 1;
+    }
+    let big: i64 = 9223372036854775807;
+    let guard: i64 = 1099511627775;
+    let d1: i64 = mk_desc(out, rows, epi, big);
+    let c1: i64 = __mind_group_accrows_i64(d1);
+    let mut bad_v: i64 = c1 - c1;
+    let mut bad_t: i64 = 0;
+    let mut hit: i64 = 0;
+    r = 0;
+    while r < rows {
+        let e: i64 = epi + r * 64;
+        let m: i64 = __mind_load_i64(ms + r * 8);
+        let sh: i64 = __mind_load_i64(shs + r * 8);
+        let bq: i64 = __mind_load_i64(e + 40);
+        let mut i: i64 = 0;
+        while i < w {
+            let a: i64 = __mind_load_i64(out + r * step + i * 8);
+            let sv: i64 = __mind_load_i64(src + r * step + i * 8);
+            let got: i64 = __mind_load_i64(dst + r * step + i * 8);
+            let nv: i64 = epi_nv(a, __mind_load_i64(e), __mind_load_i64(e + 8), __mind_load_i64(e + 16), __mind_load_i64(e + 24), __mind_load_i64(e + 32), bq, sv);
+            let fv: i64 = fr4_lane(a, m, sh, bq, sv);
+            if got != fv {
+                bad_v = bad_v + 1;
+            }
+            if got != nv {
+                bad_t = bad_t + 1;
+            }
+            if fv > guard {
+                hit = 0 - 1;
+            }
+            i = i + 1;
+        }
+        r = r + 1;
+    }
+    if __mind_load_i64(d1 + 72) != 0 {
+        bad_v = bad_v + 1;
+    }
+    let d2: i64 = mk_desc(out, rows, epi, guard);
+    let c2: i64 = __mind_group_accrows_i64(d2);
+    let mut bad_g: i64 = c2 - c2;
+    if __mind_load_i64(d2 + 72) != hit {
+        bad_g = bad_g + 1;
+    }
+    __mind_store_i64(res, __mind_load_i64(res) + bad_v);
+    __mind_store_i64(res + 8, __mind_load_i64(res + 8) + bad_t);
+    if hit == 0 {
+        __mind_store_i64(res + 24, __mind_load_i64(res + 24) + 1)
+    }
+    if hit != 0 {
+        __mind_store_i64(res + 16, __mind_load_i64(res + 16) + 1)
+    }
+    __mind_store_i64(res + 32, __mind_load_i64(res + 32) + bad_g);
+    0
+}
+
+fn main() -> i64 {
+    let res: i64 = __mind_alloc(40);
+    __mind_store_i64(res, 0);
+    __mind_store_i64(res + 8, 0);
+    __mind_store_i64(res + 16, 0);
+    __mind_store_i64(res + 24, 0);
+    __mind_store_i64(res + 32, 0);
+    batch(res, 271828183, 800, 1125899906842623, 16777215);
+    batch(res, 314159265, 800, 1125899906842623, 4095);
+    batch(res, 161803398, 800, 68719476735, 16777215);
+    batch(res, 141421356, 800, 1073741823, 16777215);
+    let p: i64 = __mind_alloc(48);
+    __mind_store_i64(p, 4 * 800 * 32);
+    __mind_store_i64(p + 8, __mind_load_i64(res));
+    __mind_store_i64(p + 16, __mind_load_i64(res + 8));
+    __mind_store_i64(p + 24, __mind_load_i64(res + 16));
+    __mind_store_i64(p + 32, __mind_load_i64(res + 24));
+    __mind_store_i64(p + 40, __mind_load_i64(res + 32));
+    __mind_write(1, p, 48, 0 - 1);
+    if __mind_load_i64(res) + __mind_load_i64(res + 8) + __mind_load_i64(res + 32) != 0 {
+        return 1;
+    }
+    if __mind_load_i64(res + 16) == 0 {
+        return 1;
+    }
+    if __mind_load_i64(res + 24) == 0 {
+        return 1;
+    }
+    0
+}

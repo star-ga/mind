@@ -98,6 +98,32 @@ profile (an unregistered or misspelled name, which then fails type checking); a
 registered native-only row carries no E2024. An MLIR build refuses a
 native-only row by name with E2041 before it lowers or links. argc/argv (seed
 ids 10, 11) are in both profiles: the MLIR path calls the runtime-support pair.
+
+The AVX2 group family is three FrozenNative value rows (each returns 0 and
+writes memory): `__mind_group_bank_i64(ptrs, bank, plane, pixels, group)` (87),
+`__mind_group_acc32_i64(out, bank, off, pos, neg, init)` (88) and
+`__mind_group_accrows_i64(desc)` (89, one call walks many accumulator rows).
+Kinds 87 and 88 probe the CPU and take a scalar path without AVX2; kind 89 has one
+AVX2 path behind the program's ymm entry guard. Probe-skip contract: bit 4 of
+`group` (kind 87, the group used is `group & 15`) and an `init` in [2^62, 2^63)
+(kind 88, bit 62 is cleared and "keep" is decided on the cleared value) skip the
+probe and force the AVX2 path. A program that sets a probe-skip bit must also hold
+a guarded row (any ymm row or kind 89); without one, a CPU with no AVX2 stops at
+the first VEX op (SIGILL) and prints no `isa.avx2_missing` line.
+
+| Kind | Bits | Mode |
+|---|---|---|
+| 87 | `group` bit 5 | store the low 32 bits of each code (4-byte rows) |
+| 87 | `group` bits 5 and 6 | u32 channels, 8 pixels per vector step |
+| 87 | `group` bit 6 alone, bits 7..63 | trap (ud2) before any store |
+| 88 | `init` above 3 after the probe-skip arm | trap (ud2) before any store |
+| 89 | `desc[7]` bit 0 | keep or add to `out` |
+| 89 | `desc[7]` bit 2 | i32 walk over a 4-byte bank, 64 lanes; bits 63..32 = segment bound, 2^31 or more takes the exact i64 fallback |
+| 89 | `desc[7]` bits 3, 4 | term loop: two terms per step (3), u16 lane offsets (4) |
+| 89 | `desc[7]` bit 5 | epilogue tail over the stored rows (`desc[8]` records, `desc[9]` trip flag, `desc[10]` limit) |
+| 89 | `desc[7]` bit 7 | fused row finish in registers (`desc` is i64[15]; `desc[11..14]` src, src step, dst, dst step) |
+| 89 | `desc[7]` bit 8 | u32 src and dst for bit 5 or bit 7; `desc[10]` must fit in 32 bits |
+| 89 | bit 1 with bit 2, 3 or 4; bit 6; bits 9..31; bits 63..32 without bit 2; bit 8 without bit 5 or bit 7 | trap (ud2) before any store |
 This profile types the rows; the compiler that lowers them carries a capability
 mark in its own bytes (`nbymm001`, `nbcpuf01`). A compiler without the row
 refuses the call at its own closure check (exit 3, no artifact).

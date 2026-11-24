@@ -1,0 +1,81 @@
+// Pure MIND exact prime counts and the next prime in a FINITE range.
+// No sieve table, floating point or external imports.
+// Bounded inputs are essential: the example is not a prime-number theorem.
+fn is_prime(n: i64) -> i64 {
+    if n < 2 {
+        return 0;
+    }
+    let mut d: i64 = 2;
+    // d <= n/d avoids d*d overflow.
+    while d <= n / d {
+        if n % d == 0 {
+            return 0;
+        }
+        d = d + 1;
+    }
+    return 1;
+}
+
+fn pi_bounded(limit: i64) -> i64 {
+    if limit < 0 || limit > 1000 {
+        return -1;
+    }
+    let mut n: i64 = 2;
+    let mut count: i64 = 0;
+    while n <= limit {
+        if is_prime(n) == 1 {
+            count = count + 1;
+        }
+        n = n + 1;
+    }
+    return count;
+}
+
+fn next_prime_after(n: i64) -> i64 {
+    if n < 2 || n > 1000 {
+        return -1;
+    }
+    let mut p: i64 = n + 1;
+    while p <= 1100 {
+        if is_prime(p) == 1 {
+            return p;
+        }
+        p = p + 1;
+    }
+    return -1;
+}
+
+// Writes the result lines to stdout. The text comes in as a String parameter,
+// the form of a string literal that the native backend accepts.
+fn report_success(message: String) -> i64 {
+    let written: i64 = __mind_write(1, message.addr, message.len, 0 - 1);
+    if written != message.len {
+        return 90;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    if is_prime(0) != 0 || is_prime(1) != 0 {
+        return 1;
+    }
+    if is_prime(2) != 1 || is_prime(97) != 1 {
+        return 2;
+    }
+    if is_prime(49) != 0 || is_prime(121) != 0 {
+        return 3;
+    }
+    if pi_bounded(10) != 4 || pi_bounded(100) != 25 {
+        return 4;
+    }
+    if pi_bounded(1000) != 168 {
+        return 5;
+    }
+    if next_prime_after(97) != 101 || next_prime_after(2) != 3 {
+        return 6;
+    }
+    if pi_bounded(1001) != -1 || next_prime_after(1) != -1 {
+        return 7;
+    }
+    return report_success("EXAMPLE=PRIME_COUNTING\nSCOPE=FINITE_EXAMPLE\n");
+}

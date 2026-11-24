@@ -1,0 +1,204 @@
+// Copyright 2026 STARGA Inc.
+// Kind 87 vector steps: channel loads and row stores through running pointers.
+// One store order for every bank form: group 3 rows 0..12; group 4 row 26 (x) first, then
+// for k = 0..12 the rows k, 25 - k, 27 + k (the multiply form wrote row 26 last; the vector
+// step runs only when no row overlaps another row or an input plane, so the bytes match).
+// rcx walks rows k from the pixel's address in row 0; group 4 also walks rdi (row 25 down)
+// and rax (row 26, then 27 up) from r13 = 26 * plane (nbw_g4_enter, saved and restored).
+// One `add/sub reg, r11` per row, no multiply per store. Wrapping address arithmetic: the
+// address of every store equals row * plane + bank + offset (mod 2^64) as before.
+// Store kinds sk: 0 i64 rows (32 bytes from ymm R), 1 i32 rows from i64 codes (group bit 5:
+// the low dwords of ymm R packed into xmm7, 16 bytes), 2 i32 rows from u32 channels (N32,
+// group bit 6: 32 bytes from ymm R). sk 1 rows start at bank + p*4 = bank + r14/2.
+// Channel loads: vmovdqu ymm Y, [base + r14], no address register round trip.
+// Ops: q forms vpaddq D4 / vpsubq FB (sk 0, 1), d forms vpaddd FE / vpsubd FA (sk 2).
+// llvm-mc --triple=x86_64 -x86-asm-syntax=intel -mattr=+avx2 -show-encoding
+// vmovdqu ymm1, ymmword ptr [r10 + r14]    c4 81 7e 6f 0c 32
+// vmovdqu ymm2, ymmword ptr [r12 + r14]    c4 81 7e 6f 14 34
+// vmovdqu ymm3, ymmword ptr [rdx + r14]    c4 a1 7e 6f 1c 32
+// vmovdqu ymm0, ymmword ptr [r15 + r14]    c4 81 7e 6f 04 37
+// mov rcx, rbx                             48 89 d9
+// add rcx, r14                             4c 01 f1
+// mov rcx, r14                             4c 89 f1
+// shr rcx                                  48 d1 e9
+// add rcx, rbx                             48 01 d9
+// vmovdqu xmmword ptr [rcx], xmm7          c5 fa 7f 39
+// vmovdqu xmmword ptr [rdi], xmm7          c5 fa 7f 3f
+// vmovdqu xmmword ptr [rax], xmm7          c5 fa 7f 38
+// vpaddd ymm4, ymm1, ymm2                  c5 f5 fe e2
+// vpsubd ymm5, ymm1, ymm2                  c5 f5 fa ea
+
+import std.string;
+import nb_group_sum_enc;
+
+// vmovdqu ymm y, [base + r14]: VEX3 (X = r14), B for r8..r15, SIB index 6.
+pub fn nbw_ld(code: String, ymm: i64, base: i64) -> String {
+    let rxb: i64 = if base >= 8 {
+        129
+    } else {
+        161
+    };
+    nbg_b3(nbg_b3(code, 196, rxb, 126), 111, ymm * 8 + 4, 48 + base % 8)
+}
+
+pub fn nbi_shuf(code: String, src: i64) -> String {
+    nbg_b5(code, 197, 253, 112, 248 + src, 136)
+}
+
+pub fn nbi_permq7(code: String) -> String {
+    nbg_b5(nbg_push(code, 196), 227, 253, 0, 255, 8)
+}
+
+// Store ymm R at [rm] (rm 0 rax, 1 rcx, 7 rdi): 32 bytes, or (sk 1) its low dwords as 16 bytes.
+pub fn nbw_st(code: String, sk: i64, ymm: i64, rm: i64) -> String {
+    if sk == 1 {
+        return nbg_b4(nbi_permq7(nbi_shuf(code, ymm)), 197, 250, 127, 56 + rm);
+    }
+    nbg_b4(code, 197, 254, 127, ymm * 8 + rm)
+}
+
+// add (sub = 0) / sub (sub = 1) reg, r11: the next row of a running pointer.
+pub fn nbw_row_step(code: String, reg: i64, sub: i64) -> String {
+    if sub == 1 {
+        return nbg_rr(code, 41, reg, 11);
+    }
+    nbg_rr(code, 1, reg, 11)
+}
+
+// rcx = the pixel's address in row 0: bank + r14, or (sk 1) bank + r14 / 2.
+pub fn nbw_init(code: String, sk: i64) -> String {
+    if sk == 1 {
+        return nbg_rr(nbg_b3(nbg_rr(code, 137, 1, 14), 72, 209, 233), 1, 1, 3);
+    }
+    nbg_rr(nbg_rr(code, 137, 1, 3), 1, 1, 14)
+}
+
+// ymm6 = the z row for k when k is not held in a named register, and that
+// register: z_1 ymm3 (c), z_3 ymm2 (b), z_6 ymm5 (a-b), z_9 ymm1 (a), z_12 ymm4 (a+b).
+pub fn nbw_z_reg(k: i64) -> i64 {
+    if k == 0 {
+        return 3;
+    }
+    if k == 2 {
+        return 2;
+    }
+    if k == 5 {
+        return 5;
+    }
+    if k == 8 {
+        return 1;
+    }
+    if k == 11 {
+        return 4;
+    }
+    6
+}
+
+// The register z_{k+1} is built from: b (2) for k 1..3, a-b (5) for 4..6, a (1) for 7..9,
+// a+b (4) for 10..12; c is added (k % 3 == 0) or subtracted (k % 3 == 1) into ymm6.
+pub fn nbw_z_src(k: i64) -> i64 {
+    if k < 4 {
+        return 2;
+    }
+    if k < 7 {
+        return 5;
+    }
+    if k < 10 {
+        return 1;
+    }
+    4
+}
+
+pub fn nbw_z_prep(code: String, k: i64, add: i64, sub: i64) -> String {
+    if k == 0 {
+        return code;
+    }
+    if k % 3 == 1 {
+        return nbg_rrr(code, sub, 6, nbw_z_src(k), 3);
+    }
+    if k % 3 == 0 {
+        return nbg_rrr(code, add, 6, nbw_z_src(k), 3);
+    }
+    code
+}
+
+// rdi = row 25: mov rdi, rcx ; add rdi, r13 ; sub rdi, r11
+pub fn nbw_walk_rdi(code: String) -> String {
+    nbg_rr(nbg_rr(nbg_rr(code, 137, 7, 1), 1, 7, 13), 41, 7, 11)
+}
+
+// rax = row 26: mov rax, rcx ; add rax, r13
+pub fn nbw_walk_rax(code: String) -> String {
+    nbg_rr(nbg_rr(code, 137, 0, 1), 1, 0, 13)
+}
+
+// Group 3: rows 0..12 through rcx, one add per row after the first store.
+pub fn nbw_stores3(code: String, sk: i64, add: i64, sub: i64) -> String {
+    let mut c: String = nbw_init(code, sk);
+    let mut k: i64 = 0;
+    while k < 13 {
+        c = nbw_st(nbw_z_prep(c, k, add, sub), sk, nbw_z_reg(k), 1);
+        if k < 12 {
+            c = nbw_row_step(c, 1, 0);
+        }
+        k = k + 1;
+    }
+    c
+}
+
+// Group 4: rdi = row 25 (rcx + r13 - r11), rax = row 26 (rcx + r13); x at row 26, then
+// rcx rows k, rdi rows 25 - k, rax rows 27 + k for k = 0..12. ymm7 holds x -+ z.
+pub fn nbw_stores4(code: String, sk: i64, add: i64, sub: i64) -> String {
+    let mut c: String = nbw_walk_rax(nbw_walk_rdi(nbw_init(code, sk)));
+    c = nbw_row_step(nbw_st(c, sk, 0, 0), 0, 0);
+    let mut k: i64 = 0;
+    while k < 13 {
+        let reg: i64 = nbw_z_reg(k);
+        c = nbw_st(nbw_z_prep(c, k, add, sub), sk, reg, 1);
+        c = nbw_st(nbg_rrr(c, sub, 7, 0, reg), sk, 7, 7);
+        c = nbw_st(nbg_rrr(c, add, 7, 0, reg), sk, 7, 0);
+        if k < 12 {
+            c = nbw_row_step(nbw_row_step(nbw_row_step(c, 1, 0), 7, 1), 0, 0);
+        }
+        k = k + 1;
+    }
+    c
+}
+
+// The loads and the stores of one vector step; r14 is already the pixel's channel offset.
+// ymm1 a, ymm2 b, ymm3 c (ymm0 x), ymm4 a+b, ymm5 a-b.
+pub fn nbw_step(code: String, g4: i64, sk: i64) -> String {
+    let add: i64 = if sk == 2 {
+        254
+    } else {
+        212
+    };
+    let sub: i64 = if sk == 2 {
+        250
+    } else {
+        251
+    };
+    let mut c: String = code;
+    if g4 == 1 {
+        c = nbw_ld(c, 0, 15);
+    }
+    c = nbw_ld(nbw_ld(nbw_ld(c, 1, 10), 2, 12), 3, 2);
+    c = nbg_rrr(nbg_rrr(c, add, 4, 1, 2), sub, 5, 1, 2);
+    if g4 == 1 {
+        return nbw_stores4(c, sk, add, sub);
+    }
+    nbw_stores3(c, sk, add, sub)
+}
+
+// push r13 ; r13 = 26 * plane (imul r13, r11, 26): the group 4 row walkers' base.
+pub fn nbw_g4_enter(code: String, g4: i64) -> String {
+    if g4 == 1 {
+        return nbg_b4(nbg_b2(code, 65, 85), 77, 107, 235, 26);
+    }
+    code
+}
+
+// pop r13
+pub fn nbw_g4_leave(code: String) -> String {
+    nbg_b2(code, 65, 93)
+}

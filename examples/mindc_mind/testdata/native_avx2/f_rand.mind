@@ -1,0 +1,333 @@
+// Random epilogue lanes (W=32 and W=64, padded out_step, mixed shift counts, trips at random lanes)
+// and walk plus epilogue. Counts: W=32 and W=64 at least 100000 lanes, walk terms at least 100000
+// for init 0 and for init 1. The row finisher leg lives in f_fr4.mind. Exit 0 when bad is 0.
+// Stdout is 6 i64 words: lanes32, bad32, lanes64, bad64, terms, bad_walk.
+
+fn lo32(v: i64) -> i64 {
+    v & 4294967295
+}
+
+fn lsr(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    if s == 0 {
+        return v;
+    }
+    (v >> s) & ((1 << (64 - s)) - 1)
+}
+
+fn lsl(v: i64, s: i64) -> i64 {
+    if s < 0 {
+        return 0;
+    }
+    if s > 63 {
+        return 0;
+    }
+    v << s
+}
+
+fn epi_nv(a: i64, um: i64, nm: i64, cl: i64, cr1: i64, cr2: i64, bq: i64, src: i64) -> i64 {
+    let mut sg: i64 = 0;
+    if a < 0 {
+        sg = 0 - 1;
+    }
+    let ua: i64 = (a ^ sg) - sg;
+    let x: i64 = lo32(lsr(ua, 32)) * lo32(um);
+    let lo: i64 = lo32(ua) * lo32(um);
+    let q: i64 = lsr(lsl(x, cl) + lsr(lo, cr1), cr2);
+    let mut v: i64 = lsr(q + 1, 1);
+    let n: i64 = sg ^ nm;
+    v = (v ^ n) - n;
+    v = v + bq;
+    if v < 0 {
+        v = 0;
+    }
+    v + src
+}
+
+fn rnd(p: i64) -> i64 {
+    let s: i64 = __mind_load_i64(p);
+    let n: i64 = s * 6364136223846793005 + 1;
+    __mind_store_i64(p, n);
+    n
+}
+
+fn rcnt(p: i64) -> i64 {
+    let mut k: i64 = rnd(p) & 127;
+    if k > 70 {
+        k = k - 71;
+    }
+    k
+}
+
+// Counts: a wide row takes cl, cr1, cr2 in 0..70 (q is non-zero in many lanes and 64 and up gives 0 in some),
+// a tame row takes counts that keep q dense. lmode 0: lim is the largest nv, no lane trips.
+// lmode 1: lim is that value minus 1, so the lane or lanes with the largest nv trip, at a random place.
+fn rand_epi(seed: i64, rows: i64, w: i64, pad: i64, lmode: i64) -> i64 {
+    let step: i64 = w * 8 + pad;
+    let cells: i64 = step / 8;
+    let out: i64 = __mind_alloc(rows * step);
+    let src: i64 = __mind_alloc(rows * w * 8);
+    let dst: i64 = __mind_alloc(rows * w * 8);
+    let want: i64 = __mind_alloc(rows * w * 8);
+    let epi: i64 = __mind_alloc(rows * 64);
+    let starts: i64 = __mind_alloc(24);
+    let sp: i64 = __mind_alloc(8);
+    __mind_store_i64(sp, seed);
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, 0);
+    __mind_store_i64(starts + 16, 0);
+    let mut top: i64 = 0 - 9223372036854775807 - 1;
+    let mut r: i64 = 0;
+    while r < rows {
+        let e: i64 = epi + r * 64;
+        let mut nm: i64 = 0;
+        if rnd(sp) < 0 {
+            nm = 0 - 1;
+        }
+        let tame: i64 = rnd(sp) & 1;
+        let mut cl: i64 = rcnt(sp);
+        let mut cr1: i64 = rcnt(sp);
+        let mut cr2: i64 = rcnt(sp);
+        if tame == 1 {
+            cl = rnd(sp) & 3;
+            cr1 = 28 + (rnd(sp) & 7);
+            cr2 = rnd(sp) & 31;
+        }
+        let mut bq: i64 = rnd(sp);
+        if (rnd(sp) & 1) == 1 {
+            bq = rnd(sp) & 255;
+        }
+        let um: i64 = rnd(sp);
+        __mind_store_i64(e, um);
+        __mind_store_i64(e + 8, nm);
+        __mind_store_i64(e + 16, cl);
+        __mind_store_i64(e + 24, cr1);
+        __mind_store_i64(e + 32, cr2);
+        __mind_store_i64(e + 40, bq);
+        __mind_store_i64(e + 48, src + r * w * 8);
+        __mind_store_i64(e + 56, dst + r * w * 8);
+        let mut j: i64 = 0;
+        while j < cells {
+            let mut cv: i64 = 987654321 + j;
+            if j < w {
+                let mut a: i64 = rnd(sp);
+                let mut sv: i64 = rnd(sp);
+                if tame == 1 {
+                    a = a >> 16;
+                    sv = sv & 1023;
+                }
+                cv = a;
+                __mind_store_i64(src + (r * w + j) * 8, sv);
+                let nv: i64 = epi_nv(a, um, nm, cl, cr1, cr2, bq, sv);
+                __mind_store_i64(want + (r * w + j) * 8, nv);
+                if nv > top {
+                    top = nv;
+                }
+            }
+            __mind_store_i64(out + r * step + j * 8, cv);
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    let mut lim: i64 = top;
+    if lmode == 1 {
+        lim = top - 1;
+    }
+    let mut flags: i64 = 33;
+    if w == 64 {
+        flags = 37;
+    }
+    let d: i64 = __mind_alloc(88);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, step);
+    __mind_store_i64(d + 16, 0);
+    __mind_store_i64(d + 24, 0);
+    __mind_store_i64(d + 32, starts);
+    __mind_store_i64(d + 40, 0);
+    __mind_store_i64(d + 48, rows);
+    __mind_store_i64(d + 56, flags);
+    __mind_store_i64(d + 64, epi);
+    __mind_store_i64(d + 72, 7);
+    __mind_store_i64(d + 80, lim);
+    let call: i64 = __mind_group_accrows_i64(d);
+    let mut bad: i64 = call - call;
+    let mut trip: i64 = 0;
+    r = 0;
+    while r < rows {
+        let mut j: i64 = 0;
+        while j < cells {
+            if j < w {
+                let nv: i64 = __mind_load_i64(want + (r * w + j) * 8);
+                if __mind_load_i64(dst + (r * w + j) * 8) != nv {
+                    bad = bad + 1;
+                }
+                if nv > lim {
+                    trip = 0 - 1;
+                }
+            }
+            if j >= w {
+                if __mind_load_i64(out + r * step + j * 8) != 987654321 + j {
+                    bad = bad + 1;
+                }
+            }
+            j = j + 1;
+        }
+        r = r + 1;
+    }
+    if __mind_load_i64(d + 72) != trip {
+        bad = bad + 1;
+    }
+    if lmode == 1 {
+        if trip != 0 - 1 {
+            if top != 0 - 9223372036854775807 - 1 {
+                bad = bad + 1;
+            }
+        }
+    }
+    bad
+}
+
+fn walk_one(init: i64, rows: i64, terms: i64, seed: i64) -> i64 {
+    let blocks: i64 = 16;
+    let bank: i64 = __mind_alloc(blocks * 256);
+    let off: i64 = __mind_alloc(terms * 2 * 8);
+    let starts: i64 = __mind_alloc(24);
+    let step: i64 = 256;
+    let out_a: i64 = __mind_alloc(rows * step);
+    let out_b: i64 = __mind_alloc(rows * step);
+    let src: i64 = __mind_alloc(rows * step);
+    let dst: i64 = __mind_alloc(rows * step);
+    let epi: i64 = __mind_alloc(rows * 64);
+    let sp: i64 = __mind_alloc(8);
+    __mind_store_i64(sp, seed);
+    let mut j: i64 = 0;
+    while j < blocks {
+        let mut i: i64 = 0;
+        while i < 32 {
+            __mind_store_i64(bank + j * 256 + i * 8, (j + 1) * 17 + i * 3);
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+    j = 0;
+    while j < terms * 2 {
+        __mind_store_i64(off + j * 8, (j - (j / blocks) * blocks) * 256);
+        j = j + 1;
+    }
+    __mind_store_i64(starts, 0);
+    __mind_store_i64(starts + 8, terms);
+    __mind_store_i64(starts + 16, terms * 2);
+    let lim: i64 = rnd(sp);
+    let mut r: i64 = 0;
+    while r < rows {
+        let e: i64 = epi + r * 64;
+        let mut nm: i64 = 0;
+        if rnd(sp) < 0 {
+            nm = 0 - 1;
+        }
+        __mind_store_i64(e, rnd(sp) & 4294967295);
+        __mind_store_i64(e + 8, nm);
+        __mind_store_i64(e + 16, rnd(sp) & 63);
+        __mind_store_i64(e + 24, rnd(sp) & 63);
+        __mind_store_i64(e + 32, rnd(sp) & 63);
+        __mind_store_i64(e + 40, rnd(sp) & 255);
+        __mind_store_i64(e + 48, src + r * step);
+        __mind_store_i64(e + 56, dst + r * step);
+        let mut i: i64 = 0;
+        while i < 32 {
+            let a: i64 = rnd(sp) & 4095;
+            __mind_store_i64(out_a + r * step + i * 8, a);
+            __mind_store_i64(out_b + r * step + i * 8, a);
+            __mind_store_i64(src + r * step + i * 8, rnd(sp) & 255);
+            i = i + 1;
+        }
+        r = r + 1;
+    }
+    let da: i64 = __mind_alloc(88);
+    let db: i64 = __mind_alloc(88);
+    __mind_store_i64(da, out_a);
+    __mind_store_i64(da + 8, step);
+    __mind_store_i64(da + 16, bank);
+    __mind_store_i64(da + 24, off);
+    __mind_store_i64(da + 32, starts);
+    __mind_store_i64(da + 40, 0);
+    __mind_store_i64(da + 48, rows);
+    __mind_store_i64(da + 56, init + 32);
+    __mind_store_i64(da + 64, epi);
+    __mind_store_i64(da + 72, 3);
+    __mind_store_i64(da + 80, lim);
+    __mind_store_i64(db, out_b);
+    __mind_store_i64(db + 8, step);
+    __mind_store_i64(db + 16, bank);
+    __mind_store_i64(db + 24, off);
+    __mind_store_i64(db + 32, starts);
+    __mind_store_i64(db + 40, 0);
+    __mind_store_i64(db + 48, rows);
+    __mind_store_i64(db + 56, init);
+    __mind_store_i64(db + 64, 0);
+    __mind_store_i64(db + 72, 3);
+    __mind_store_i64(db + 80, 0);
+    let ca: i64 = __mind_group_accrows_i64(da);
+    let cb: i64 = __mind_group_accrows_i64(db);
+    let mut bad: i64 = (ca - ca) + (cb - cb);
+    let mut trip: i64 = 0;
+    r = 0;
+    while r < rows {
+        let e: i64 = epi + r * 64;
+        let um: i64 = __mind_load_i64(e);
+        let nm: i64 = __mind_load_i64(e + 8);
+        let cl: i64 = __mind_load_i64(e + 16);
+        let cr1: i64 = __mind_load_i64(e + 24);
+        let cr2: i64 = __mind_load_i64(e + 32);
+        let bq: i64 = __mind_load_i64(e + 40);
+        let mut i: i64 = 0;
+        while i < 32 {
+            if __mind_load_i64(out_a + r * step + i * 8) != __mind_load_i64(out_b + r * step + i * 8) {
+                bad = bad + 1;
+            }
+            let a: i64 = __mind_load_i64(out_b + r * step + i * 8);
+            let sv: i64 = __mind_load_i64(src + r * step + i * 8);
+            let nv: i64 = epi_nv(a, um, nm, cl, cr1, cr2, bq, sv);
+            if __mind_load_i64(dst + r * step + i * 8) != nv {
+                bad = bad + 1;
+            }
+            if nv > lim {
+                trip = 0 - 1;
+            }
+            i = i + 1;
+        }
+        r = r + 1;
+    }
+    if __mind_load_i64(da + 72) != trip {
+        bad = bad + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let lanes32: i64 = 2 * 2048 * 32;
+    let lanes64: i64 = 2 * 1024 * 64;
+    let bad32: i64 = rand_epi(305419896, 2048, 32, 8, 0) + rand_epi(305419901, 2048, 32, 320, 1);
+    let bad64: i64 = rand_epi(305419897, 1024, 64, 64, 0) + rand_epi(305419902, 1024, 64, 8, 1);
+    let bad0: i64 = walk_one(0, 25, 2000, 305419899);
+    let bad1: i64 = walk_one(1, 25, 2000, 305419900);
+    let terms: i64 = 25 * 4000 * 2;
+    let bad_walk: i64 = bad0 + bad1;
+    let p: i64 = __mind_alloc(48);
+    __mind_store_i64(p, lanes32);
+    __mind_store_i64(p + 8, bad32);
+    __mind_store_i64(p + 16, lanes64);
+    __mind_store_i64(p + 24, bad64);
+    __mind_store_i64(p + 32, terms);
+    __mind_store_i64(p + 40, bad_walk);
+    __mind_write(1, p, 48, 0 - 1);
+    if bad32 + bad64 + bad_walk != 0 {
+        return 1;
+    }
+    0
+}

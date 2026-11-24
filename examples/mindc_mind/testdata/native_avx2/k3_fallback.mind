@@ -1,0 +1,205 @@
+// i32-walk fast path and fallback, 3 rows, out_step, starts_step, add and sub lists,
+// init keep, against a scalar i64 oracle and real i64-walk (kind 89, bit 2 clear).
+// Stdout: eight bad counts (fast, fallback, i64-walk, fallback edge, i64-walk edge, then the
+// alias row on fast, fallback and i64-walk: out is also the offset list). Exit 0
+// when all are 0. i64-walk (bit 2 clear) writes lanes 0..31 only, so it is compared
+// on 32 lanes. The fallback bound field is 2^31. See nb_group_i32w.mind.
+
+fn xc(j: i64, lane: i64, set: i64) -> i64 {
+    let t: i64 = j * 37 + lane * 11;
+    let m: i64 = t - (t / 2001) * 2001;
+    if set == 1 {
+        if lane == 5 {
+            return 2147483647;
+        }
+        if lane == 6 {
+            return 0 - 2147483648;
+        }
+        if lane == 7 {
+            if j == 3 {
+                return 0 - 2147483648;
+            }
+        }
+    }
+    m - 1000
+}
+
+fn xfill(b32: i64, b64: i64, o32: i64, o64: i64, set: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < 6 {
+        __mind_store_i64(o32 + j * 8, j * 256);
+        __mind_store_i64(o64 + j * 8, j * 512);
+        let mut l: i64 = 0;
+        while l < 64 {
+            let v: i64 = xc(j, l, set);
+            __mind_store_i32(b32 + j * 256 + l * 4, v);
+            __mind_store_i64(b64 + j * 512 + l * 8, v);
+            l = l + 1;
+        }
+        j = j + 1;
+    }
+    0
+}
+
+fn xstarts(s: i64) -> i64 {
+    __mind_store_i64(s, 0);
+    __mind_store_i64(s + 8, 3);
+    __mind_store_i64(s + 16, 6);
+    __mind_store_i64(s + 24, 1);
+    __mind_store_i64(s + 32, 2);
+    __mind_store_i64(s + 40, 5);
+    __mind_store_i64(s + 48, 2);
+    __mind_store_i64(s + 56, 4);
+    __mind_store_i64(s + 64, 4);
+    0
+}
+
+fn xpre(out: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 192 {
+        __mind_store_i64(out + i * 8, 100 + i * 3);
+        i = i + 1;
+    }
+    0
+}
+
+fn xdesc(out: i64, bank: i64, off: i64, s: i64, init: i64) -> i64 {
+    let d: i64 = __mind_alloc(64);
+    __mind_store_i64(d, out);
+    __mind_store_i64(d + 8, 512);
+    __mind_store_i64(d + 16, bank);
+    __mind_store_i64(d + 24, off);
+    __mind_store_i64(d + 32, s);
+    __mind_store_i64(d + 40, 24);
+    __mind_store_i64(d + 48, 3);
+    __mind_store_i64(d + 56, init);
+    d
+}
+
+fn xoracle(b64: i64, o64: i64, s: i64, exp: i64) -> i64 {
+    let mut r: i64 = 0;
+    while r < 3 {
+        let j0: i64 = __mind_load_i64(s + r * 24);
+        let j1: i64 = __mind_load_i64(s + r * 24 + 8);
+        let j2: i64 = __mind_load_i64(s + r * 24 + 16);
+        let mut l: i64 = 0;
+        while l < 64 {
+            let mut a: i64 = 100 + (r * 64 + l) * 3;
+            let mut j: i64 = j0;
+            while j < j1 {
+                a = a + __mind_load_i64(b64 + __mind_load_i64(o64 + j * 8) + l * 8);
+                j = j + 1;
+            }
+            while j < j2 {
+                a = a - __mind_load_i64(b64 + __mind_load_i64(o64 + j * 8) + l * 8);
+                j = j + 1;
+            }
+            __mind_store_i64(exp + (r * 64 + l) * 8, a);
+            l = l + 1;
+        }
+        r = r + 1;
+    }
+    0
+}
+
+fn xbad(got: i64, exp: i64, lanes: i64) -> i64 {
+    let mut r: i64 = 0;
+    let mut bad: i64 = 0;
+    while r < 3 {
+        let mut l: i64 = 0;
+        while l < lanes {
+            let i: i64 = r * 64 + l;
+            if __mind_load_i64(got + i * 8) != __mind_load_i64(exp + i * 8) {
+                bad = bad + 1;
+            }
+            l = l + 1;
+        }
+        r = r + 1;
+    }
+    bad
+}
+
+fn xrun(set: i64, init: i64, bound: i64, k2: i64) -> i64 {
+    let b32: i64 = __mind_alloc(6 * 256);
+    let b64: i64 = __mind_alloc(6 * 512);
+    let o32: i64 = __mind_alloc(48);
+    let o64: i64 = __mind_alloc(48);
+    let s: i64 = __mind_alloc(72);
+    let out: i64 = __mind_alloc(1536);
+    let exp: i64 = __mind_alloc(1536);
+    xfill(b32, b64, o32, o64, set);
+    xstarts(s);
+    xpre(out);
+    xoracle(b64, o64, s, exp);
+    let mut d: i64 = xdesc(out, b32, o32, s, init);
+    if k2 == 1 {
+        d = xdesc(out, b64, o64, s, 1);
+    }
+    if bound != 0 {
+        __mind_store_i32(d + 60, bound)
+    }
+    let r: i64 = __mind_group_accrows_i64(d);
+    xbad(out, exp, 64 - 32 * k2) + r
+}
+
+// One row, one add term. The offset list is the out row, so the first lane store
+// overwrites off[0]. Every read of the row comes before its stores (i64-walk order).
+fn xalias(bound: i64, k2: i64) -> i64 {
+    let b32: i64 = __mind_alloc(256);
+    let b64: i64 = __mind_alloc(512);
+    let out: i64 = __mind_alloc(512);
+    let s: i64 = __mind_alloc(24);
+    let mut l: i64 = 0;
+    while l < 64 {
+        __mind_store_i32(b32 + l * 4, 1000 + l * 7);
+        __mind_store_i64(b64 + l * 8, 1000 + l * 7);
+        __mind_store_i64(out + l * 8, 0);
+        l = l + 1;
+    }
+    __mind_store_i64(s, 0);
+    __mind_store_i64(s + 8, 1);
+    __mind_store_i64(s + 16, 1);
+    let mut d: i64 = xdesc(out, b32, out, s, 4);
+    if k2 == 1 {
+        d = xdesc(out, b64, out, s, 0);
+    }
+    __mind_store_i64(d + 48, 1);
+    if bound != 0 {
+        __mind_store_i32(d + 60, bound)
+    }
+    let mut bad: i64 = __mind_group_accrows_i64(d);
+    l = 0;
+    while l < 64 - 32 * k2 {
+        if __mind_load_i64(out + l * 8) != 1000 + l * 7 {
+            bad = bad + 1;
+        }
+        l = l + 1;
+    }
+    bad
+}
+
+fn main() -> i64 {
+    let w: i64 = __mind_alloc(64);
+    // fast path (bound 0), fallback (bound 2^31), real i64-walk, on small codes; fallback + i64-walk on edge codes.
+    let a: i64 = xrun(0, 5, 0, 0);
+    let b: i64 = xrun(0, 5, 2147483648, 0);
+    let c: i64 = xrun(0, 1, 0, 1);
+    let e: i64 = xrun(1, 5, 2147483648, 0);
+    let f: i64 = xrun(1, 1, 0, 1);
+    __mind_store_i64(w, a);
+    __mind_store_i64(w + 8, b);
+    __mind_store_i64(w + 16, c);
+    __mind_store_i64(w + 24, e);
+    __mind_store_i64(w + 32, f);
+    let g: i64 = xalias(0, 0);
+    let h: i64 = xalias(2147483648, 0);
+    let k: i64 = xalias(0, 1);
+    __mind_store_i64(w + 40, g);
+    __mind_store_i64(w + 48, h);
+    __mind_store_i64(w + 56, k);
+    __mind_write(1, w, 64, 0 - 1);
+    if a + b + c + e + f + g + h + k != 0 {
+        return 1;
+    }
+    0
+}
