@@ -124,7 +124,9 @@ the first VEX op (SIGILL) and prints no `isa.avx2_missing` line.
 | 89 | `desc[7]` bit 7 | fused row finish in registers (`desc` is i64[15]; `desc[11..14]` src, src step, dst, dst step) |
 | 89 | `desc[7]` bit 8 | u32 src and dst for bit 5 or bit 7; `desc[10]` must fit in 32 bits |
 | 89 | bit 1 with bit 2, 3 or 4; bit 6; bits 9..31; bits 63..32 without bit 2; bit 8 without bit 5 or bit 7 | trap (ud2) before any store |
+
 A `desc[7]` value of 2 (bit 1 set, no other mode bit) is valid and starts the accumulator row from zero.
+
 This profile types the rows; the compiler that lowers them carries a capability
 mark in its own bytes (`nbymm001`, `nbcpuf01`). A compiler without the row
 refuses the call at its own closure check (exit 3, no artifact).
