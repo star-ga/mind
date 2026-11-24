@@ -127,7 +127,7 @@ def _merged_selftest() -> bool:
         ("adm", plain, generic, ok(elf(b"a")), rows(libc={"adm"}, admit={"adm": [(1, {}, ("8",), b"x")]}), 1),
         (kb, k87, ref1, cand0, rows(), 0), (kb[:-5] + "_x.mind", k87, ref1, cand0, rows(), 1),
         (kb, k87, ok(elf(b"e")), cand0, rows(), 1), (kb, k87, ref1, ok(elf(b"c2")), rows(), 1),
-        (kb, k87, ref1, ok(elf(b"c")), rows(), 1),
+        (kb, k87, ref1, ok(elf(b"c")), rows(), 1), (kb, k87, cand0, ref1, rows(), 1),
         ("adm", plain, other, ok(elf(b"a")), admit_ok, 1), ("named", plain, generic, lane, rows(), 1),
         ("named", plain, code, lane, rows(arity), 2), ("named", plain, ok(elf(b"a")), lane, rows(), 1),
         ("named", plain, ok(elf(b"a")), lane, rows(arity), 2),
