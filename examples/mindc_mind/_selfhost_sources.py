@@ -364,15 +364,14 @@ def _argv_images(items: list, cwd) -> list[bytes]:
     return images
 
 
-def start_child(argv, payload=None, *, popen: bool = False, refusal_control: bool = False, core_limit: bool = True,
-                **kwargs):
+def start_child(argv, payload=None, *, popen: bool = False, refusal_control: bool = False, **kwargs):
     """THE one start of a harness child that gets bytes on stdin or an image file on argv; a seed or candidate
     compiler reads its source only there. Any other process start in a tracked Python file is a row of
     PROCESS_STARTS (_process_starts.py). `payload` is the whole stdin (None: no bytes). Before the start,
     raw_compiler_source_error raises RawCompilerSourceError. popen=True: a started Popen that reads the payload from a
     file (for a caller that samples the child). refusal_control=True: the one raw send of compiler source, a control
     that the lane rules refuse it; a run that is not refused by a `lane.` key raises, so it never gives an image.
-    core_limit=True (default): core_limit_argv wraps the program, so every child gets the one core limit."""
+    Every child gets the one core limit of core_limit_argv."""
     if "input" in kwargs or kwargs.get("stdin") not in (None, subprocess.DEVNULL):
         raise ValueError("start_child: stdin bytes go only through `payload`")
     program = argv if isinstance(argv, (str, bytes, os.PathLike)) else argv[0]
@@ -380,8 +379,7 @@ def start_child(argv, payload=None, *, popen: bool = False, refusal_control: boo
                                       path=(kwargs.get("env") or os.environ).get("PATH"))
     if error and not refusal_control:
         raise RawCompilerSourceError(error)
-    if core_limit:
-        argv = core_limit_argv(argv)
+    argv = core_limit_argv(argv)
     if not popen:
         result = subprocess.run(argv, input=payload, **kwargs)
         if refusal_control and (result.returncode == 0 or b"(lane." not in (result.stderr or b"")):
@@ -397,34 +395,21 @@ def start_child(argv, payload=None, *, popen: bool = False, refusal_control: boo
         return subprocess.Popen(argv, stdin=feed, **kwargs)
 
 
-def _core_limit_target(argv) -> bool:
-    """True when argv[0] is a bare name or a plausible executable (an ELF header or a script), so prlimit can exec it.
-    False for a path that is absent or not executable: subprocess then raises its OSError, as an image that does not
-    start did before the wrapper, instead of prlimit turning that into its own exit status."""
-    first = os.fsdecode(argv[0]) if argv else ""
-    if os.sep not in first and not (os.altsep and os.altsep in first):
-        return True
-    try:
-        head = pathlib.Path(first).read_bytes()[:64]
-    except OSError:
-        return False
-    return head.startswith(b"#!") or (head.startswith(b"\x7fELF") and len(head) == 64)
-
-
 def core_limit_argv(argv):
-    """The argv of an image run through util-linux `prlimit`: the soft core size limit 1, the hard limit unchanged
-    (soft 0 when the hard limit is 0). Never min(1, hard): RLIM_INFINITY is -1 on some Python versions, and that min
-    gave an unlimited soft limit. At a soft limit of exactly 1 Linux aborts a dump to a core_pattern pipe, and it
-    writes no core file under one page: a trap starts no dump handler, and the exit status (a trap is -4) does not
-    change. prlimit execs the program, so the caller still reads that status, and the start is safe with threads
-    (unlike a preexec_fn). qemu-user writes its own 1-byte core file of a trapped guest into its working directory,
-    so an emulator child runs in a temporary directory."""
+    """The one core limit of a run of a built test program; returns `argv` as a list. It sets the soft core size limit
+    of THIS process to 1 with the hard limit unchanged (soft 0 when the hard limit is 0), and a child gets the limits of
+    its parent at its start. One setrlimit call changes the limits of the whole process at once, so the call is safe
+    with threads (a preexec_fn is not). No wrapper program starts the child: the exec stays in subprocess, so a busy
+    file still raises OSError (ETXTBSY) in the caller and the busy-exec retry of exec_run and run_image still fires.
+    Never min(1, hard): RLIM_INFINITY is -1 on some Python versions, and that min gave an unlimited soft limit. At a
+    soft limit of exactly 1 Linux aborts a dump to a core_pattern pipe, and it writes no core file under one page: a
+    trap starts no dump handler, and the exit status (a trap is -4) does not change. The harness process and its other
+    children keep the same soft limit after the first call. qemu-user writes its own 1-byte core file of a trapped
+    guest into its working directory, so an emulator child runs in a temporary directory."""
     import resource  # POSIX only: the images are Linux programs
     hard = resource.getrlimit(resource.RLIMIT_CORE)[1]
-    program = [argv] if isinstance(argv, (str, bytes, os.PathLike)) else list(argv)
-    if not _core_limit_target(program):
-        return program
-    return [shutil.which("prlimit") or "/usr/bin/prlimit", f"--core={0 if hard == 0 else 1}:", "--", *program]
+    resource.setrlimit(resource.RLIMIT_CORE, (0 if hard == 0 else 1, hard))
+    return [argv] if isinstance(argv, (str, bytes, os.PathLike)) else list(argv)
 
 
 def core_limit_check(run_image) -> bool:

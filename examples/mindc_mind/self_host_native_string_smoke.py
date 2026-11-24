@@ -270,7 +270,7 @@ def run_measured(image: bytes, tmp: pathlib.Path, timeout: int = 120) -> tuple[i
     exe = tmp / "prog"
     exe.write_bytes(image)
     exe.chmod(0o755)
-    p = subprocess.Popen(["/usr/bin/time", "-f", "RSS_KIB=%M", str(exe)], stdin=subprocess.DEVNULL,
+    p = subprocess.Popen(core_limit_argv(["/usr/bin/time", "-f", "RSS_KIB=%M", str(exe)]), stdin=subprocess.DEVNULL,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     try:
         out, err = p.communicate(timeout=timeout)

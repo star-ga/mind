@@ -14,7 +14,7 @@ sys.path.insert(0,str(HERE))
 from native_c_call_plan_check import words,ty,sha
 from native_dynamic_writer_check import encoder
 from _stdlib_manifest import seed_blob
-from _selfhost_sources import self_mode_image, start_child
+from _selfhost_sources import core_limit_argv, self_mode_image, start_child
 
 def cases():
  rows=[]
@@ -211,7 +211,7 @@ def mutations():
     code.write_bytes(p.stdout[48:])
     desc=dict(r,symbol='fixture_'+str(rows.index(r)),code=str(code),fixup=fixup)
     path=observed/'execution.json';path.write_text(json.dumps(desc))
-    result=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--child',str(path)],
+    result=subprocess.run(core_limit_argv([sys.executable,str(Path(__file__).resolve()),'--child',str(path)]),
                           capture_output=True,timeout=15,preexec_fn=limits)
     (dest/'execution.stdout').write_bytes(result.stdout)
     (dest/'execution.stderr').write_bytes(result.stderr)

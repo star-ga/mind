@@ -33,6 +33,8 @@ import resource
 import subprocess
 import sys
 
+from _selfhost_sources import core_limit_argv
+
 MARK = "cf-oracle-child-ok"
 # Leave headroom for the parent inside its 2 GiB cgroup. An oracle allocation
 # failure is a failed check, never a reason to exceed the caller's memory cap.
@@ -87,7 +89,7 @@ def run_checked_child(smoke: pathlib.Path, mode: str, so: str, out: pathlib.Path
         return False, "libc_malloc_debug.so.0 not found: the heap check cannot run (fail closed)"
     env = dict(os.environ, LD_PRELOAD=lib, GLIBC_TUNABLES="glibc.malloc.check=3")
     try:
-        r = subprocess.run([sys.executable, str(smoke), "--so-child", mode, so, str(out)], env=env,
+        r = subprocess.run(core_limit_argv([sys.executable, str(smoke), "--so-child", mode, so, str(out)]), env=env,
                            capture_output=True, timeout=timeout, preexec_fn=child_limits)
     except subprocess.TimeoutExpired:
         return False, f"child timed out after {timeout} s"
