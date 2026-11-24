@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3531 | **Est. tokens:** ~6,207,755
-**Generated:** 2026-11-24 02:01 UTC
+**Files:** 3531 | **Est. tokens:** ~6,208,165
+**Generated:** 2026-11-24 08:06 UTC
 
 ## Token Budget Guide
 
@@ -44,10 +44,10 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 45 | ~130,893 |
+| `docs/` | 45 | ~130,894 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,044 |
-| `docs/compiler/` | 11 | ~30,392 |
+| `docs/compiler/` | 11 | ~30,424 |
 | `docs/design/` | 5 | ~12,746 |
 | `docs/gates/` | 1 | ~4,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 359 | ~1,077,172 |
+| `examples/mindc_mind/` | 359 | ~1,077,549 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -551,9 +551,9 @@
 - `NATIVE_C_CALL_PLAN.md` (~2022 tok, huge) — Fixed scalar C call plans
 - `NATIVE_C_VARIADIC_EMIT.md` (~4199 tok, huge) — Scalar variadic call emission
 - `NATIVE_C_VARIADIC_PLAN.md` (~5757 tok, huge) — Scalar SysV variadic argument plan, version 2
-- `NATIVE_DYNAMIC_WRITER.md` (~2649 tok, huge) — Native dynamic ELF writer candidate
+- `NATIVE_DYNAMIC_WRITER.md` (~2654 tok, huge) — Native dynamic ELF writer candidate
 - `NATIVE_EVIDENCE_RECIPE.md` (~1339 tok, large) — Evidence and opt-in signing for native ymm programs
-- `NATIVE_LANE_PROFILE.md` (~2897 tok, huge) — Typed scalar delivery profile
+- `NATIVE_LANE_PROFILE.md` (~2924 tok, huge) — Typed scalar delivery profile
 - `NATIVE_SOURCE_NOTE.md` (~1057 tok, large) — Native ELF source-note tagging
 - `NATIVE_STRING_VALUES.md` (~2242 tok, huge) — Native string value decoding
 ### `docs/design/`
@@ -658,7 +658,7 @@
 - `type-system.md` (~1836 tok, huge) — Type System
 - `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~1018 tok, large) — MIND Core Stability & Versioning
-- `version-matrix.md` (~782 tok, large) — MIND Ecosystem — Version Matrix
+- `version-matrix.md` (~783 tok, large) — MIND Ecosystem — Version Matrix
 - `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
@@ -858,7 +858,7 @@
 - `native_fixed_scope_manifest.mind` (~4926 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_io_parity.md` (~1400 tok, large) — Four-argument native I/O parity
 - `native_lane_op_differential_smoke.py` (~7746 tok, huge) — Seeded three-path differential for the admitted native-lane scalar operators.
-- `native_lane_value_shapes_smoke.py` (~14675 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
+- `native_lane_value_shapes_smoke.py` (~14734 tok, huge) — native-lane-v1 value shapes: the bridge path, a marked compiler, and MLIR.
 - `native_libc_abi_rows.tsv` (~644 tok, large) — # selfhost column: the native self-host route verdict, the seed's own. accept = 
 - `native_libc_binding_check.py` (~7880 tok, huge) — Source-bound libc declaration diagnostics; no call/production authority."""
 - `native_libc_binding_contracts.tsv` (~853 tok, large) — id	name	result	params	library_keys	actions	roles	version	kind	fixed_prefix	noret
@@ -873,7 +873,7 @@
 - `native_libc_startup_cases.tsv` (~362 tok, medium) — # Predeclared standalone startup contract. stderr empty except documented loader
 - `native_libc_startup_check.py` (~6426 tok, huge) — Actual dynamic-loader diagnostics for the standalone MIND startup adapter."""
 - `native_libc_startup_fixture.mind` (~2550 tok, huge) — Copyright 2026 STARGA Inc.
-- `native_libc_startup.md` (~2584 tok, huge) — Standalone libc startup adapter
+- `native_libc_startup.md` (~2589 tok, huge) — Standalone libc startup adapter
 - `native_libc_startup.mind` (~1864 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_libc_startup_mutations.tsv` (~134 tok, small) — id	change	case	expected_detection
 - `native_pointer_origin_cases.json` (~3497 tok, huge) — Keys: version, author, status, scope, source_catalogues
@@ -994,7 +994,7 @@
 - `self_host_failclosed_smoke.py` (~9980 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
 - `self_host_float_lit_exact_smoke.py` (~1368 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
 - `self_host_for_smoke.py` (~11122 tok, huge) — Permanent battery for the self-host range-`for` loop.
-- `_selfhost_identity.py` (~11746 tok, huge) — Two-compiler identity of the native-lane smokes (`--identity-vs`), its partitions and their self-tests,
+- `_selfhost_identity.py` (~11772 tok, huge) — Two-compiler identity of the native-lane smokes (`--identity-vs`), its partitions and their self-tests,
 - `self_host_if_region_carry_smoke.py` (~5264 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
 - `self_host_ifret_chain_mic3_smoke.py` (~1730 tok, huge)
 - `self_host_letpath_failclose_smoke.py` (~2243 tok, huge) — Self-host LET-PATH fail-closed smoke — pins the S1-collapse fail-open wall.
@@ -1087,7 +1087,7 @@
 - `selfhost_source_bundle_check.py` (~4218 tok, huge) — Captured compiler-source regression gate. Bootstrap orchestration only.
 - `selfhost_source_bundle.md` (~1570 tok, huge) — Captured compiler source bundles
 - `self_host_source_note_smoke.py` (~3320 tok, huge) — Native MIND regression for PT_NOTE tagging with trailing string rodata.
-- `_selfhost_sources.py` (~10248 tok, huge) — Immutable source views for internal compiler bootstrap orchestration.
+- `_selfhost_sources.py` (~10535 tok, huge) — Immutable source views for internal compiler bootstrap orchestration.
 - `self_host_standalone_driver_smoke.py` (~3305 tok, huge)
 - `_selfhost_string_rows.py` (~12355 tok, huge) — Runner of the string-rule acceptance rows (tests/fixtures/native_lane_string_rows, README.md there):
 - `self_host_struct_return_smoke.py` (~4122 tok, huge) — self_host_struct_return_smoke.py — regression lock for STRUCT-BY-VALUE
