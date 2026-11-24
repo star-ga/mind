@@ -118,8 +118,8 @@ the initial stack mapping, not the program's total stack use. The lower-guard
 fixture intentionally observes a fault; such a fault never counts as mutation
 or ordinary refusal success.
 
-The ABI comparison uses the upstream [x86-64 startup contract](https://github.com/bminor/glibc/blob/glibc-2.39/sysdeps/x86_64/start.S)
-and [`exit(main(..., __environ))` path](https://github.com/bminor/glibc/blob/glibc-2.39/sysdeps/generic/libc_start_call_main.h).
+The ABI comparison uses the upstream [x86-64 startup contract](https://raw.githubusercontent.com/bminor/glibc/glibc-2.39/sysdeps/x86_64/start.S)
+and [`exit(main(..., __environ))` path](https://raw.githubusercontent.com/bminor/glibc/glibc-2.39/sysdeps/generic/libc_start_call_main.h).
 The assembly reference is an independently written STARGA test instrument;
 no glibc implementation source is incorporated.
 

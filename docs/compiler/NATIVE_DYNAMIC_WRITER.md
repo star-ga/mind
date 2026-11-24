@@ -183,8 +183,8 @@ extern admission and consumer parity.
    profile admission or native/MLIR consumer qualification. Shared objects,
    callbacks and concurrent threads need their own capability contracts.
 
-ABI references: [glibc x86-64 startup](https://github.com/bminor/glibc/blob/glibc-2.39/sysdeps/x86_64/start.S),
-[libc startup](https://github.com/bminor/glibc/blob/glibc-2.39/csu/libc-start.c),
+ABI references: [glibc x86-64 startup](https://raw.githubusercontent.com/bminor/glibc/glibc-2.39/sysdeps/x86_64/start.S),
+[libc startup](https://raw.githubusercontent.com/bminor/glibc/glibc-2.39/csu/libc-start.c),
 and the [x86-64 System V ABI](https://gitlab.com/x86-psABIs/x86-64-ABI/-/raw/master/x86-64-ABI/low-level-sys-info.tex).
 This implementation is original STARGA code. ABI documentation supplies the
 contract, not copied implementation code or theorem authority.
