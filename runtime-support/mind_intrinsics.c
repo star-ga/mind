@@ -38,6 +38,13 @@
 //
 // Growth policy is fixed at "doubling, min-cap 4" (deterministic for the
 // evidence chain and bootstrap fixed point).
+//
+// Raw addresses: an address from vec_addr, or from any other function that
+// gives the address of a buffer, is valid only until the next operation that
+// can grow or free that buffer. vec_push grows a Vec in place (same handle)
+// and frees the old buffer after the copy; string_push_byte reallocs owned
+// storage. No compiler check marks a kept raw address yet: this rule is the
+// only guard.
 
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
@@ -661,10 +668,18 @@ MIND_EXPORT_WEAK int64_t vec_set(int64_t v, int64_t i, int64_t value) {
     return __mind_store_i64(base + i * 8, value);
 }
 
+// Defined with the region frames below: a growth path calls it before it frees
+// a buffer, so a region that tracks that buffer frees the new one instead.
+static void mind_region_retarget(int64_t old_ptr, int64_t new_ptr);
+
 // vec_push — append value, growing the backing store with doubling policy.
 //
-// Returns the same Vec record address (mutates in place).
-// Growth: cap 0 → 4, otherwise double when len == cap.
+// Returns the same Vec record address (mutates in place), so every alias of
+// the handle sees the grown array. Growth: cap 0 → 4, otherwise double when
+// len == cap. A growth frees the old buffer after the copy: an address from
+// vec_addr (or any other raw address into the buffer) is valid only until the
+// next operation that can grow or free the buffer. A record with cap 0 owns
+// no buffer, and its addr is never freed.
 MIND_EXPORT_WEAK int64_t vec_push(int64_t v, int64_t value) {
     int64_t len  = __mind_load_i64(v + 8);
     int64_t cap  = __mind_load_i64(v + 16);
@@ -677,6 +692,8 @@ MIND_EXPORT_WEAK int64_t vec_push(int64_t v, int64_t value) {
             memcpy((void *)(uintptr_t)new_base,
                    (void *)(uintptr_t)base,
                    (size_t)(len * 8));
+            mind_region_retarget(base, new_base);
+            __mind_free(base);
         }
         __mind_store_i64(v,      new_base);
         __mind_store_i64(v + 16, new_cap);
@@ -1025,6 +1042,7 @@ MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
         new_base = base;
     } else {
         new_base = __mind_realloc(base, new_cap);
+        mind_region_retarget(base, new_base);
     }
     __mind_store_i8(new_base + len, b);
     int64_t rec = __mind_alloc(24);
@@ -1884,6 +1902,22 @@ typedef struct {
 
 static MindRegionFrame mind_region_stack[MIND_REGION_STACK_DEPTH];
 static int             mind_region_depth = 0;
+
+// mind_region_retarget(old, new) — a growth path replaced buffer `old` by
+// `new`. Every live frame entry that tracks `old` now tracks `new`, so the
+// region exit frees the new buffer once and never frees the old one again.
+// Scans frames in a fixed order; no-op outside a region or when old == new.
+static void mind_region_retarget(int64_t old_ptr, int64_t new_ptr) {
+    if (old_ptr == 0 || old_ptr == new_ptr) return;
+    for (int d = 0; d < mind_region_depth; d++) {
+        MindRegionFrame *f = &mind_region_stack[d];
+        for (int64_t i = 0; i < f->len; i++) {
+            if (f->ptrs[i] == old_ptr) {
+                f->ptrs[i] = new_ptr;
+            }
+        }
+    }
+}
 
 // __mind_region_enter() — push a new allocation-tracking frame.
 //

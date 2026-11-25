@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Runtime: a growing array frees its old buffer.** `vec_push` in the runtime support library grows the array record in place and now frees the old buffer after the copy. Before, an `array<T>` of N elements kept about N elements of dead buffers until the program ended. The handle does not change, so an alias taken before a push still reads the grown array. An address from `vec_addr`, or from any other function that gives the address of a buffer, is valid only until the next operation that can grow or free that buffer: a read through an address kept across a growth now reads freed memory, where before it read the old values. No compiler check marks such a read yet.
+- **Runtime: a buffer that grows inside a `region` block is freed once.** When `vec_push` or `string_push_byte` replaces a buffer that a `region` block tracks, the region now tracks the new buffer and frees it at the exit. Before, a string that grew inside a region had its old buffer freed a second time at the region exit, and the program stopped with a double free.
+
 ### Docs
 
 - Native lane profile: state that kind 89 `desc[7]` bit 1 alone (value 2) is valid and starts the accumulator row from zero.
