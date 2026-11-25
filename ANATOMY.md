@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3834 | **Est. tokens:** ~6,251,660
-**Generated:** 2026-11-25 16:31 UTC
+**Files:** 3837 | **Est. tokens:** ~6,259,750
+**Generated:** 2026-11-25 19:20 UTC
 
 ## Token Budget Guide
 
@@ -44,14 +44,14 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 47 | ~141,309 |
+| `docs/` | 47 | ~141,789 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,044 |
 | `docs/compiler/` | 11 | ~30,424 |
 | `docs/design/` | 5 | ~12,746 |
 | `docs/gates/` | 1 | ~4,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 35 | ~174,498 |
+| `docs/rfcs/` | 35 | ~175,464 |
 | `docs/specs/` | 2 | ~2,205 |
 | `examples/` | 28 | ~50,137 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -139,7 +139,7 @@
 | `.github/scripts/` | 1 | ~1,297 |
 | `.github/workflows/` | 10 | ~23,560 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 2 | ~24,954 |
+| `runtime-support/` | 3 | ~25,978 |
 | `scripts/` | 36 | ~170,228 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -165,7 +165,7 @@
 | `src/diagnostics/` | 4 | ~17,991 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 57 | ~194,682 |
+| `src/eval/` | 57 | ~194,792 |
 | `src/eval/stdlib/` | 2 | ~8,577 |
 | `src/eval/string_equality/` | 12 | ~48,169 |
 | `src/eval/string_equality/facts/` | 1 | ~1,401 |
@@ -174,7 +174,7 @@
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~27,552 |
 | `src/fmt/printer/` | 1 | ~1,912 |
-| `src/intrinsics/` | 1 | ~3,924 |
+| `src/intrinsics/` | 1 | ~4,027 |
 | `src/ir/` | 16 | ~109,313 |
 | `src/ir/compact/` | 3 | ~15,303 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
@@ -205,7 +205,7 @@
 | `src/types/` | 10 | ~23,602 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 78 | ~323,396 |
-| `tests/` | 498 | ~1,230,557 |
+| `tests/` | 500 | ~1,235,964 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 7 | ~18,102 |
@@ -527,7 +527,7 @@
 ### `docs/`
 
 - `architecture.md` (~965 tok, large) — Architecture
-- `ARRAY_SEMANTICS.md` (~8111 tok, huge) — MIND array semantics — normative architecture record
+- `ARRAY_SEMANTICS.md` (~8545 tok, huge) — MIND array semantics — normative architecture record
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
 
@@ -623,7 +623,7 @@
 - `0008-mindc-build.md` (~11172 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
-- `0010-memory-safety-and-c-abi.md` (~7353 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
+- `0010-memory-safety-and-c-abi.md` (~8319 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~6670 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `0012-tensor-native-syntax.md` (~12947 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
 - `0013-cli-agent-harness-stack.md` (~6776 tok, huge) — RFC 0013: CLI Agent Harness Stack
@@ -667,7 +667,7 @@
 - `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~1018 tok, large) — MIND Core Stability & Versioning
 - `version-matrix.md` (~783 tok, large) — MIND Ecosystem — Version Matrix
-- `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems
+- `whitepaper.md` (~2834 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
 - `anthropobrot.mind` (~3257 tok, huge) — Anthropobrot: depth-selected orbit-density multisets of the Fatou-Julia iteral.
@@ -2320,8 +2320,9 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_fs_read.h` (~1396 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `mind_intrinsics.c` (~23558 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_fs_read.h` (~1403 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `mind_growth.h` (~874 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `mind_intrinsics.c` (~23701 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `ai_attribution_patterns.sh` (~1628 tok, huge) — shellcheck shell=bash
@@ -2585,7 +2586,7 @@
 - `mlir_build_pipe.rs` (~2922 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build_proc.rs` (~608 tok, large) — Copyright 2026 STARGA Inc.
 - `mlir_build.rs` (~10088 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build_runtime_src.rs` (~1499 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `mlir_build_runtime_src.rs` (~1609 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mlir_build_tests.rs` (~4266 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12272 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -2665,7 +2666,7 @@
 - `intrinsics.rs` (~11096 tok, huge) — The intrinsic registry: the ONE table naming every `__mind_*` primitive the
 ### `src/intrinsics/`
 
-- `tests.rs` (~3924 tok, huge) — Copyright 2026 STARGA Inc.
+- `tests.rs` (~4027 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ir/`
 
 - `canonical_verify.rs` (~6429 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3039,6 +3040,7 @@
 - `aggregate_const_run.rs` (~1765 tok, huge) — Copyright 2026 STARGA Inc.
 - `aggshape_reject.rs` (~1842 tok, huge) — Copyright 2025 STARGA Inc.
 - `alias_miscompile_run.rs` (~1287 tok, large) — Copyright 2025 STARGA Inc.
+- `array_alias_push_run.rs` (~984 tok, large) — Copyright 2026 STARGA Inc.
 - `array_ctor_push_get_run.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.
 - `array_load_bounds_and_dtype.rs` (~2116 tok, huge) — Copyright 2025 STARGA Inc.
 - `array_oob_trap_run.rs` (~4980 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4336,6 +4338,7 @@
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
 ### `tests/`
 
+- `runtime_growth_buffer_run.rs` (~4423 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_obj_overlap.rs` (~1918 tok, huge) — Copyright 2026 STARGA Inc.
 ### `tests/runtime/`
 
