@@ -102,13 +102,32 @@ mechanism. The design aim: code that stays within the tier's rules is safe by
 construction, and code that crosses a tier boundary requires explicit
 annotation.
 
-> **What is checked today.** The tier rules below are the design. The compiler
-> does not check them yet. The raw memory intrinsics (for example `vec_addr`
-> and `__mind_load_i64`) are callable outside `unsafe` blocks. An address that
-> a program keeps across an operation that grows or frees its buffer (for
-> example a `vec_push` that grows the array) reads freed memory, and the value
-> can change from run to run. No compiler check marks such a use yet: the
-> address rule in `docs/ARRAY_SEMANTICS.md` (Q9) is the only guard.
+> **What is checked today.** The tier rules of §3.1 to §3.3 are the design.
+> Today two checks of the mindc type checker cover a part of them:
+>
+> - The region escape check (`safety::region_escape`, §3.2) refuses a `region`
+>   block whose result is a call of `__mind_alloc` or of a function whose name
+>   ends in `_new` (for example `vec_new`, `string_new` or `map_new`), or a
+>   name that a `let` statement of the block binds to such a call. §3.2 lists
+>   the region results that it does not refuse.
+> - The GenRef check (`safety::genref_unchecked_deref`, §3.3) refuses, in a
+>   function body, a block, a `region` block or an `if` branch, a `let` binding
+>   of a `gen_deref` result when the next statement is not an `if` or a `match`
+>   on that name, and a `gen_deref` call that stands alone as a statement.
+>
+> A `region` block tracks only the allocations that the compiler makes with
+> `__mind_alloc` in the block (for example for a string literal), and it frees
+> them at its exit. It does not track an allocation that a runtime function
+> makes (for example in `vec_new`, `string_new` or a string push), and its exit
+> does not free such an allocation. The one exception is a `vec_push` growth of
+> a buffer that the region tracks (`docs/ARRAY_SEMANTICS.md`, Q9). In the
+> runtime support library, `__mind_gen_deref` gives 0 for a freed GenRef; it
+> does not panic. The raw memory intrinsics (for example `vec_addr` and
+> `__mind_load_i64`) are callable outside `unsafe` blocks. An address that a
+> program keeps across an operation that grows or frees its buffer (for
+> example a `vec_push` that grows the array) can read freed memory, and the
+> value can change from run to run. No compiler check marks such a use yet:
+> the address rule in `docs/ARRAY_SEMANTICS.md` (Q9) is the only guard.
 
 ### 3.1 Stack (Tier 1)
 
@@ -132,9 +151,9 @@ Aliasing within a region is unrestricted: multiple bindings may reference the
 same region-interior allocation simultaneously. The design aim is that no
 use-after-free can happen for region-interior allocations: references are
 formed only inside the region block, and the region owns the lifetime. Today
-this is not checked: a handle or a raw address that leaves the region block
-reads freed memory after the exit, and a raw address that a program keeps
-across an array growth inside the region reads freed memory.
+the escape check below is partial: a handle or a raw address that leaves the
+region block can read freed memory after the exit, and a raw address that a
+program keeps across an array growth inside the region can read freed memory.
 
 ```mind
 region {
@@ -143,7 +162,9 @@ region {
     vec_push(v, 2);
     let alias = v;          // unrestricted aliasing inside the region
     vec_push(alias, 3);
-    // v and alias are freed when the region exits
+    // in the design, v and alias are freed when the region exits; today the
+    // region does not track the allocation of vec_new (see the box at the
+    // start of §3)
 }
 // v and alias are not in scope here
 ```
@@ -151,9 +172,18 @@ region {
 A reference to a region-interior allocation **MUST NOT** escape the region
 block. In the design the mindc type-checker enforces this: if a region-interior
 reference is returned from the region block, or stored in a location that
-outlives the region, a compile-time error is emitted. This check does not exist
-yet: today a region block that returns a string handle compiles, and a read
-through that handle after the exit reads freed memory.
+outlives the region, a compile-time error is emitted. Today the check is
+partial. It refuses (`safety::region_escape`) a region block whose result is a
+call of `__mind_alloc` or of a function whose name ends in `_new` (for example
+`vec_new`, `string_new` or `map_new`), or a name that a `let` statement of the
+block binds to such a call. The test is the name only: a user function whose
+name ends in `_new` is refused too, whatever it returns. The check does not
+refuse a region result that is a string literal or a name bound to one, a copy
+of a refused name (`let w = v; w`), or the result of another function (for
+example `string_push_byte`, `string_slice` or a user function). It does not
+see a store into a variable outside the block, or a region block in a `return`
+statement or in the body of an `if` or a `while`. A string literal, or a slice
+of one, that leaves a region block reads freed memory after the exit.
 
 ### 3.3 Region-exterior heap — generation-checked references (Tier 3)
 
@@ -524,6 +554,13 @@ RFC 0010 introduces new compile-time and runtime diagnostics. This section
 is the normative catalogue. Diagnostics are named with the `safety::` prefix
 to distinguish them from the existing `lint::` and `fmt::` diagnostic
 namespaces (RFC 0007 §6).
+
+Today only a part of this catalogue exists. Of the compile-time rows, the
+mindc type checker emits `safety::region_escape` and
+`safety::genref_unchecked_deref`, and each covers only a part of its row (see
+"What is checked today" at the start of §3); the other four keys of that table
+are not in the compiler. In the runtime, a GenRef generation mismatch does not
+panic: `__mind_gen_deref` gives 0.
 
 ### Compile-time diagnostics (mindc type-checker)
 

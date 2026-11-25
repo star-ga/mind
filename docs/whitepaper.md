@@ -37,7 +37,7 @@ The market for AI development platforms and compilers is poised for multi-billio
 - **Tensor-native type system.** Tensors are first-class citizens with compile-time shape inference, catching dimension mismatches before runtime and enabling aggressive optimizations.
 - **Embedded automatic differentiation.** Differentiable programming is integrated into the language, allowing the compiler to generate optimized gradients.
 - **Compile-time device semantics.** Device capabilities are encoded in the type system, preventing unsupported operations from reaching deployment targets.
-- **Rust-inspired safety.** MIND adopts Rust’s focus on memory safety and deterministic resource management, eliminating entire classes of runtime failures.
+- **Memory safety as a design aim.** The memory model of MIND (RFC 0010) aims at memory safety and deterministic resource management. Its compiler checks are not complete yet: the raw memory functions are not checked today.
 
 ### Compiler Architecture
 
