@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limits
 
-- The map and string push functions (`map_insert`, `string_push_byte`, `string_push_str`, `string_push_i64`) make a new header for each call and keep each old buffer and old header allocated until the program ends. They keep their old buffers until the container model of the next release. Two pushes or inserts from one handle that has spare capacity write the same slot, so the first result can show the byte or the entry of the second.
+- The map and string push functions (`map_insert`, `string_push_byte`, `string_push_str`, `string_push_i64`) make a new header for each call and keep each old buffer and old header allocated; only a buffer that a `region` block tracks is freed, at the region exit. They keep their old buffers until the container model of the next release. Two pushes or inserts from one handle that has spare capacity write the same slot, so the first result can show the byte or the entry of the second.
 - No compiler check marks an address from `vec_addr` (or a similar function) that a program keeps across a growth. Such a read gives a value of freed memory that can change from run to run.
 
 ### Docs
