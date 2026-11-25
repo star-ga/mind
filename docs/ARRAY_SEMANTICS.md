@@ -180,6 +180,7 @@ The checker rejects an explicit `[T; N]` binding whose array literal has a diffe
 - CURRENT_EVALUATOR = value passed directly.
 - CANONICAL_DECISION = descriptor handle carrying `len`; element dtype from the canonical type.
 - GAP = dtype absent; native `len` not call-stable.
+- GROWTH = `vec_push` grows the record in place and returns the same handle, so an alias taken before a push reads the grown array (`tests/array_alias_push_run.rs`); the old buffer is freed after the copy (`tests/runtime_growth_buffer_run.rs`). An address from `vec_addr`, or from any other function that gives the address of a buffer, is valid only until the next operation that can grow or free that buffer. No compiler check marks a kept raw address yet: this rule is the only guard.
 - EVIDENCE = §Q6; `e0a1dcc1`.
 
 ### Q10 — Ownership / aliasing — **empirical**
