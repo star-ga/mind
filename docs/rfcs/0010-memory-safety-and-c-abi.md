@@ -98,8 +98,17 @@ intrinsic ABIs) are deferred to future RFCs.
 ## 3. Memory safety model — three tiers
 
 MIND memory is partitioned into three tiers. Each tier has a different safety
-mechanism. Code that stays within the tier's rules is safe by construction;
-code that crosses a tier boundary requires explicit annotation.
+mechanism. The design aim: code that stays within the tier's rules is safe by
+construction, and code that crosses a tier boundary requires explicit
+annotation.
+
+> **What is checked today.** The tier rules below are the design. The compiler
+> does not check them yet. The raw memory intrinsics (for example `vec_addr`
+> and `__mind_load_i64`) are callable outside `unsafe` blocks. An address that
+> a program keeps across an operation that grows or frees its buffer (for
+> example a `vec_push` that grows the array) reads freed memory, and the value
+> can change from run to run. No compiler check marks such a use yet: the
+> address rule in `docs/ARRAY_SEMANTICS.md` (Q9) is the only guard.
 
 ### 3.1 Stack (Tier 1)
 
@@ -120,9 +129,12 @@ panic — the region frees all allocations it owns. No manual `free` call is
 needed or permitted for region-interior allocations.
 
 Aliasing within a region is unrestricted: multiple bindings may reference the
-same region-interior allocation simultaneously. Use-after-free is structurally
-impossible for region-interior allocations: references are only ever formed
-inside the region block, and the region owns the lifetime.
+same region-interior allocation simultaneously. The design aim is that no
+use-after-free can happen for region-interior allocations: references are
+formed only inside the region block, and the region owns the lifetime. Today
+this is not checked: a handle or a raw address that leaves the region block
+reads freed memory after the exit, and a raw address that a program keeps
+across an array growth inside the region reads freed memory.
 
 ```mind
 region {
@@ -133,13 +145,15 @@ region {
     vec_push(alias, 3);
     // v and alias are freed when the region exits
 }
-// v and alias are not in scope here; no use-after-free is possible
+// v and alias are not in scope here
 ```
 
 A reference to a region-interior allocation **MUST NOT** escape the region
-block. The mindc type-checker enforces this: if a region-interior reference is
-returned from the region block, or stored in a location that outlives the
-region, a compile-time error is emitted.
+block. In the design the mindc type-checker enforces this: if a region-interior
+reference is returned from the region block, or stored in a location that
+outlives the region, a compile-time error is emitted. This check does not exist
+yet: today a region block that returns a string handle compiles, and a read
+through that handle after the exit reads freed memory.
 
 ### 3.3 Region-exterior heap — generation-checked references (Tier 3)
 
@@ -176,8 +190,10 @@ gen_free(r);
 ```
 
 `GenRef<T>` is the only long-lived heap allocation primitive at the language
-level. There is no raw `malloc`/`free` surface exposed outside `unsafe` blocks
-(§4.2). Code that does not use `unsafe` blocks cannot produce a dangling pointer.
+level. In the design, no raw `malloc`/`free` surface is exposed outside `unsafe`
+blocks (§4.2). Today the raw memory intrinsics are callable outside `unsafe`
+blocks, so code with no `unsafe` block can keep a dangling address (see "What is
+checked today" at the start of §3).
 
 ### 3.4 Relationship to existing invariant checks
 

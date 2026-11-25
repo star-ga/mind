@@ -69,7 +69,7 @@ Compared to Python-based frameworks, MIND eliminates the dual-language problem a
 
 1. **End-to-end unification.** Single codebase from research to production.
 2. **Open-core community.** Apache-licensed core accelerates adoption and ecosystem growth.
-3. **Performance and safety.** Combines systems-level efficiency with memory-safe execution.
+3. **Performance and safety.** Combines systems-level efficiency with a memory-safety model (RFC 0010) whose compiler checks are not complete yet: raw memory functions are not checked today.
 4. **Hardware partnerships.** MLIR foundation enables rapid support for new accelerators.
 5. **Targeted beachheads.** Focus on edge AI, finance, and regulated sectors where MIND’s guarantees provide outsized value.
 
