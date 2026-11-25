@@ -21,11 +21,11 @@ use std::sync::LazyLock;
 
 const MIND_INTRINSICS_C: &str = include_str!("../../runtime-support/mind_intrinsics.c");
 
-/// Every file `mind_intrinsics.c` includes by quoted name, with its text.
-const QUOTED_INCLUDES: &[(&str, &str)] = &[(
-    "mind_fs_read.h",
-    include_str!("../../runtime-support/mind_fs_read.h"),
-)];
+#[rustfmt::skip] // data table: every file mind_intrinsics.c includes by quoted name, with its text
+const QUOTED_INCLUDES: &[(&str, &str)] = &[
+    ("mind_growth.h", include_str!("../../runtime-support/mind_growth.h")),
+    ("mind_fs_read.h", include_str!("../../runtime-support/mind_fs_read.h")),
+];
 
 /// The stub with each quoted include spliced in at its include line.
 pub(super) static MIND_RUNTIME_SUPPORT_C: LazyLock<String> =
@@ -80,12 +80,15 @@ mod tests {
 
     #[test]
     fn every_quoted_include_of_the_stub_is_spliced() {
-        // Positive control: the file on disk does include a sibling, so the
+        // Positive control: the file on disk does include its siblings, so the
         // assertion below cannot pass because there was nothing to splice.
-        assert!(
-            quoted_include_lines(MIND_INTRINSICS_C).contains(&"#include \"mind_fs_read.h\""),
-            "mind_intrinsics.c no longer includes mind_fs_read.h; update QUOTED_INCLUDES"
-        );
+        let lines = quoted_include_lines(MIND_INTRINSICS_C);
+        for name in ["mind_growth.h", "mind_fs_read.h"] {
+            assert!(
+                lines.contains(&format!("#include \"{name}\"").as_str()),
+                "mind_intrinsics.c no longer includes {name}; update QUOTED_INCLUDES"
+            );
+        }
         let left = quoted_include_lines(&MIND_RUNTIME_SUPPORT_C);
         assert!(
             left.is_empty(),
@@ -104,6 +107,8 @@ mod tests {
         for def in [
             "MIND_EXPORT int64_t is_dir_fd(int64_t fd) {",
             "MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {",
+            "MIND_EXPORT int64_t __mind_region_enter(void) {",
+            "MIND_EXPORT int64_t __mind_region_exit(void) {",
         ] {
             assert_eq!(bundle.matches(def).count(), 1, "{def}");
         }
@@ -118,6 +123,9 @@ mod tests {
             "__mind_write",
             "is_dir_fd",
             "read_to_string",
+            "__mind_region_enter",
+            "__mind_region_track",
+            "__mind_region_exit",
         ] {
             assert!(names.contains(&name), "{name} is a runtime-support export");
         }

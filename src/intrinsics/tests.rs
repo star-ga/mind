@@ -10,12 +10,19 @@
 use super::*;
 
 /// Every `__mind_*` symbol `runtime-support/mind_intrinsics.c` EXPORTS, with
-/// the parts it includes (`mind_fs_read.h` holds `__mind_open`), sorted.
+/// the parts it includes (`mind_fs_read.h` holds `__mind_open`, `mind_growth.h`
+/// the `__mind_region_*` frame functions), sorted.
 fn exported_runtime_support_intrinsics() -> Vec<String> {
     const C_SRC: &str = include_str!("../../runtime-support/mind_intrinsics.c");
-    const C_PARTS: &str = include_str!("../../runtime-support/mind_fs_read.h");
+    const C_PARTS: [&str; 2] = [
+        include_str!("../../runtime-support/mind_growth.h"),
+        include_str!("../../runtime-support/mind_fs_read.h"),
+    ];
     let mut names = Vec::new();
-    for line in C_SRC.lines().chain(C_PARTS.lines()) {
+    for line in C_SRC
+        .lines()
+        .chain(C_PARTS.iter().flat_map(|part| part.lines()))
+    {
         let line = line.trim_start();
         // `#  define MIND_EXPORT ...` starts with `#`, so macro definitions
         // are skipped and only definition sites are scanned.
@@ -52,6 +59,10 @@ fn classification_covers_every_runtime_support_intrinsic() {
          not the runtime: {exported:?}",
         exported.len()
     );
+    // Positive control: the scan reads the included parts, not only the file.
+    for name in ["__mind_open", "__mind_region_enter"] {
+        assert!(exported.iter().any(|n| n == name), "{name} was not scanned");
+    }
     let unclassified: Vec<&String> = exported
         .iter()
         .filter(|n| intrinsic_determinism(n).is_none())

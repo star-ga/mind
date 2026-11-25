@@ -17,7 +17,7 @@ use std::process::Command;
 /// Measured non-test lines. Growth fails. A shrink stays green.
 const NON_TEST_RUST_LINE_MAX: usize = 150_927;
 /// Measured test lines, the second column.
-const TEST_RUST_LINES: usize = 34_066;
+const TEST_RUST_LINES: usize = 34_085;
 
 fn repo() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
