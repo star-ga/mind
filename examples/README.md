@@ -4,6 +4,8 @@ Comprehensive examples demonstrating MIND's capabilities for tensor computation,
 
 ## Quick Start
 
+- [Pure-MIND arithmetic-circuit example: 2×2 permanent](arithmetic_circuits/README.md) — finite arithmetic DAG and fail-closed tests (not VP ≠ VNP).
+
 | Example | Description | Difficulty |
 |---------|-------------|------------|
 | `hello_tensor.mind` | Basic tensor operations and device placement | Beginner |
