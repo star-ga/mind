@@ -8,8 +8,8 @@ gate (7 gates total); the gate-count convention includes input gates.
 It **actually evaluates an encoded DAG** using exact signed i64 arithmetic
 with restricted inputs, output bounds, strict 1-based backward references,
 and fail-closed opcode checks. The independent reference computes `ad+bc`
-without consulting the DAG. Positive tests check three input assignments.
-Negative checks: forward reference, unknown operation, out-of-bound
+without consulting the DAG. Positive tests check three input assignments, with independently pinned outputs 10, 57 and 0.
+Negative checks: incorrect but structurally valid multiplication edge, forward reference, unknown operation, out-of-bound
 input, overflowing output bound, and out-of-range node count.
 
 This is a bounded example of `Statement.Computes`-style arithmetic gates

@@ -81,8 +81,15 @@ fn main() -> i64 {
     if t == 0 || inputs == 0 || work == 0 { return 2; }
     load_perm(t);
     if check_one(t,inputs,work,1,2,3,4) != 1 { return 10; }
+    if __mind_load_i64(work + 7 * 8) != 10 { return 13; }
     if check_one(t,inputs,work,2,5,7,11) != 1 { return 11; }
+    if __mind_load_i64(work + 7 * 8) != 57 { return 14; }
     if check_one(t,inputs,work,0,0,0,0) != 1 { return 12; }
+    if __mind_load_i64(work + 7 * 8) != 0 { return 15; }
+    // Wrong-but-well-formed gate: b*d replaces b*c, must be rejected.
+    put(t,6,2,4);
+    if check_one(t,inputs,work,1,2,3,4) != 0 { return 25; }
+    put(t,6,2,3);
     // Deliberately false witness: forward reference must fail closed.
     put(t,5,1,7);
     if evaluate(t,7,inputs,work) != 0 { return 20; }
@@ -96,7 +103,7 @@ fn main() -> i64 {
     assign(inputs,1000,1000,1000,1000);
     if evaluate(t,7,inputs,work) != 0 { return 23; }
     if evaluate(t,8,inputs,work) != 0 { return 24; }
-    let output: String = "EXAMPLE=ARITHMETIC_CIRCUIT\nCASES=3\nNEGATIVE=5\nTHEOREM_AUTHORITY=NONE\n";
+    let output: String = "EXAMPLE=ARITHMETIC_CIRCUIT\nCASES=3\nNEGATIVE=6\nTHEOREM_AUTHORITY=NONE\n";
     let written: i64 = __mind_write(1,output.addr,output.len,0 - 1);
     if written != output.len { return 90; }
     return 0;

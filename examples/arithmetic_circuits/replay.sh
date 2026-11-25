@@ -13,7 +13,7 @@ timeout 120 "$mindc" build "$root/permanent_2x2.mind" --backend native --target 
 printf '\177ELF' > "$tmp/magic"
 head -c 4 "$tmp/circuit.elf" > "$tmp/actualmagic"
 cmp "$tmp/magic" "$tmp/actualmagic"
-printf 'EXAMPLE=ARITHMETIC_CIRCUIT\nCASES=3\nNEGATIVE=5\nTHEOREM_AUTHORITY=NONE\n' > "$tmp/expected"
+printf 'EXAMPLE=ARITHMETIC_CIRCUIT\nCASES=3\nNEGATIVE=6\nTHEOREM_AUTHORITY=NONE\n' > "$tmp/expected"
 rc=0
 timeout 30 "$tmp/circuit.elf" > "$tmp/out" 2> "$tmp/err" || rc=$?
 [[ "$rc" -eq 0 && ! -s "$tmp/err" ]] && cmp -s "$tmp/out" "$tmp/expected" || { echo "CIRCUIT=FAIL rc=$rc" >&2; exit 1; }
