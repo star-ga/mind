@@ -103,20 +103,24 @@ construction, and code that crosses a tier boundary requires explicit
 annotation.
 
 > **What is checked today.** The tier rules of §3.1 to §3.3 are the design.
-> Today two checks of the mindc type checker cover a part of them:
+> Today two checks of the mindc type checker cover a part of them. Each
+> refuses some forms and not every form, so a program must not rely on them:
 >
-> - The region escape check (`safety::region_escape`, §3.2) refuses a `region`
->   block whose result is a call of `__mind_alloc` or of a function whose name
->   ends in `_new` (for example `vec_new`, `string_new` or `map_new`), or a
->   name that a `let` statement of the block binds to such a call. §3.2 lists
->   the region results that it does not refuse.
-> - The GenRef check (`safety::genref_unchecked_deref`, §3.3) refuses, in a
->   function body, a block, a `region` block or an `if` branch, a `let` binding
->   of a `gen_deref` result when the next statement is not an `if` or a `match`
->   on that name, and a `gen_deref` call that stands alone as a statement.
+> - The region escape check (`safety::region_escape`, §3.2) refuses some region
+>   results: for example a `region` block whose result is a call of
+>   `__mind_alloc` or of a function whose name ends in `_new` (such as
+>   `vec_new`, `string_new` or `map_new`). §3.2 gives examples of region
+>   results that it does not refuse.
+> - The GenRef check (`safety::genref_unchecked_deref`, §3.3) refuses some uses
+>   of a `gen_deref` result that no `if` or `match` guards: for example, in a
+>   `region` block that stands as a statement, a `let` binding of the result
+>   when the next statement is not an `if` or a `match` on that name. It does
+>   not visit every statement form: for example it does not look into a
+>   `region` block that a `let` statement binds.
 >
 > A `region` block tracks only the allocations that the compiler makes with
-> `__mind_alloc` in the block (for example for a string literal), and it frees
+> `__mind_alloc` in the block (for example for a string literal or a struct
+> record), and it frees
 > them at its exit. It does not track an allocation that a runtime function
 > makes (for example in `vec_new`, `string_new` or a string push), and its exit
 > does not free such an allocation. The one exception is a `vec_push` growth of
@@ -177,13 +181,15 @@ partial. It refuses (`safety::region_escape`) a region block whose result is a
 call of `__mind_alloc` or of a function whose name ends in `_new` (for example
 `vec_new`, `string_new` or `map_new`), or a name that a `let` statement of the
 block binds to such a call. The test is the name only: a user function whose
-name ends in `_new` is refused too, whatever it returns. The check does not
-refuse a region result that is a string literal or a name bound to one, a copy
-of a refused name (`let w = v; w`), or the result of another function (for
-example `string_push_byte`, `string_slice` or a user function). It does not
-see a store into a variable outside the block, or a region block in a `return`
-statement or in the body of an `if` or a `while`. A string literal, or a slice
-of one, that leaves a region block reads freed memory after the exit.
+name ends in `_new` is refused too, whatever it returns. Among the region
+results that the check does not refuse are: a string literal or a name bound
+to one, a struct record (for example `P { a: 11, b: 22 }`) or a name bound to
+one, a copy of a refused name (`let w = v; w`), and the result of another
+function (for example `string_push_byte`, `string_slice` or a user function).
+It does not see a store into a variable outside the block, or a region block
+in a `return` statement or in the body of an `if` or a `while`. A string
+literal, a slice of one, or a struct record that leaves a region block can
+read freed memory after the exit.
 
 ### 3.3 Region-exterior heap — generation-checked references (Tier 3)
 
