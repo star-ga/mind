@@ -42,9 +42,11 @@
 // Raw addresses: an address from vec_addr, or from any other function that
 // gives the address of a buffer, is valid only until the next operation that
 // can grow or free that buffer. vec_push grows a Vec in place (same handle)
-// and frees the old buffer after the copy; string_push_byte reallocs owned
-// storage. No compiler check marks a kept raw address yet: this rule is the
-// only guard.
+// and frees the old buffer after the copy. The string and map push functions
+// return a new header for each call; their growth takes a new buffer and
+// copies, and never frees or reallocs the old buffer, which an older header
+// can still reach (the old buffer stays allocated: a known limit). No
+// compiler check marks a kept raw address yet: this rule is the only guard.
 
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
@@ -810,7 +812,9 @@ MIND_EXPORT_WEAK int64_t map_value_at(int64_t m, int64_t i) {
 // Non-mutating ABI: allocates a fresh 4-field Map heap record on every call
 // (matches std/map.mind's non-mutating `map_insert` semantics — each call
 // returns a new Map handle).  The backing stores are either reused (when
-// len < cap) or reallocated (when len == cap, doubling policy).
+// len < cap) or replaced by new stores and copied (when len == cap, doubling
+// policy). The old stores are never freed: an older header can still reach
+// them, so they stay allocated (a known limit).
 // Growth: cap 0 → 4, then doubles.
 MIND_EXPORT_WEAK int64_t map_insert(int64_t m, int64_t key, int64_t value) {
     int64_t keys_addr = __mind_load_i64(m);
@@ -991,7 +995,7 @@ MIND_EXPORT_WEAK int64_t string_addr(int64_t s) {
 // a masked 8-byte load over-reads up to 7 bytes past an unpadded string
 // literal buffer (lower.rs __mind_alloc(n), cap=n) — safe only if the
 // compiler narrows the masked load, i.e. optimizer-dependent. The 1-byte
-// read is memory-safe by construction and matches the pure-MIND std.string
+// read never reads past the byte that it names and matches the pure-MIND std.string
 // twin (std/string.mind string_get_byte), removing the C/twin drift.
 // string_to_utf8_bytes is the first C caller to walk [0..len) through this.
 MIND_EXPORT_WEAK int64_t string_get_byte(int64_t s, int64_t i) {
@@ -1023,35 +1027,53 @@ MIND_EXPORT_WEAK int64_t string_push_capacity(int64_t len, int64_t cap) {
     return next;
 }
 
-// Same valid-live-String/representable-append/allocation preconditions as the
-// MIND body. cap0 is borrowed, including nonnull empty views; never realloc it.
-// Owned spare storage is reused and owned growth may invalidate old aliases.
-MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
+// mind_string_cap_for(len, cap, n) — the capacity that n appends of one byte
+// each give under string_push_capacity (0 when the record is not valid).
+static int64_t mind_string_cap_for(int64_t len, int64_t cap, int64_t n) {
+    for (int64_t k = 0; k < n; k++) {
+        cap = string_push_capacity(len + k, cap);
+        if (cap == 0) return 0;
+    }
+    return cap;
+}
+
+// mind_string_append(s, src, n) — the header form of every string push: a
+// NEW header that holds the bytes of `s` and then the n bytes at `src`. Spare
+// capacity of an owned `s` is used in place. A growth takes a new buffer and
+// copies; it never frees or reallocs the buffer of `s`, because an older
+// header, or a region frame, can still reach it. That old buffer stays
+// allocated (a known limit until the container model changes). cap 0 is a
+// borrowed buffer: it is never written, an append always copies it.
+static int64_t mind_string_append(int64_t s, const unsigned char *src, int64_t n) {
     int64_t base = __mind_load_i64(s);
     int64_t len = __mind_load_i64(s + 8);
     int64_t cap = __mind_load_i64(s + 16);
-    int64_t new_cap = string_push_capacity(len, cap);
-    int64_t new_base;
-    if (cap == 0) {
+    int64_t new_cap = mind_string_cap_for(len, cap, n);
+    int64_t new_base = base;
+    if (cap == 0 || new_cap != cap) {
         new_base = __mind_alloc(new_cap);
         if (len > 0) {
             memcpy((void *)(uintptr_t)new_base,
                    (const void *)(uintptr_t)base, (size_t)len);
         }
-    } else if (new_cap == cap) {
-        new_base = base;
-    } else {
-        new_base = __mind_realloc(base, new_cap);
-        mind_region_retarget(base, new_base);
     }
-    __mind_store_i8(new_base + len, b);
+    if (n > 0) {
+        memcpy((void *)(uintptr_t)(new_base + len), src, (size_t)n);
+    }
     int64_t rec = __mind_alloc(24);
     __mind_store_i64(rec, new_base);
-    __mind_store_i64(rec + 8, len + 1);
+    __mind_store_i64(rec + 8, len + n);
     __mind_store_i64(rec + 16, new_cap);
     return rec;
 }
 
+// Same valid-live-String/representable-append/allocation preconditions as the
+// MIND body. Returns a new header (mind_string_append): the old header keeps
+// reading its own bytes after a growth.
+MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
+    unsigned char byte = (unsigned char)b;
+    return mind_string_append(s, &byte, 1);
+}
 
 // read_to_string and is_dir_fd (the whole-file reader) live in their own file.
 #include "mind_fs_read.h"
@@ -1197,15 +1219,14 @@ MIND_EXPORT_WEAK int64_t string_push_str(int64_t dst, int64_t src) {
     return rec;
 }
 
-// string_push_i64 — decimal ASCII append, matching std/string.mind.
+// string_push_i64 — decimal ASCII append, matching std/string.mind. The text
+// is made first, then appended once (one new header, at most one new buffer).
 MIND_EXPORT_WEAK int64_t string_push_i64(int64_t s, int64_t n) {
-    if (n == 0) {
-        return string_push_byte(s, 48);
-    }
-    int64_t out = s;
+    unsigned char text[24];
+    int64_t k = 0;
     uint64_t mag;
     if (n < 0) {
-        out = string_push_byte(out, 45);
+        text[k++] = 45;
         mag = ~(uint64_t)n + 1ULL;
     } else {
         mag = (uint64_t)n;
@@ -1219,10 +1240,10 @@ MIND_EXPORT_WEAK int64_t string_push_i64(int64_t s, int64_t n) {
     }
     while (div > 0) {
         uint64_t digit = (mag / div) % 10;
-        out = string_push_byte(out, (int64_t)(48 + digit));
+        text[k++] = (unsigned char)(48 + digit);
         div /= 10;
     }
-    return out;
+    return mind_string_append(s, text, k);
 }
 
 // string_from_range — a fresh String holding the bytes [src, src+n). Deterministic.
@@ -1292,12 +1313,21 @@ MIND_EXPORT_WEAK int64_t string_trim(int64_t s) {
 // values (each element is one i64 byte, 0..255). Used by the static-type call
 // `string.from_utf8_bytes(buf)` where `buf` is a growable `bytes` buffer.
 MIND_EXPORT_WEAK int64_t string_from_utf8_bytes(int64_t v) {
-    int64_t s = string_new();
     int64_t n = vec_len(v);
-    for (int64_t i = 0; i < n; i++) {
-        s = string_push_byte(s, vec_get(v, i));
+    if (n <= 0) {
+        return string_new();
     }
-    return s;
+    // One buffer of the capacity that n pushes onto string_new() give.
+    int64_t cap = mind_string_cap_for(0, 0, n);
+    int64_t buf = __mind_alloc(cap);
+    for (int64_t i = 0; i < n; i++) {
+        __mind_store_i8(buf + i, vec_get(v, i));
+    }
+    int64_t rec = __mind_alloc(24);
+    __mind_store_i64(rec, buf);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 16, cap);
+    return rec;
 }
 
 // string_to_utf8_bytes(s) -> bytes. Exact inverse of string_from_utf8_bytes:

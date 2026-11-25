@@ -121,6 +121,7 @@ MIND_EXPORT_WEAK int64_t read_to_string(int64_t path_addr) {
         if (got < 0) {
             if (errno == EINTR) continue;
             MIND_CLOSE(fd);
+            __mind_free(buf);
             return rec;
         }
         if (got == 0) break;

@@ -24,6 +24,15 @@
 //! to the new buffer. Without that move the exit frees the old buffer a second
 //! time and glibc aborts the process.
 //!
+//! Strings use another form: each string push returns a NEW header and the old
+//! header stays a valid string. So a string growth takes a new buffer and
+//! copies, and it never frees or reallocs the old buffer: an older header, or
+//! a region frame, can still reach it. The string tests run each program in
+//! five fresh processes: a read of freed memory gives a value that changes
+//! from run to run, and a second free stops the process. The old string buffer
+//! stays allocated until the container model of the next release (a known
+//! limit), so no test here measures it.
+//!
 //! Gate: `cargo test --release --features "std-surface mlir-build cross-module-imports"
 //!                   --test runtime_growth_buffer_run`
 
@@ -60,6 +69,82 @@ pub fn alias_sees_every_growth() -> i64 {
     }
     return view.length * 1000 + view[99] + view[0] * 7;
 }
+
+fn content_hash(x: string) -> i64 {
+    let n = string_len(x);
+    let mut h = n;
+    let mut i = 0;
+    while i < n {
+        h = (h * 131 + string_get_byte(x, i)) % 1000000007;
+        i = i + 1;
+    }
+    return h;
+}
+
+pub fn str_old_handle_after_growth() -> i64 {
+    let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let pad = "0123456789012345678901234567890123456789012345678";
+    let t = string_push_byte(s, 65);
+    let moved: i64 = if string_addr(s) == string_addr(t) { 0 } else { 1 };
+    return moved * 1000000 + string_get_byte(s, 0) * 1000 + string_get_byte(t, 0) + 0 * string_len(pad);
+}
+
+pub fn str_old_handle_content() -> i64 {
+    let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let pad = "0123456789012345678901234567890123456789012345678";
+    let t = string_push_byte(s, 65);
+    return content_hash(s) * 1000000007 + content_hash(t) + 0 * string_len(pad);
+}
+
+pub fn str_two_pushes_grew() -> i64 {
+    let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let pad = "0123456789012345678901234567890123456789012345678";
+    let a = string_push_byte(s, 65);
+    let b = string_push_byte(s, 66);
+    let ga: i64 = if string_addr(a) == string_addr(s) { 0 } else { 1 };
+    let gb: i64 = if string_addr(b) == string_addr(s) { 0 } else { 1 };
+    let ab: i64 = if string_addr(a) == string_addr(b) { 0 } else { 1 };
+    return ab * 100 + ga * 10 + gb + 0 * string_len(pad);
+}
+
+pub fn str_two_pushes_content() -> i64 {
+    let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let pad = "0123456789012345678901234567890123456789012345678";
+    let a = string_push_byte(s, 65);
+    let b = string_push_byte(s, 66);
+    return content_hash(a) * 1000000007 + content_hash(b) + 0 * string_len(pad);
+}
+
+pub fn region_str_growth() -> i64 {
+    let r = region {
+        let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let pad = "0123456789012345678901234567890123456789012345678";
+        let t = string_push_byte(s, 65);
+        string_len(t) + 0 * string_len(pad)
+    };
+    return r;
+}
+
+pub fn region_old_handle_after_growth() -> i64 {
+    let r = region {
+        let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let pad = "0123456789012345678901234567890123456789012345678";
+        let t = string_push_byte(s, 65);
+        content_hash(s) * 1000000007 + content_hash(t) + 0 * string_len(pad)
+    };
+    return r;
+}
+
+pub fn region_two_pushes_content() -> i64 {
+    let r = region {
+        let s = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let pad = "0123456789012345678901234567890123456789012345678";
+        let a = string_push_byte(s, 65);
+        let b = string_push_byte(s, 66);
+        content_hash(a) * 1000000007 + content_hash(b) + 0 * string_len(pad)
+    };
+    return r;
+}
 "#;
 
 /// Shared prologue of every driver: load the artifact and libc, declare the
@@ -79,6 +164,7 @@ I64 = ctypes.c_int64
 for name in ("fill", "alias_sees_every_growth", "vec_new", "vec_push", "vec_len",
              "vec_get", "vec_addr", "map_new", "map_insert", "map_keys", "map_len",
              "string_to_utf8_bytes", "string_push_byte", "string_addr", "string_len",
+             "string_cap", "string_from_utf8_bytes", "read_to_string",
              "__mind_alloc", "__mind_store_i64", "__mind_load_i64",
              "__mind_region_enter", "__mind_region_track", "__mind_region_exit"):
     f = getattr(lib, name)
@@ -244,7 +330,7 @@ print("region exit ok")
 }
 
 #[test]
-fn string_growth_inside_a_region_moves_the_tracked_entry() {
+fn string_growth_inside_a_region_keeps_the_tracked_buffer() {
     let dir = common::scratch_dir("runtime_growth_buffer_run_region_str");
     let so = build(&dir);
     assert_driver_ok(
@@ -252,8 +338,8 @@ fn string_growth_inside_a_region_moves_the_tracked_entry() {
         r#"
 lib.__mind_region_enter()
 # A buffer above the small-block cache, then a block of the same size that is
-# carved right after it: the blocker stops an in-place extension, so the
-# growth must move the buffer (checked below).
+# carved right after it: the blocker stops an in-place extension, so a realloc
+# would move the buffer and free the old one under the old header.
 buf = lib.__mind_region_track(*i64(lib.__mind_alloc(*i64(3000))))
 blocker = lib.__mind_region_track(*i64(lib.__mind_alloc(*i64(3000))))
 rec = lib.__mind_region_track(*i64(lib.__mind_alloc(*i64(24))))
@@ -263,10 +349,166 @@ lib.__mind_store_i64(*i64(rec + 8, 3000))
 lib.__mind_store_i64(*i64(rec + 16, 3000))
 s2 = lib.string_push_byte(*i64(rec, 67))
 assert lib.string_len(*i64(s2)) == 3001
-assert lib.string_addr(*i64(s2)) != buf, "precondition: realloc did not move the buffer"
+assert lib.string_addr(*i64(s2)) != buf, "the growth did not take a new buffer"
 assert ctypes.string_at(lib.string_addr(*i64(s2)), 3001) == b"B" * 3000 + b"C"
+assert lib.string_addr(*i64(rec)) == buf
+assert ctypes.string_at(buf, 3000) == b"B" * 3000, "the old header does not read its own bytes"
 lib.__mind_region_exit()
 print("region exit ok")
 "#,
+    );
+}
+
+/// The `content_hash` of the MIND source, for the expected values.
+fn content_hash(bytes: &[u8]) -> i64 {
+    let mut h = bytes.len() as i64;
+    for &b in bytes {
+        h = (h * 131 + i64::from(b)) % 1_000_000_007;
+    }
+    h
+}
+
+const LIT: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+
+fn pushed(byte: u8) -> Vec<u8> {
+    let mut v = LIT.to_vec();
+    v.push(byte);
+    v
+}
+
+fn pair(a: &[u8], b: &[u8]) -> i64 {
+    content_hash(a) * 1_000_000_007 + content_hash(b)
+}
+
+/// Run one exported MIND function in five fresh processes. Every run must
+/// exit with status 0 and give `want`: a read of freed memory changes from
+/// run to run, and a second free stops the process.
+fn assert_five_runs(so: &Path, name: &str, want: i64) {
+    let body = format!(
+        "f = getattr(lib, \"{name}\")\nf.restype = I64\nf.argtypes = None\nprint(\"{name}=\" + str(f()))\n"
+    );
+    let mut got = Vec::new();
+    for run in 0..5 {
+        let ran = run_driver(so, &body);
+        assert!(
+            ran.status.success(),
+            "{name}: run {run} ended with {:?}:\n{}",
+            ran.status,
+            combined(&ran)
+        );
+        got.push(String::from_utf8_lossy(&ran.stdout).trim().to_string());
+    }
+    let expected = format!("{name}={want}");
+    assert!(
+        got.iter().all(|g| *g == expected),
+        "{name}: five runs gave {got:?}, expected {expected} in each run"
+    );
+    println!("{expected} in 5 of 5 runs");
+}
+
+#[test]
+fn string_old_handle_reads_its_own_bytes_after_growth() {
+    let dir = common::scratch_dir("runtime_growth_buffer_run_str_old");
+    let so = build(&dir);
+    // moved * 1000000 + s[0] * 1000 + t[0]: the growth took a new buffer, the
+    // old handle still reads "a" (97), the new one too.
+    assert_five_runs(&so, "str_old_handle_after_growth", 1_097_097);
+    assert_five_runs(&so, "str_old_handle_content", pair(LIT, &pushed(b'A')));
+}
+
+#[test]
+fn two_pushes_from_one_string_handle_both_grow() {
+    let dir = common::scratch_dir("runtime_growth_buffer_run_str_two");
+    let so = build(&dir);
+    // Each push had to grow (a new buffer for a, another for b).
+    assert_five_runs(&so, "str_two_pushes_grew", 111);
+    assert_five_runs(
+        &so,
+        "str_two_pushes_content",
+        pair(&pushed(b'A'), &pushed(b'B')),
+    );
+}
+
+#[test]
+fn string_growth_inside_a_region_block() {
+    let dir = common::scratch_dir("runtime_growth_buffer_run_str_region");
+    let so = build(&dir);
+    assert_five_runs(&so, "region_str_growth", 37);
+    assert_five_runs(
+        &so,
+        "region_old_handle_after_growth",
+        pair(LIT, &pushed(b'A')),
+    );
+    assert_five_runs(
+        &so,
+        "region_two_pushes_content",
+        pair(&pushed(b'A'), &pushed(b'B')),
+    );
+}
+
+#[test]
+fn string_from_utf8_bytes_keeps_no_step_buffer() {
+    let dir = common::scratch_dir("runtime_growth_buffer_run_from_utf8");
+    let so = build(&dir);
+    assert_driver_ok(
+        &so,
+        &format!(
+            r#"
+n = {N}
+v = lib.vec_new()
+for i in range(n):
+    lib.vec_push(*i64(v, 65 + i % 26))
+before = held()
+s = lib.string_from_utf8_bytes(*i64(v))
+after = held()
+assert lib.string_len(*i64(s)) == n
+assert lib.string_cap(*i64(s)) == 131072, lib.string_cap(*i64(s))
+assert ctypes.string_at(lib.string_addr(*i64(s)), n) == bytes(65 + i % 26 for i in range(n))
+check_delta("string_from_utf8_bytes", after - before, 131072)
+"#
+        ),
+    );
+}
+
+#[test]
+fn read_error_path_frees_its_buffer() {
+    let dir = common::scratch_dir("runtime_growth_buffer_run_read_err");
+    let so = build(&dir);
+    let plain = dir.join("plain.txt");
+    assert_driver_ok(
+        &so,
+        &format!(
+            r#"
+import errno, os
+bad = b"/sys/class/net/lo/speed"
+try:
+    open(bad, "rb").read()
+    raise SystemExit("precondition: a read of /sys/class/net/lo/speed did not fail")
+except OSError as e:
+    assert e.errno == errno.EINVAL, e
+fd = os.open(bad, os.O_RDONLY)
+size = os.lseek(fd, 0, os.SEEK_END)
+os.close(fd)
+assert size > 0, f"precondition: size {{size}}"
+plain = {plain:?}.encode()
+open(plain, "wb").write(b"x" * size)
+def reads(path, count):
+    p = ctypes.create_string_buffer(path)
+    lib.read_to_string(*i64(ctypes.addressof(p)))
+    before = held()
+    for _ in range(count):
+        r = lib.read_to_string(*i64(ctypes.addressof(p)))
+        out = (lib.__mind_load_i64(*i64(r)), lib.__mind_load_i64(*i64(r + 8)))
+    return held() - before, out
+# Positive control: a good read publishes a buffer of size + 1 bytes each time.
+kept, (addr, length) = reads(plain, 200)
+assert addr != 0 and length == size, (addr, length)
+assert kept >= 200 * (size + 1), f"positive control: delta {{kept}} for 200 good reads"
+delta, (addr, length) = reads(bad, 200)
+assert addr == 0 and length == 0, (addr, length)
+assert delta < 200 * 512, f"read error: delta {{delta}} for 200 failed reads, a buffer of {{size + 1}} bytes is kept"
+print(f"read error: delta={{delta}} for 200 failed reads, good reads kept {{kept}}")
+"#
+        ),
     );
 }
