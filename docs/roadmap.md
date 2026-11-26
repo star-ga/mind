@@ -4338,3 +4338,54 @@ ranges above.
   conversion from a dense model run offline; only the resulting integer artifact is compiled
   and hashed.
 - Model quality is the model owner's gate, not the compiler's.
+
+## Row-class batch invariance and bit-safe tuning parameters (proposed, 2026-11-26)
+
+Speculative verification and batching keep the output bits only if a row computed beside other
+rows uses the same reduction order as the same row computed alone. Today a downstream test holds
+this. This item moves the rule into the compiler, so a kernel family that breaks it does not
+compile.
+
+### Order of work
+
+1. **Declared row classes.** A kernel family can declare that one launch computes each row as
+   another launch does (an `alike` relation; the syntax is decided in the RFC). The checker then
+   holds both launches to one set of reduction-order parameters. A launch keeps as its own only
+   the parameters that cannot change a row's bits.
+2. **Two kinds of tuning parameter.** A parameter that can change a result's bits (lane-group
+   width, reduction split, summation form, contraction) is declared `arithmetic`, because the
+   source cannot show whether a value changes rounding. A parameter that only maps work to
+   hardware (thread-group shape, tile placement, an unroll that keeps the order) is code-only.
+   Whether a parameter changes generated code is derived from the source, never declared; the
+   checker refuses a parameter that nothing reads.
+3. **Bit-safe tuning.** In strict mode, tuning searches code-only parameters only, and every
+   `alike` pair shares its arithmetic parameters. The chosen values enter the build as a
+   committed, hashed table; no timing-driven choice happens inside the build.
+4. **Verified artifact loads (extends D-6).** Every cached artifact carries the SHA-256 of its
+   bytes, and the check runs before any loader or driver decodes them. A mismatch is a counted
+   miss, rebuilt fail-closed. The D-6 cache-poisoning test is the gate for this step.
+
+### Acceptance gate
+
+- A fixture family with a one-row launch and a batched launch compiles when both read the same
+  arithmetic parameters. A negative fixture whose batched launch declares its own reduction split
+  fails with a stable diagnostic code.
+- For every row count up to the declared verify width, each row of the batched launch is
+  byte-identical to the one-row launch on x86 and ARM.
+- A change to a code-only parameter leaves the output bytes unchanged. In strict mode, a change to
+  an arithmetic parameter of an `alike` pair on one side only is refused.
+- Mutation that must turn the gate red: the checker comparison of arithmetic parameter sets
+  removed.
+
+### Firewall — do not cross it
+
+- No runtime timing-based kernel selection in strict builds.
+- No tolerance-based admission of a faster kernel in strict mode; tolerance stays a relaxed-mode
+  policy that the caller names.
+
+### Open questions — answer before this gets a milestone
+
+- Syntax: an attribute on each kernel, or one family declaration.
+- Classification of the existing deterministic GEMM blocking parameters (MC, KC, NC, NR): KC splits
+  the K reduction, so it is `arithmetic` unless the accumulation order is pinned independent of
+  KC. Record the class of each parameter with the reason.
