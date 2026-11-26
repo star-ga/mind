@@ -58,8 +58,12 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   native-ELF self-host (#17), which made the Rust `src/native` backend (2441
   lines) fully redundant — deleted (Phase 1.4 / #15), after freezing its current
   output as permanent test fixtures
-  (`examples/mindc_mind/testdata/native_elf_oracle/`). Full Rust-independence
-  for the native-ELF path is complete.
+  (`examples/mindc_mind/testdata/native_elf_oracle/`). The native-ELF back end
+  is now Rust-free: the pure-MIND compiler emits the ELF, and the Rust
+  `src/native` backend is gone. The front end is not yet Rust-free: every
+  command that reads MIND source parses it in the Rust host, and the type check
+  and the admission step of a native build run there as well. See
+  [`INDEPENDENCE_ROADMAP.md`](INDEPENDENCE_ROADMAP.md) for the measured state.
 - ✅ **Scalar IEEE-754 float64 on the strict deterministic path** (2026-07-02) –
   scalar `f64` (and `f32`) arithmetic now compiles and runs through
   `arith.mulf` / `arith.addf` with **no `fmuladd`-contraction, no `fastmath`
@@ -91,9 +95,12 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   `mindc` front-end reproduces the **canonical `mic@3` binary IR** of its own
   ~15k-line source **byte-for-byte** against the Rust reference
   (`selftest_mic3_module_nfn(main.mind) == mindc --emit-mic3 main.mind`). This
-  goes beyond the earlier `mic@1` MLIR-text fixed-point: the Rust front-end is now
-  decorative at the canonical-binary-IR layer (the layer the evidence chain's
-  `trace_hash` anchors on). CI-enforced by `mic3_flip_smoke.py`.
+  goes beyond the earlier `mic@1` MLIR-text fixed-point: for this source, the
+  pure-MIND front-end gives the same bytes as the Rust front-end at the
+  canonical-binary-IR layer (the layer the evidence chain's `trace_hash` anchors
+  on). The Rust front-end is not decorative on the native path: a native
+  `mindc build` still parses, type-checks and admits every program in the Rust
+  host before the pure-MIND compiler runs. CI-enforced by `mic3_flip_smoke.py`.
 - ✅ **Autodiff Engine** – Reverse-mode AD for the Core v1 tensor ops, single-output `main` entry point; non-Core-v1 ops error rather than emit a silent zero gradient.
 - ✅ **FFI Stabilization** – ABI frozen, C header generation.
 - ✅ **Phase 10.5: Governance Logic** – enum, struct, if/else, while,
@@ -104,14 +111,28 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## Roadmap
 
-- ✅ **Full Rust-independent native-ELF pipeline** (2026-07-01) – the native-ELF
+- ✅ **Rust-free native-ELF back end** (2026-07-01) – the native-ELF
   self-host fixed point is closed and the pure-MIND front-end self-computes its
   own `ir_trace_hash` PT\_NOTE byte-identically at full scale; the Rust
-  `src/native` backend (Phase 15) has been deleted. See the README for what
-  remains on the broader Rust-independence effort (MLIR/mindc itself is still
-  Rust — this closes the native-ELF track specifically).
-- **Ed25519/ML-DSA signing (opt-in)** – cryptographic signing of the
-  already-emitted, tamper-evident evidence chain.
+  `src/native` backend (Phase 15) has been deleted. The native-ELF pipeline is
+  not yet fully Rust-independent: the Rust host still parses, type-checks and
+  admits each program before the pure-MIND back end runs. See the README and
+  [`INDEPENDENCE_ROADMAP.md`](INDEPENDENCE_ROADMAP.md) for what remains on the
+  broader Rust-independence effort (MLIR/mindc itself is still Rust — this
+  closes the native-ELF back-end track specifically).
+- **PQC-hybrid evidence signing (opt-in)** – cryptographic signing of the
+  already-emitted, tamper-evident evidence chain. The signer is compiled into
+  the release builds of `mindc` (see v0.10.3 above). The lead scheme tag is
+  `pqc-hybrid-ml-dsa-87-slh-dsa-256s`: ML-DSA-87 and SLH-DSA-SHAKE-256s, and
+  both must verify. Signing is off by default: with no key seed in the
+  environment, nothing is signed. The hybrid signs only when both of its key
+  seeds (`MIND_EVIDENCE_MLDSA87_KEY`, `MIND_EVIDENCE_SLHDSA_KEY`) are set, and
+  one of the two alone is refused. Open:
+  release archives stay unsigned until operational key custody, signed
+  manifests and independent release replay exist. A single-leg `ml-dsa-65` tag
+  stays selectable and is not part of the production profile. The legacy tags
+  `ed25519` and `hybrid-ed25519-ml-dsa-65` of old artifacts are only read and
+  reported as retired; they are never signed or trusted.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
   emits for the **CPU**. GPU and accelerator execution across the broader
   chip-target set ships today in the commercial runtime, available to consumers under a commercial license. What is on
