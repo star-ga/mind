@@ -137,6 +137,11 @@ SEMANTIC_EDIT_EXCLUSIONS = {
         "0.10.4: the standalone argv driver skips the self-mode input magic of the "
         "compiler source, +12/-1 (semantic edit)"
     ),
+    "examples/mindc_mind/check_driver.mind": (
+        "b7a0292e: the report joins the rule pass ckr_pass (check_rules.mind) before "
+        "typecheck, +1/-1 code line (semantic edit); standalone --emit-ir refuses it "
+        "at BASE and at HEAD (E2003 push_i64: it is a tail of main.mind)"
+    ),
     # Main #383 e3b01d11 lint-warning fixes: renamed bindings, `let mut` plus
     # reassignment for shadowed lets, an unused import dropped (code edits).
     "examples/autodiff_demo.mind": ("main #383 e3b01d11: snake_case gradient bindings"),

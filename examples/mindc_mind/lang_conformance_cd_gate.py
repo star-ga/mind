@@ -23,6 +23,8 @@ reject row whose named code is not the measured one), crash.
 docs/lang-conformance-cd-status.md is GENERATED from ROWS.tsv and CD_KNOWN_GAPS.tsv (`--write-status`);
 the gate run fails when it is stale. `--write-gaps` drops closed gaps and updates keys, never adds one.
 `--self-test` proves the gate on planted rows with stand-in drivers, and runs this script as a child.
+It first builds the real check driver and runs it on one planted accept and one planted reject program,
+so the self-test too fails (and asserts nothing) when the self-host .so is absent or cannot build it.
 The driver is built from MINDC_SO (the self-host .so, as the smoke resolves it).
 """
 from __future__ import annotations
@@ -201,10 +203,13 @@ def build_driver(out: pathlib.Path) -> str:
         return f"no self-host .so: {error}"
     if not smoke.SO.exists():
         return f"no self-host .so: {smoke.SO} is missing"
-    lib = ctypes.CDLL(str(smoke.SO))
-    lib.selftest_native_elf_hb.restype = ctypes.c_int64
-    lib.selftest_native_elf_hb.argtypes = [ctypes.c_int64] * 4
-    elf = smoke.build_check_elf(lib)
+    try:  # a file that is not the self-host .so is a refusal, not a traceback
+        lib = ctypes.CDLL(str(smoke.SO))
+        lib.selftest_native_elf_hb.restype = ctypes.c_int64
+        lib.selftest_native_elf_hb.argtypes = [ctypes.c_int64] * 4
+        elf = smoke.build_check_elf(lib)
+    except (OSError, AttributeError) as error:
+        return f"the self-host .so {smoke.SO} cannot build the driver: {type(error).__name__}: {error}"
     if not elf:
         return "the check driver compiled to an empty ELF"
     out.write_bytes(elf)
@@ -317,10 +322,29 @@ def _exit_path_cases(root: pathlib.Path, workers: int) -> list[tuple[bool, str]]
     return results
 
 
-def self_test(workers: int) -> int:
+# Programs of the real-driver cases: a well-typed function, and a bool returned where i64 is declared.
+REAL = (("real-acc", "fn f() -> i64 {\n    let x: i64 = 5;\n    return x;\n}\n", "accept"),
+        ("real-rej", "fn g() -> i64 {\n    return 1 < 2;\n}\n", "reject"))
+
+
+def _real_driver_cases(driver: pathlib.Path, std: pathlib.Path, root: pathlib.Path) -> list[tuple[bool, str]]:
+    """The real check driver, run as the corpus mode runs it: so the self-test needs the compiler."""
+    results = []
+    for name, text, want in REAL:
+        prog = root / f"{name}.mind"
+        prog.write_text(text, encoding="utf-8")
+        m = _safe(measure, driver, prog, root / "w" / name, std)
+        ok = isinstance(m, dict) and m["check"] == want and (want == "accept" or m["key"].startswith("ERROR:"))
+        label = f"the real check driver gives {want} on {name}" + ("" if ok else f" (measured {m})")
+        results.append((ok, label))
+    return results
+
+
+def self_test(workers: int, real: pathlib.Path, std: pathlib.Path) -> int:
     results: list[tuple[bool, str]] = []
     with tempfile.TemporaryDirectory(prefix="lang-conformance-cd-self-") as tmp:
         root = pathlib.Path(tmp)
+        results += _real_driver_cases(real, std, root)
         prog = root / "p.mind"
         prog.write_text("fn main() -> i64 { return 3; }\n", encoding="utf-8")
         (root / "std.txt").write_text("STD", encoding="utf-8")
@@ -487,7 +511,13 @@ def main(argv: list[str]) -> int:
     if not core_limit_check(_image_runner):
         return 1
     if ns.self_test:
-        return self_test(ns.workers)
+        with tempfile.TemporaryDirectory(prefix="lang-conformance-cd-real-") as tmp:
+            real = pathlib.Path(tmp) / "check.elf"
+            why = build_driver(real)
+            if why:  # no compiler: the self-test asserts nothing, as the corpus mode
+                print(f"FAIL  no check driver: {why}")
+                return 1
+            return self_test(ns.workers, real, std_text(pathlib.Path(tmp) / "std.mind"))
     try:
         rows, gaps = load_rows(corpus), load_gaps(corpus)
         stale = status_fresh(corpus, status)
