@@ -22,11 +22,11 @@
 // Flags mirrored from src/bin/mindc.rs Command::Check:
 //   paths: Vec<String>          — recognized + counted (source still from stdin)
 //   --reporter human|json|lsp   — human implemented; json/lsp recognized + STUBBED
-//   --no-typecheck              — gates the (only) self-hosted pass -> clean
+//   --no-typecheck              — gates both passes (check_rules.mind, typecheck) -> clean
+//   --std-src=<path>            — the bundled std text for the rule pass (check_rules.mind)
 //   --no-fmt / --no-lint        — recognized; no fmt/lint pass is self-hosted yet
 //   --fix                       — recognized + STUBBED (no rewrite performed)
-// Exit: 0 if the typecheck report has no "ERROR:", else 1 (via `return`, NOT
-// proc_exit — libc exit is unavailable in the freestanding native ELF).
+// Exit: 0 if the report has no "ERROR:", else 1 (via `return`, NOT proc_exit).
 // ===========================================================================
 
 // Read stdin (fd 0) into `buf` up to `cap` bytes; a pipe read may return short,
@@ -901,10 +901,10 @@ pub fn main() -> i64 {
         return 0;
     }
 
-    // Front-end: lex -> parse -> typecheck (all already self-hosted in main.mind).
+    // Front-end: lex -> parse, then the rule pass (check_rules.mind) and typecheck (main.mind).
     let toks: Vec = lex(src, src_len);
     let ast_root: i64 = parse(toks, src);
-    let report: String = typecheck(ast_root, src);
+    let report: String = string_push_str(ckr_pass(a, toks, src, src_len), typecheck(ast_root, src));
 
     // Emit in the selected reporter shape. json/lsp parse the human report's
     // "ERROR: <msg> at span [lo,hi)" lines into structured diagnostics with

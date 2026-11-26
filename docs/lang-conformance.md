@@ -82,7 +82,8 @@ driver (`examples/mindc_mind/check_driver.mind`, built to a native ELF the way `
 it). No compile path uses this front end yet, so the column measures it on its own. For each row it runs the driver on
 the program and compares its verdict with the expected check verdict and code of `ROWS.tsv`: exit 0 is accept, exit 1
 is reject with the first `ERROR:` line as the first diagnostic, and every other end of the run (a signal, a timeout,
-another status) is a crash. The rows that differ are in `tests/lang_conformance/CD_KNOWN_GAPS.tsv` with a class
+another status) is a crash. The gate gives the driver the bundled standard library text as `--std-src=<path>`
+(the modules of `IMPLICIT_STD_MODULES`): its rule pass (`check_rules.mind`) resolves names against it. The rows that differ are in `tests/lang_conformance/CD_KNOWN_GAPS.tsv` with a class
 (`accepts-forbidden`, `refuses-defined`, `other-code` or `crash`) and the measured first diagnostic. The rules of the
 list are the rules of `KNOWN_GAPS.tsv`: the measured differences must equal the list, and its count may never grow.
 `docs/lang-conformance-cd-status.md` is generated from the two files (`--write-status`, `--write-gaps` as below), and

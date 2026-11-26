@@ -12,15 +12,15 @@ no compile path uses yet. A row is as expected when it is not in the gap list.
 | control | 38 | 25 | 13 | 18 | 18 |
 | expressions | 67 | 60 | 7 | 55 | 54 |
 | items | 49 | 34 | 15 | 34 | 34 |
-| lexical | 79 | 37 | 42 | 38 | 34 |
-| types | 63 | 37 | 26 | 34 | 21 |
-| all | 296 | 193 | 103 | 179 | 161 |
+| lexical | 79 | 37 | 42 | 40 | 36 |
+| types | 63 | 37 | 26 | 36 | 23 |
+| all | 296 | 193 | 103 | 183 | 165 |
 
 ## Gaps by class
 
 | class | rows |
 |---|---|
-| accepts-forbidden | 81 |
+| accepts-forbidden | 77 |
 | refuses-defined | 36 |
 | other-code | 18 |
 | crash | 0 |
@@ -61,8 +61,6 @@ no compile path uses yet. A row is as expected when it is not in the gap list.
 | `items/type_alias_no_semi` | `check accepts` |
 | `lexical/err_E1001_utf8` | `check accepts` |
 | `lexical/err_E2001_type` | `check accepts` |
-| `lexical/err_E2002_unknown` | `check accepts` |
-| `lexical/err_E2004_dtype` | `check accepts` |
 | `lexical/err_E2036_narrow` | `check accepts` |
 | `lexical/err_E2037_fnval` | `check accepts` |
 | `lexical/err_log_of_int` | `check accepts` |
@@ -97,10 +95,8 @@ no compile path uses yet. A row is as expected when it is not in the gap list.
 | `lexical/lex_string_invalid_escape` | `check accepts` |
 | `lexical/lex_string_raw_newline` | `check accepts` |
 | `lexical/lex_string_unterminated` | `check accepts` |
-| `types/c_narrow_let` | `check accepts` |
 | `types/neg_array_loop_card` | `check accepts` |
 | `types/neg_const_array_card` | `check accepts` |
-| `types/neg_infer_conflict` | `check accepts` |
 | `types/neg_option_bad_payload` | `check accepts` |
 | `types/neg_option_two_args` | `check accepts` |
 | `types/neg_result_one_arg` | `check accepts` |

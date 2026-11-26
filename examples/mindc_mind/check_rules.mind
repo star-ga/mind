@@ -1,0 +1,332 @@
+// ===========================================================================
+// CHECK DRIVER: the rule pass. It walks the tokens of the user program and asks
+// the type-rule cores of the compiler (main.mind) at each position. A core
+// answers 1 (its rule refuses here), 0 (it does not) or -3 (not its position).
+// Each refusal is one report line "ERROR: E#### at span [lo, hi)" with the code
+// of the specification catalog (spec/v1.0/errors.md) for the rule:
+//   E2002 unresolved name     tc_is_unknown_ident (needs the std text)
+//   E2001 type mismatch       tc_let_infer_lit (`let x: INT = <float literal>`)
+//                             tc_let_infer_ident (`let b: i32 = <i64 name>`)
+//   E2004 dtype mismatch      tc_is_mixed_binop (<int literal> op <float literal>)
+// The std text is the file of the `--std-src=<path>` argument (the bundled std
+// modules). The E2002 rule gives no verdict with no std text, in a file with a
+// form that the pure-MIND parser does not walk (a `trait` or `impl` item, a
+// `fn (` expression), and on a name glued to a number (a numeric literal form
+// that the pure-MIND lexer splits, `0xFF`, `1.5e`). The E2001 rules run
+// only when the literal or the name is the whole initializer (`;` follows).
+// shortcut: each core lexes the source again, so the pass runs only up to
+// ckr_max_tokens() tokens; upgrade to the *_from_tokens cores after the parser
+// extraction.
+// Appended to the check driver source only (never a compiler part).
+// ===========================================================================
+
+pub fn ckr_max_tokens() -> i64 {
+    4096
+}
+
+// The rule lines for the program `src`; `toks` is its token stream.
+pub fn ckr_pass(a: Args, toks: Vec, src: i64, src_len: i64) -> String {
+    let n: i64 = tok_count(toks);
+    if n > ckr_max_tokens() {
+        return string_new();
+    }
+    let cap: i64 = 4194304;
+    let std: i64 = __mind_alloc(cap + 16);
+    let std_len: i64 = ckr_read_std(a, std, cap) * ckr_names_decidable(toks, n, 0, src);
+    ckr_walk(toks, n, 0, src, src_len, std, std_len, string_new())
+}
+
+// Bytes of the std text, or 0 when there is none, it cannot be read or it is too large.
+pub fn ckr_read_std(a: Args, buf: i64, cap: i64) -> i64 {
+    let path: i64 = ckr_find_std(a, 1, args_len(a));
+    if path == 0 {
+        return 0;
+    }
+    let got: i64 = read_file_native(path, buf, cap + 1);
+    if got < 0 {
+        return 0;
+    }
+    if got > cap {
+        return 0;
+    }
+    got
+}
+
+// The path after "--std-src=" of the first such argument (a C string), or 0.
+pub fn ckr_find_std(a: Args, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    if ckr_is_std_flag(args_get(a, i), 0) == 1 {
+        return __mind_argv(i) + 10;
+    }
+    ckr_find_std(a, i + 1, n)
+}
+
+// 1 iff `s` starts with the 10 bytes "--std-src=".
+pub fn ckr_is_std_flag(s: String, k: i64) -> i64 {
+    if k >= 10 {
+        return 1;
+    }
+    if s.len <= k {
+        return 0;
+    }
+    if string_get_byte(s, k) != ckr_flag_byte(k) {
+        return 0;
+    }
+    ckr_is_std_flag(s, k + 1)
+}
+
+pub fn ckr_flag_byte(k: i64) -> i64 {
+    if k < 2 {
+        return 45;
+    }
+    if k == 2 {
+        return 115;
+    }
+    if k == 3 {
+        return 116;
+    }
+    if k == 4 {
+        return 100;
+    }
+    if k == 5 {
+        return 45;
+    }
+    if k == 6 {
+        return 115;
+    }
+    if k == 7 {
+        return 114;
+    }
+    if k == 8 {
+        return 99;
+    }
+    61
+}
+
+// 0 when the file has a `trait` or `impl` word or a `fn (` expression, else 1.
+pub fn ckr_names_decidable(toks: Vec, n: i64, i: i64, src: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if ckr_is_word(toks, i, src, 116, 114, 97, 105, 116) == 1 {
+        return 0;
+    }
+    if ckr_is_word(toks, i, src, 105, 109, 112, 108, 0) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, i) == tk_kw_fn() {
+        if i + 1 < n {
+            if tok_kind(toks, i + 1) == tk_lparen() {
+                return 0;
+            }
+        }
+    }
+    ckr_names_decidable(toks, n, i + 1, src)
+}
+
+// 1 iff token i is the identifier spelled b0..b4 (b4 == 0: four bytes).
+pub fn ckr_is_word(toks: Vec, i: i64, src: i64, b0: i64, b1: i64, b2: i64, b3: i64, b4: i64) -> i64 {
+    if tok_kind(toks, i) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, i);
+    let len: i64 = tok_hi(toks, i) - lo;
+    if b4 == 0 {
+        if len != 4 {
+            return 0;
+        }
+    }
+    if b4 != 0 {
+        if len != 5 {
+            return 0;
+        }
+        if __mind_load_i8(src + lo + 4) != b4 {
+            return 0;
+        }
+    }
+    if __mind_load_i8(src + lo) != b0 {
+        return 0;
+    }
+    if __mind_load_i8(src + lo + 1) != b1 {
+        return 0;
+    }
+    if __mind_load_i8(src + lo + 2) != b2 {
+        return 0;
+    }
+    if __mind_load_i8(src + lo + 3) != b3 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff token j exists and is `;`.
+pub fn ckr_semi_at(toks: Vec, n: i64, j: i64) -> i64 {
+    if j >= n {
+        return 0;
+    }
+    if tok_kind(toks, j) == tk_semi() {
+        return 1;
+    }
+    0
+}
+
+// 1 iff token i starts where a number token ends (`0xFF` lexed as `0` `xFF`, `1.5e` as `1.5` `e`).
+pub fn ckr_glued_to_number(toks: Vec, i: i64) -> i64 {
+    if i < 1 {
+        return 0;
+    }
+    if ckr_lit_type(tok_kind(toks, i - 1)) == ty_unknown() {
+        return 0;
+    }
+    if tok_hi(toks, i - 1) == tok_lo(toks, i) {
+        return 1;
+    }
+    0
+}
+
+pub fn ckr_walk(toks: Vec, n: i64, i: i64, src: i64, src_len: i64, std: i64, std_len: i64, out: String) -> String {
+    if i >= n {
+        return out;
+    }
+    let o1: String = ckr_at_name(toks, n, i, src, src_len, std, std_len, out);
+    let o2: String = ckr_at_float(toks, n, i, src, src_len, std, std_len, o1);
+    let o3: String = ckr_at_binop(toks, n, i, src, o2);
+    ckr_walk(toks, n, i + 1, src, src_len, std, std_len, o3)
+}
+
+// An identifier: E2002 (unresolved name, with the std text) and E2001 (a narrowing `let`).
+pub fn ckr_at_name(toks: Vec, n: i64, i: i64, src: i64, src_len: i64, std: i64, std_len: i64, out: String) -> String {
+    if tok_kind(toks, i) != tk_ident() {
+        return out;
+    }
+    if ckr_glued_to_number(toks, i) == 1 {
+        return out;
+    }
+    let pos: i64 = tok_lo(toks, i);
+    if std_len > 0 {
+        if tc_is_unknown_ident(src, src_len, pos, std, std_len) == 1 {
+            return ckr_error(out, 2002, pos, tok_hi(toks, i));
+        }
+    }
+    if ckr_semi_at(toks, n, i + 1) == 0 {
+        return out;
+    }
+    if tc_let_infer_ident(src, src_len, pos, std, std_len) == 1 {
+        return ckr_error(out, 2001, pos, tok_hi(toks, i));
+    }
+    out
+}
+
+// A float literal: E2001 when a `let` with an integer annotation binds it.
+pub fn ckr_at_float(toks: Vec, n: i64, i: i64, src: i64, src_len: i64, std: i64, std_len: i64, out: String) -> String {
+    if tok_kind(toks, i) != tk_float() {
+        return out;
+    }
+    if ckr_semi_at(toks, n, i + 1) == 0 {
+        return out;
+    }
+    let pos: i64 = tok_lo(toks, i);
+    if tc_let_infer_lit(src, src_len, pos, std, std_len) == 1 {
+        return ckr_error(out, 2001, pos, tok_hi(toks, i));
+    }
+    out
+}
+
+// `<int literal> op <float literal>` or the reverse, op one of + - * / %: E2004.
+// The int literal is not a tuple field (`t.0`), and the right literal is not
+// the operand of an `as` cast, so both operands keep the literal type.
+pub fn ckr_at_binop(toks: Vec, n: i64, i: i64, src: i64, out: String) -> String {
+    if i + 2 >= n {
+        return out;
+    }
+    if ckr_is_arith(tok_kind(toks, i + 1)) == 0 {
+        return out;
+    }
+    let lk: i64 = tok_kind(toks, i);
+    let rk: i64 = tok_kind(toks, i + 2);
+    if i > 0 {
+        if tok_kind(toks, i - 1) == tk_dot() {
+            return out;
+        }
+    }
+    if ckr_is_as(toks, n, i + 3, src) == 1 {
+        return out;
+    }
+    let lt: i64 = ckr_lit_type(lk);
+    let rt: i64 = ckr_lit_type(rk);
+    if lt == ty_unknown() {
+        return out;
+    }
+    if rt == ty_unknown() {
+        return out;
+    }
+    if tc_is_mixed_binop(lt, rt) == 1 {
+        return ckr_error(out, 2004, tok_lo(toks, i), tok_hi(toks, i + 2));
+    }
+    out
+}
+
+pub fn ckr_is_arith(k: i64) -> i64 {
+    if k == tk_plus() {
+        return 1;
+    }
+    if k == tk_minus() {
+        return 1;
+    }
+    if k == tk_star() {
+        return 1;
+    }
+    if k == tk_slash() {
+        return 1;
+    }
+    if k == tk_percent() {
+        return 1;
+    }
+    0
+}
+
+pub fn ckr_lit_type(k: i64) -> i64 {
+    if k == tk_int() {
+        return ty_i64();
+    }
+    if k == tk_float() {
+        return ty_f64();
+    }
+    ty_unknown()
+}
+
+// 1 iff token j is the identifier `as`.
+pub fn ckr_is_as(toks: Vec, n: i64, j: i64, src: i64) -> i64 {
+    if j >= n {
+        return 0;
+    }
+    if tok_kind(toks, j) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, j);
+    if tok_hi(toks, j) - lo != 2 {
+        return 0;
+    }
+    if __mind_load_i8(src + lo) != 97 {
+        return 0;
+    }
+    if __mind_load_i8(src + lo + 1) != 115 {
+        return 0;
+    }
+    1
+}
+
+// "ERROR: E<code> at span [lo, hi)\n" appended to `out`.
+pub fn ckr_error(out: String, code: i64, lo: i64, hi: i64) -> String {
+    let s1: String = push_kw_error(out);
+    let s2: String = string_push_byte(s1, 69);
+    let s3: String = push_i64(s2, code);
+    let s4: String = push_at_span(s3);
+    let s5: String = push_i64(s4, lo);
+    let s6: String = push_comma(s5);
+    let s7: String = push_i64(s6, hi);
+    let s8: String = string_push_byte(s7, 41);
+    push_newline(s8)
+}

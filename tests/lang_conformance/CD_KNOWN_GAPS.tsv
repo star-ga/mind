@@ -51,8 +51,6 @@ items/type_alias_missing_rhs	accepts-forbidden	check accepts
 items/type_alias_no_semi	accepts-forbidden	check accepts
 lexical/err_E1001_utf8	accepts-forbidden	check accepts
 lexical/err_E2001_type	accepts-forbidden	check accepts
-lexical/err_E2002_unknown	accepts-forbidden	check accepts
-lexical/err_E2004_dtype	accepts-forbidden	check accepts
 lexical/err_E2007_arity	other-code	ERROR: return type mismatch at span [75, 88)
 lexical/err_E2026_struct	other-code	ERROR: return type mismatch at span [61, 71)
 lexical/err_E2036_narrow	accepts-forbidden	check accepts
@@ -99,7 +97,6 @@ types/array_if_branch	refuses-defined	ERROR: return type mismatch at span [105, 
 types/array_index	refuses-defined	ERROR: return type mismatch at span [56, 67)
 types/array_type_alias	refuses-defined	ERROR: return type mismatch at span [65, 76)
 types/c_f64_inner	refuses-defined	ERROR: return type mismatch at span [20, 30)
-types/c_narrow_let	accepts-forbidden	check accepts
 types/const_array_ok	refuses-defined	ERROR: return type mismatch at span [51, 62)
 types/dyn_array	refuses-defined	ERROR: return type mismatch at span [81, 96)
 types/neg_array_card_high	other-code	ERROR: return type mismatch at span [62, 73)
@@ -109,7 +106,6 @@ types/neg_array_elem_float	other-code	ERROR: return type mismatch at span [57, 6
 types/neg_array_loop_card	accepts-forbidden	check accepts
 types/neg_array_nested_inner	other-code	ERROR: return type mismatch at span [65, 79)
 types/neg_const_array_card	accepts-forbidden	check accepts
-types/neg_infer_conflict	accepts-forbidden	check accepts
 types/neg_option_bad_payload	accepts-forbidden	check accepts
 types/neg_option_two_args	accepts-forbidden	check accepts
 types/neg_result_one_arg	accepts-forbidden	check accepts

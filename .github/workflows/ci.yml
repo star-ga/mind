@@ -1241,7 +1241,7 @@ jobs:
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
             python3 scripts/run_gate.py --min-asserted 296 --timeout 3600 examples/mindc_mind/lang_conformance_cd_gate.py
-          python3 scripts/run_gate.py --min-asserted 60 examples/mindc_mind/lang_conformance_cd_gate.py --self-test
+          python3 scripts/run_gate.py --min-asserted 64 examples/mindc_mind/lang_conformance_cd_gate.py --self-test
         working-directory: ${{ github.workspace }}
 
       - name: Self-host LOOP gate — MIND compiles MIND, Rust+LLVM out (self_host_loop_smoke.py)

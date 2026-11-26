@@ -418,8 +418,11 @@ def self_test(workers: int) -> int:
         for name, text in (("ROWS.tsv", "\t".join(ROW_FIELDS)), (GAPS, "\t".join(GAP_FIELDS))):
             (root / "c" / name).write_text(text + "\n", encoding="utf-8")
 
-        def refused(lines: list[str], want: str) -> bool:
-            (root / "c" / GAPS).write_text("\n".join(["\t".join(GAP_FIELDS), *lines]) + "\n", encoding="utf-8")
+        def refused(lines: list[str] | None, want: str, head: str = "\t".join(GAP_FIELDS)) -> bool:
+            if lines is None:
+                (root / "c" / GAPS).unlink()
+            else:
+                (root / "c" / GAPS).write_text("\n".join([head, *lines]) + "\n", encoding="utf-8")
             try:
                 load_gaps(root / "c")
             except CorpusError as error:
@@ -429,7 +432,11 @@ def self_test(workers: int) -> int:
         results += [(refused(["a/b\tcrash\tk", "a/b\tcrash\tk"], "listed twice"), "the list is refused: a gap listed twice"),
                     (refused(["a/b\tloose\tk"], "class is one of"), "the list is refused: a gap of an unknown class"),
                     (refused(["a/b\tcrash\t"], "key is not empty"), "the list is refused: a gap with an empty key"),
-                    (not refused(["a/b\tcrash\tk", "# n", ""], "x"), "a list with notes and blank lines loads")]
+                    (not refused(["a/b\tcrash\tk", "# n", ""], "x"), "a list with notes and blank lines loads"),
+                    (refused(["a/b\tcrash"], "has 2 fields"), "the list is refused: a data line with a wrong field count"),
+                    (refused([], "header must be", "id\tclass"), "the list is refused: a wrong header"),
+                    (refused([], "header must be", "# only a note"), "the list is refused: no header"),
+                    (refused(None, "file is missing"), "the list is refused: a missing file")]
         results += _ratchet_cases(root)
         fake = root / "repo"
         (fake / "src" / "project" / "stdlib").mkdir(parents=True)

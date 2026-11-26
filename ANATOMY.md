@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3840 | **Est. tokens:** ~6,273,038
-**Generated:** 2026-11-26 09:55 UTC
+**Files:** 3840 | **Est. tokens:** ~6,273,197
+**Generated:** 2026-11-26 10:06 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 48 | ~144,515 |
+| `docs/` | 48 | ~144,514 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,044 |
 | `docs/compiler/` | 11 | ~30,424 |
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 363 | ~1,100,378 |
+| `examples/mindc_mind/` | 363 | ~1,100,593 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -266,7 +266,7 @@
 | `tests/fs_checked_listing/` | 13 | ~14,043 |
 | `tests/https_loopback/` | 22 | ~24,750 |
 | `tests/ir_verification/` | 2 | ~108 |
-| `tests/lang_conformance/` | 3 | ~14,671 |
+| `tests/lang_conformance/` | 3 | ~14,616 |
 | `tests/lang_conformance/control/` | 38 | ~971 |
 | `tests/lang_conformance/expressions/` | 67 | ~1,386 |
 | `tests/lang_conformance/items/` | 49 | ~785 |
@@ -587,8 +587,8 @@
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1946 tok, huge) — IR stability contract
-- `lang-conformance-cd-status.md` (~2372 tok, huge) — Language conformance status: the pure-MIND check driver
-- `lang-conformance.md` (~5151 tok, huge) — Language conformance corpus
+- `lang-conformance-cd-status.md` (~2325 tok, huge) — Language conformance status: the pure-MIND check driver
+- `lang-conformance.md` (~5197 tok, huge) — Language conformance corpus
 - `lang-conformance-status.md` (~5618 tok, huge) — Language conformance status
 - `MHS_ROADMAP.md` (~2657 tok, huge) — MHS / Governed Device I/O Roadmap — SUPERSEDED
 - `mic3-v04-draft.md` (~1928 tok, huge) — MIC3 `0x04` core codec — implementation draft
@@ -787,7 +787,7 @@
 - `_cf_giant.py` (~9117 tok, huge) — Program generators of self_host_native_cf_smoke (census X1 capacity cases).
 - `_cf_harness.py` (~2041 tok, huge) — Low-level helpers of self_host_native_cf_smoke.py: the stdin image, the
 - `_cf_oracle.py` (~2027 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
-- `check_driver.mind` (~9782 tok, huge) — ===========================================================================
+- `check_driver.mind` (~9807 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1442 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1215 tok, large)
 - `cutover_coverage_measure.py` (~3255 tok, huge)
@@ -809,7 +809,7 @@
 - `h2b_exclusion_controls_check.py` (~4235 tok, huge) — H2b exclusion positive controls.
 - `h2b_fmt_identity_check.py` (~3861 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~1760 tok, huge) — Native intrinsic id table contract for main.mind (pure text analysis).
-- `lang_conformance_cd_gate.py` (~8052 tok, huge) — Language conformance gate, check-driver column: the measured verdict of the pure-MIND check driver.
+- `lang_conformance_cd_gate.py` (~8196 tok, huge) — Language conformance gate, check-driver column: the measured verdict of the pure-MIND check driver.
 - `lang_conformance_gate.py` (~11962 tok, huge) — Language conformance gate: the measured language status of this compiler.
 - `lockstep_lint.py` (~4258 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
@@ -998,7 +998,7 @@
 - `self_host_bounded_profile_smoke.py` (~7768 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1226 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
 - `self_host_cast_mic3_smoke.py` (~4759 tok, huge)
-- `self_host_check_driver_smoke.py` (~2889 tok, huge)
+- `self_host_check_driver_smoke.py` (~2935 tok, huge)
 - `self_host_continue_smoke.py` (~4707 tok, huge) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
 - `selfhost_driver.mind` (~7395 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
@@ -3735,7 +3735,7 @@
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
 ### `tests/lang_conformance/`
 
-- `CD_KNOWN_GAPS.tsv` (~2342 tok, huge) — # Rows where the pure-MIND check driver differs from the expected check verdict 
+- `CD_KNOWN_GAPS.tsv` (~2287 tok, huge) — # Rows where the pure-MIND check driver differs from the expected check verdict 
 ### `tests/lang_conformance/control/`
 
 - `block_arg.mind` (~25 tok, tiny) — fn f(x: i64) -> i64 {

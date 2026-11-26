@@ -47,15 +47,17 @@ _STDLIB_MODULES = [
     "string", "time", "toml", "tui", "vec",
 ]
 _DUMMY_HASH = bytes(range(32))
+# The check driver and its passes, appended in this order after the compiler library.
+CHECK_DRIVER_FILES = ("check_driver.mind", "check_rules.mind")
 
 
 def build_check_elf(lib) -> bytes:
-    """Compile std ++ main.mind ++ check_driver.mind to a native ELF (the check tool)."""
+    """Compile std ++ main.mind ++ the check driver files to a native ELF (the check tool)."""
     std_dir = _REPO / "std"
     parts = [(std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES]
     std_blob = b"\n".join(parts) + b"\n"
     main = compiler_library()
-    driver = (_HERE / "check_driver.mind").read_bytes()
+    driver = b"\n".join((_HERE / name).read_bytes() for name in CHECK_DRIVER_FILES)
     combined = std_blob + main + b"\n" + driver
     user_lo = len(std_blob)
     sb = ctypes.create_string_buffer(combined, len(combined))
