@@ -21,11 +21,12 @@
 > param-mutation stale-slot read, non-dyadic float-literal silent-bits, carry/loop-frame 256-cap
 > overflow — all silent-miscompile → loud-refusal, keystone byte-identity held.
 >
-> **Measured state (2026-11-26, public main `e539b176`, release v0.10.4).** All counts are of the tree at
+> **Measured state (2026-11-26, public main `e539b176`, 27 commits after the release tag v0.10.4).** All counts are of the tree at
 > that commit. Non-test lines follow the rule of `tests/non_test_rust_line_ratchet.rs`.
 > - **The Rust host still runs the front end of every command that reads MIND source.** A native `mindc build` parses with the
 >   Rust parser (`src/build/native_bridge.rs:619`), type-checks with the Rust checker
->   (`src/build/native_scope.rs:641`) and lowers with the Rust lowering in its admission step
+>   (`src/build/native_bridge/admission.rs:226` for one file, `src/build/native_scope.rs:641` for a
+>   project source set) and lowers with the Rust lowering in its admission step
 >   (`src/build/native_bridge/admission.rs:458`) before the pure-MIND compiler runs. No host command runs
 >   the pure-MIND check driver (`check_driver.mind`). So no line of the Rust host can be deleted today.
 > - Rust host: 347 files under `src/`, 185,012 physical lines, 150,927 non-test lines (the ratchet pins
@@ -120,8 +121,9 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 - [x] **B0.1 — First feature grown: fixed i64 ARRAYS (2026-07-22).** The first construct turned from a 0B refusal into a CORRECT emit. `[…]` literals, index read/write `a[i]` (const + variable index), composition (arithmetic / call args / returns / conditions / chained `a[i][j]` / nested `[[…]]`), for+while iteration, arrays across fn boundaries (arg + return), proven-constant OOB refusal — all reusing the same `__mind_alloc` + `base+8*i` load/store ABI main.mind already uses by hand (new tokens `tk_lbracket`/`tk_rbracket`, AST kinds `ast_array_lit`/`ast_index`/`ast_index_assign`, emit arms + MATCHING arms in all four parallel count/emit walks — slot-consistency is load-bearing). **Semantics:** arrays are reference values (pointer-copy aliasing — `let b=a; b[0]=9` mutates `a`); runtime bounds are UNCHECKED for computed/variable indices (matches the `__mind_load_i64` trust model — a checked mode is a future slice). **No cross-substrate oracle** (the Rust MLIR path can't run arrays) → execution-verified across 70+ hand-derived shapes + blind-reviewed (no slot desync, boundary intact, crash-free on OOB). main.mind byte-identical (uses no `[]`-arrays; reseed 7cb79157 for own-source growth). Gated by the updated `self_host_failclosed_smoke.py` (13 array-supported + array-boundary-refused). ~~Still fail-closed follow-ups: `.len()`, non-i64 element arrays, checked runtime bounds.~~ **ALL THREE LANDED (2026-07-25):** ✅ **`.len()` on arrays** (`3b1d8cdc`, new `ast_method` AST-kind wired through `parse_postfix_rest` + a compile-time-constant emit; a blind over-fire probe caught+fixed a `tuple.len()` leak pre-land). ✅ **f64-element arrays** (`aad38142`, `nb_array_elems` float-poison → an `is_tuple`-gated homogeneity poison, array-only — f32/i32/i8/bool/mixed **and** float tuples stay fail-closed; net-verify on the committed smoke caught+fixed a float-tuple fail-OPEN pre-land). ✅ **checked runtime bounds** (`6f13ec5f`, direct-binding known-length → a runtime `idx<0||idx>=N` guard → deterministic `_exit(77)`, emitting zero new SSA ids so no count/emit desync; the call-boundary fat-pointer case stays explicitly deferred). Each net-verified on a fresh build + CI-green. **Feature progression (native-backend growth toward full-surface = the concrete path to Rust independence 100%):** ✅ **structs-harden** (declared-order + malformed fail-close, `658af4b4`), ✅ **tuples** (parse-time desugar to anonymous structs — literal / `.N` / destructure, paren-disambiguated, parser-only), ✅ **refs** (`&x` / `*r` / `*r=v`, within-fn + acyclic pass-by-ref write-back; found+fixed a deeper pre-existing `parse_fn_def` bug that dropped a no-arrow void fn's first body statement; recursive/mutual-recursive address-taken fns + `return &x` fail-closed via transitive call-**cycle** detection — blind review + net-verify caught a frame-corruption SIGSEGV and a mutual-recursion hole pre-landing; `ref_netverify.py` 24 cases), ✅ **field-store** (`p.x = v` mutable structs — memory store, array-style aliasing + cross-call write-back; nested-path/float/non-struct fail-closed; `field_store_netverify.py` 23 cases), ✅ **enums** (C-like: `Name::Variant` resolves at parse time and desugars to the proven synthetic int-const, match dispatch via the existing int-match desugar, explicit discriminants; payload variants / non-exhaustive-no-wildcard / Option-Result all fail-closed; also closed two adjacent pre-existing match fail-OPENs; `enum_netverify.py` 31 cases), plus two correctness rungs that closed confirmed silent miscompiles — ✅ **i64 loop-carry through branched regions** (if/else, nested-if, if-wrapped-while now carry correctly; break/continue-in-carrying-branch + field-store-in-region fail-closed) and ✅ **general-path float fail-close** (used floats no longer compute as 0; the dedicated RI-D2 float tier is unaffected) — ✅ **Option/Result** (single-i64-payload enums — `Some(x)`/`None`/`Ok`/`Err` desugar to a tagged `[tag, payload]` block via the proven array ABI + tag-match with payload binding; multi-field/tuple/non-i64/generic payloads all fail-closed; `option_netverify.py` 38 cases; blind review confirmed the scrutinee-re-eval is pre-existing + unweaponizable since no side-effecting primitive exists), then → **closures** (LANGUAGE-blocked, not a backend rung: MIND has no lambda/fn-value syntax and the reference frontend rejects fn-value calls with E2012 — implementing them would fork the self-host surface ahead of the language; the native side has a ready non-capturing tier via link-time fn-address imm64 + `call rax` once a surface lands, capturing needs `{fn_ptr, env}`. Meanwhile the investigation closed a real fail-OPEN: an unresolved callee made `nb_patch_all` read `starts[-1]` and patch a garbage rel32 → running wrong-value/SIGILL ELF; `nb_calls_all_resolve` now refuses any module with an unresolvable callee 0B, `closure_netverify.py` 20 cases) → ✅ **floats — general-path f64** (rung-4's general-path fail-close turned into correct EMIT: f64 lets/arith/compares/params/returns + a SATURATING `as i64` matching the Rust `emit_saturating_fp_to_i64` oracle; root-caused 3 leaks — silent-passthrough `as i64` cast, mixed float⊕int falling to raw-bits integer add, entry epilogue not bridging xmm0→rax; f32 / mixed-dtype / non-SSE ops / huge-literals ≥2^63 / non-dyadic all fail-closed; net-verify + cross-family blind review caught + closed a huge-f64-literal fail-OPEN the gate-lift newly exposed, pre-landing; the pre-existing fp_field SEGFAULT + fp_call fail-OPEN were fixed in the same arc; `general_float_netverify.py` 32 cases) → **tensors** → then the pure-MIND type-checker (B1) and finally make sure no default path needs the MLIR/LLVM path, which stays an option (PHASE C, D) + ship the self-host binary (E2). Each construct moved from a 0B refusal to a correct emit shrinks the gap to compiling arbitrary programs.
 - [~] **B1** Full type-checker in pure MIND (Rust `type_checker/mod.rs`: 5,125 LOC in July, 6,535 lines
   today; `src/type_checker/` has 16,143 lines in 28 files) — floats, tensors, narrow ints, enums, shapes.
-  **State on main (2026-11-26):** the rules ported below are decision cores. Only the `selftest_tc_*`
-  exports call them (directly or through other `tc_*` functions), so no core runs on a user command.
+  **State on main (2026-11-26):** the rules ported below are decision cores of diagnostic codes. Only the
+  `selftest_tc_*` exports call these cores (directly or through other `tc_*` functions), so no decision
+  core runs on a user command.
   The pure-MIND `typecheck` that the compiler entry calls has one rule (`tc_return`), and its result is
   dropped (`main.mind:28880`, `let _tc`). Item B7 wires the cores into a check pass.
   **First slice LANDED (2026-07-21, `1372c4c`):** the E2004 i64→i32 implicit-narrowing rule ported to pure MIND
@@ -199,8 +201,8 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   (live-keyed, both directions), 125 checks, 0 divergences.**
   **DIAGNOSTIC-RULE DECISION CORES, marked complete on 2026-07-24 for the codes of that date** — the
   text of that date: every diagnostic code the Rust checker still EMITS is now a pure-MIND decision core.
-  **State on 2026-11-26:** the Rust checker grew after that date, and 53 diagnostic codes of today have no
-  name in a pure-MIND file. No pure-MIND pass on a user command emits any code yet (see the state note at
+  **State on 2026-11-26:** the Rust checker grew after that date. Of the 78 diagnostic codes in the check,
+  lint and format code of the Rust host today, 53 have no name in a pure-MIND file. No pure-MIND pass on a user command emits any code yet (see the state note at
   the top of B1). On 2026-07-24 the only exclusions were E2007 (feature-gate, no live oracle) and E2014
   (retired #99, u64 first-class) — both ungatable, correctly not ported. The quartet was then HARDENED via
   a multi-model audit + hunt + the differential fuzzer + 2 cross-family blind reviews
@@ -229,7 +231,7 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   (`src/opt/comptime.rs`) have no pure-MIND twin.
 
 **Work with no item until 2026-11-26 (added from the measured state at the top).** The Rust front end runs
-first on every command, so it must leave in order: B5, then B6, then the type work of B1 and B7, then B8
+first on every command that reads MIND source, so it must leave in order: B5, then B6, then the type work of B1 and B7, then B8
 for one release, then B9. The other items run beside that order. Each item turns Rust host work into pure
 MIND. Items that edit `main.mind` and the frozen seed run one at a time.
 - [ ] **B5** Parser out of `main.mind`: the lexer and the parser core move into part files, and dispatch
@@ -416,11 +418,13 @@ An external SOTA compiler survey plus internal architecture adjudication. The su
 ## PHASE D — No default path needs the external toolchain
 **Order of D and E (decided 2026-11-26).** The July text orders D before E, but it names finish line (a)
 before finish line (c); the two did not agree. The decision: the Rust-free `mindc` is native first. The
-path to finish line (a) does not wait for the MLIR route or for C6. MLIR and LLVM are not removed. After
-Rust independence they are an option of the Rust-free `mindc`: a backend that the user selects, and only
-that option needs the external LLVM tools. So the MLIR route moves into pure MIND as well (D3). The Rust
-host keeps the MLIR route until the pure-MIND emitter gives the same output on the corpus, and E1 waits
-for that. D1 and D2 mean that no default path needs MLIR or LLVM; finish line (c), the fastest default
+path to finish line (a) does not wait for the MLIR route or for C6: the shipped toolchain becomes the
+pure-MIND binary (E2) when the front end and the driver work above are done. MLIR and LLVM are not
+removed. After Rust independence they are an option of the Rust-free `mindc`: a backend that the user
+selects, and only that option needs the external LLVM tools. So the MLIR route moves into pure MIND as
+well (D3). Until the pure-MIND emitter gives the same output on the corpus, the Rust source stays in the
+repository as the builder of that option only; the archive step (E1) waits for D3, and E2 does not. D1
+and D2 mean that no default path needs MLIR or LLVM; finish line (c), the fastest default
 path, stays gated on C6.
 - [ ] **D1** No default build path needs the MLIR route (12,753 LOC of Rust in July; `src/mlir` has 14,715
   physical lines today) or the LLVM 17/18 + clang dependency (after C). The MLIR route and LLVM stay an
