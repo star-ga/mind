@@ -26,8 +26,8 @@
 > - **The Rust host still runs the front end of every command that reads MIND source.** A native `mindc build` parses with the
 >   Rust parser (`src/build/native_bridge.rs:619`), type-checks with the Rust checker
 >   (`src/build/native_scope.rs:641`) and lowers with the Rust lowering in its admission step
->   (`src/build/native_bridge/admission.rs:458`) before the pure-MIND compiler runs. No host command calls
->   a pure-MIND driver. So no line of the Rust host can be deleted today.
+>   (`src/build/native_bridge/admission.rs:458`) before the pure-MIND compiler runs. No host command runs
+>   the pure-MIND check driver (`check_driver.mind`). So no line of the Rust host can be deleted today.
 > - Rust host: 347 files under `src/`, 185,012 physical lines, 150,927 non-test lines (the ratchet pins
 >   `NON_TEST_RUST_LINE_MAX = 150_927`). July 2026 (`f9f68e5b`): 119 files, 80,755 physical lines.
 > - Pure MIND (top-level `examples/mindc_mind/*.mind` and `std/*.mind`, drivers and fixtures included):
@@ -37,7 +37,7 @@
 >   the MLIR route (it stays an option) and with the 8,297 lines whose need is not yet decided, it is
 >   677 of 138,029 (0.5 %). For 67,047 more lines a pure-MIND part exists, but it covers a subset or
 >   only a self-test calls it.
-> - 32,228 of the needed lines (about 30 %) had no item in this file. Items B5 to B19, C9 and D3
+> - 32,228 of the needed lines (about 30 %) had no item of their own in this file. Items B5 to B19, C9 and D3
 >   below are new and give that work, and the front-end inversion, a place here.
 > - Language: 83 of 193 valid conformance rows (43.0 %) pass check, native build and run
 >   ([`lang-conformance-status.md`](lang-conformance-status.md)).
@@ -225,8 +225,8 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 - [~] **B4** Optimizer / analysis passes in pure MIND. **State on 2026-11-26:** an AST loop-invariant code
   motion pass runs in pure MIND on the native path (`nb_opt_licm*.mind`, called at `main.mind:48190` and
   `:48753`; a source line `// mind: native_opt = full` selects it, see `nb_opt_level.mind`). Still open:
-  loop collapse, SCEV and compile-time folding (`src/opt/collapse.rs`, `scev.rs`, `comptime.rs`) have no
-  pure-MIND part.
+  loop collapse (`src/opt/collapse.rs`), SCEV (`src/opt/scev.rs`) and the comptime pass
+  (`src/opt/comptime.rs`) have no pure-MIND twin.
 
 **Work with no item until 2026-11-26 (added from the measured state at the top).** The Rust front end runs
 first on every command, so it must leave in order: B5, then B6, then the type work of B1 and B7, then B8
