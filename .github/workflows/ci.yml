@@ -1233,6 +1233,17 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 84 examples/mindc_mind/lang_conformance_gate.py --self-test
         working-directory: ${{ github.workspace }}
 
+      - name: Language conformance check-driver column (lang_conformance_cd_gate.py)
+        if: ${{ !cancelled() }}
+        # Measured floor: one verdict per row of tests/lang_conformance/ROWS.tsv, judged on the pure-MIND check
+        # driver built from the self-host .so. Green only when the rows that differ from the expected check
+        # verdict equal CD_KNOWN_GAPS.tsv exactly; the self-test floor is its case count.
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+            python3 scripts/run_gate.py --min-asserted 296 --timeout 3600 examples/mindc_mind/lang_conformance_cd_gate.py
+          python3 scripts/run_gate.py --min-asserted 60 examples/mindc_mind/lang_conformance_cd_gate.py --self-test
+        working-directory: ${{ github.workspace }}
+
       - name: Self-host LOOP gate — MIND compiles MIND, Rust+LLVM out (self_host_loop_smoke.py)
         if: ${{ !cancelled() }}
         # `--min-asserted 2` because this gate has TWO legs and only the pair is

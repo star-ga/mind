@@ -1,0 +1,138 @@
+# Rows where the pure-MIND check driver differs from the expected check verdict (docs/lang-conformance.md).
+# The count may never grow: the gate compares it with every committed version of this file.
+id	class	key
+control/compound_mod	accepts-forbidden	check accepts
+control/else_if	refuses-defined	ERROR: return type mismatch at span [133, 141)
+control/for_literal_pat	accepts-forbidden	check accepts
+control/if_expr	refuses-defined	ERROR: return type mismatch at span [102, 110)
+control/let_tuple_typed	refuses-defined	ERROR: return type mismatch at span [60, 72)
+control/match_e2301	accepts-forbidden	check accepts
+control/match_enum_payload	refuses-defined	ERROR: return type mismatch at span [193, 201)
+control/match_enum_unit	refuses-defined	ERROR: return type mismatch at span [204, 212)
+control/match_struct	accepts-forbidden	check accepts
+control/match_wildcard	refuses-defined	ERROR: return type mismatch at span [83, 91)
+control/neg_expr_no_semi	accepts-forbidden	check accepts
+control/neg_for_no_in	accepts-forbidden	check accepts
+control/neg_if_no_block	accepts-forbidden	check accepts
+control/neg_let_literal_pat	accepts-forbidden	check accepts
+control/neg_let_no_init	accepts-forbidden	check accepts
+control/neg_match_missing_comma	accepts-forbidden	check accepts
+control/neg_while_no_block	accepts-forbidden	check accepts
+control/return_bare	refuses-defined	ERROR: return type mismatch at span [13, 20)
+control/return_early	refuses-defined	ERROR: return type mismatch at span [103, 114)
+control/return_value	refuses-defined	ERROR: return type mismatch at span [60, 70)
+expressions/array_card_mismatch	accepts-forbidden	check accepts
+expressions/array_slice_range	other-code	ERROR: return type mismatch at span [59, 70)
+expressions/array_slice_step	refuses-defined	ERROR: return type mismatch at span [52, 63)
+expressions/char_literal	accepts-forbidden	check accepts
+expressions/ew_add	refuses-defined	ERROR: return type mismatch at span [73, 81)
+expressions/ew_mul	refuses-defined	ERROR: return type mismatch at span [73, 81)
+expressions/ew_sub	refuses-defined	ERROR: return type mismatch at span [73, 81)
+expressions/field_access	refuses-defined	ERROR: return type mismatch at span [50, 60)
+expressions/int_bad_empty_hex	accepts-forbidden	check accepts
+expressions/int_suffix_i64	accepts-forbidden	check accepts
+expressions/slice_ref	refuses-defined	ERROR: return type mismatch at span [34, 46)
+expressions/tensor_index	refuses-defined	ERROR: return type mismatch at span [39, 50)
+expressions/tensor_slice_colon	refuses-defined	ERROR: return type mismatch at span [52, 63)
+items/attr_arg_expr	accepts-forbidden	check accepts
+items/const_missing_init	accepts-forbidden	check accepts
+items/enum_payload_trailing_comma	accepts-forbidden	check accepts
+items/export_fn	accepts-forbidden	check accepts
+items/fn_keyword_ident	accepts-forbidden	check accepts
+items/fn_missing_param_type	accepts-forbidden	check accepts
+items/import_coloncolon	accepts-forbidden	check accepts
+items/import_trailing_dot	accepts-forbidden	check accepts
+items/struct_missing_field_type	accepts-forbidden	check accepts
+items/struct_no_braces	accepts-forbidden	check accepts
+items/trait_method_body	accepts-forbidden	check accepts
+items/trait_multi	accepts-forbidden	check accepts
+items/trait_signature_no_semi	accepts-forbidden	check accepts
+items/type_alias_missing_rhs	accepts-forbidden	check accepts
+items/type_alias_no_semi	accepts-forbidden	check accepts
+lexical/err_E1001_utf8	accepts-forbidden	check accepts
+lexical/err_E2001_type	accepts-forbidden	check accepts
+lexical/err_E2002_unknown	accepts-forbidden	check accepts
+lexical/err_E2004_dtype	accepts-forbidden	check accepts
+lexical/err_E2007_arity	other-code	ERROR: return type mismatch at span [75, 88)
+lexical/err_E2026_struct	other-code	ERROR: return type mismatch at span [61, 71)
+lexical/err_E2036_narrow	accepts-forbidden	check accepts
+lexical/err_E2037_fnval	accepts-forbidden	check accepts
+lexical/err_E2300_mut	other-code	ERROR: return type mismatch at span [131, 139)
+lexical/err_E2301_variant	other-code	ERROR: return type mismatch at span [70, 101)
+lexical/err_log_of_int	accepts-forbidden	check accepts
+lexical/lex_block_comment_unterminated	accepts-forbidden	check accepts
+lexical/lex_float_exp_empty	accepts-forbidden	check accepts
+lexical/lex_float_exp_no_dot	accepts-forbidden	check accepts
+lexical/lex_float_leading_dot	accepts-forbidden	check accepts
+lexical/lex_float_trailing_dot	accepts-forbidden	check accepts
+lexical/lex_float_two_dots	accepts-forbidden	check accepts
+lexical/lex_id_dollar	accepts-forbidden	check accepts
+lexical/lex_id_start_digit	accepts-forbidden	check accepts
+lexical/lex_id_unicode_alpha	refuses-defined	ERROR: return type mismatch at span [44, 52)
+lexical/lex_id_unicode_continue	refuses-defined	ERROR: return type mismatch at span [45, 53)
+lexical/lex_int_bin_bad_digit	accepts-forbidden	check accepts
+lexical/lex_int_empty_binary	accepts-forbidden	check accepts
+lexical/lex_int_hex_bad_digit	accepts-forbidden	check accepts
+lexical/lex_int_hex_upper_prefix	accepts-forbidden	check accepts
+lexical/lex_int_oct_bad_digit	accepts-forbidden	check accepts
+lexical/lex_kw_defer	accepts-forbidden	check accepts
+lexical/lex_kw_else	accepts-forbidden	check accepts
+lexical/lex_kw_export	accepts-forbidden	check accepts
+lexical/lex_kw_fn	accepts-forbidden	check accepts
+lexical/lex_kw_for	accepts-forbidden	check accepts
+lexical/lex_kw_if	accepts-forbidden	check accepts
+lexical/lex_kw_import	accepts-forbidden	check accepts
+lexical/lex_kw_let	accepts-forbidden	check accepts
+lexical/lex_kw_match	accepts-forbidden	check accepts
+lexical/lex_kw_return	accepts-forbidden	check accepts
+lexical/lex_kw_struct	accepts-forbidden	check accepts
+lexical/lex_kw_trait	accepts-forbidden	check accepts
+lexical/lex_kw_type	accepts-forbidden	check accepts
+lexical/lex_kw_where	accepts-forbidden	check accepts
+lexical/lex_kw_while	accepts-forbidden	check accepts
+lexical/lex_string_invalid_escape	accepts-forbidden	check accepts
+lexical/lex_string_raw_newline	accepts-forbidden	check accepts
+lexical/lex_string_unterminated	accepts-forbidden	check accepts
+lexical/std_math	refuses-defined	ERROR: return type mismatch at span [23, 37)
+types/array_i64	refuses-defined	ERROR: return type mismatch at span [59, 70)
+types/array_if_branch	refuses-defined	ERROR: return type mismatch at span [105, 116)
+types/array_index	refuses-defined	ERROR: return type mismatch at span [56, 67)
+types/array_type_alias	refuses-defined	ERROR: return type mismatch at span [65, 76)
+types/c_f64_inner	refuses-defined	ERROR: return type mismatch at span [20, 30)
+types/c_narrow_let	accepts-forbidden	check accepts
+types/const_array_ok	refuses-defined	ERROR: return type mismatch at span [51, 62)
+types/dyn_array	refuses-defined	ERROR: return type mismatch at span [81, 96)
+types/neg_array_card_high	other-code	ERROR: return type mismatch at span [62, 73)
+types/neg_array_card_low	other-code	ERROR: return type mismatch at span [56, 67)
+types/neg_array_card_paren	other-code	ERROR: return type mismatch at span [58, 69)
+types/neg_array_elem_float	other-code	ERROR: return type mismatch at span [57, 68)
+types/neg_array_loop_card	accepts-forbidden	check accepts
+types/neg_array_nested_inner	other-code	ERROR: return type mismatch at span [65, 79)
+types/neg_const_array_card	accepts-forbidden	check accepts
+types/neg_infer_conflict	accepts-forbidden	check accepts
+types/neg_option_bad_payload	accepts-forbidden	check accepts
+types/neg_option_two_args	accepts-forbidden	check accepts
+types/neg_result_one_arg	accepts-forbidden	check accepts
+types/neg_slice_cap_erase	other-code	ERROR: return type mismatch at span [96, 111)
+types/neg_slice_explicit_local	accepts-forbidden	check accepts
+types/neg_slice_readonly_mutate	other-code	ERROR: return type mismatch at span [45, 57)
+types/neg_slice_scalar_arg	other-code	ERROR: return type mismatch at span [68, 82)
+types/neg_slice_wrong_elem	other-code	ERROR: return type mismatch at span [33, 45)
+types/neg_struct_to_scalar	accepts-forbidden	check accepts
+types/neg_tensor_add_broadcast_bad	other-code	ERROR: return type mismatch at span [82, 94)
+types/neg_tensor_add_dtype_mismatch	other-code	ERROR: return type mismatch at span [73, 85)
+types/neg_tensor_add_result	other-code	ERROR: return type mismatch at span [73, 85)
+types/neg_tensor_matmul_rank1	other-code	ERROR: return type mismatch at span [73, 92)
+types/neg_tensor_negative_dim	accepts-forbidden	check accepts
+types/neg_tensor_zero_dim	accepts-forbidden	check accepts
+types/neg_tuple_arity	accepts-forbidden	check accepts
+types/neg_tuple_elem_type	accepts-forbidden	check accepts
+types/option_none	refuses-defined	ERROR: return type mismatch at span [54, 75)
+types/result_err	refuses-defined	ERROR: return type mismatch at span [61, 82)
+types/slice_read_literal	refuses-defined	ERROR: return type mismatch at span [36, 56)
+types/slice_return	refuses-defined	ERROR: return type mismatch at span [40, 49)
+types/tensor_canonical	refuses-defined	ERROR: return type mismatch at span [58, 66)
+types/tensor_dtype_i64	refuses-defined	ERROR: return type mismatch at span [52, 60)
+types/tensor_rank0_canon	refuses-defined	ERROR: return type mismatch at span [50, 58)
+types/tuple_destructure	refuses-defined	ERROR: return type mismatch at span [48, 60)
+types/tuple_return	refuses-defined	ERROR: return type mismatch at span [27, 40)

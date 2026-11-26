@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3837 | **Est. tokens:** ~6,259,750
-**Generated:** 2026-11-25 19:20 UTC
+**Files:** 3840 | **Est. tokens:** ~6,273,038
+**Generated:** 2026-11-26 09:55 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 47 | ~141,789 |
+| `docs/` | 48 | ~144,515 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,044 |
 | `docs/compiler/` | 11 | ~30,424 |
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 362 | ~1,092,237 |
+| `examples/mindc_mind/` | 363 | ~1,100,378 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -140,7 +140,7 @@
 | `.github/workflows/` | 10 | ~23,560 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 3 | ~25,978 |
-| `scripts/` | 36 | ~170,228 |
+| `scripts/` | 36 | ~170,307 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -266,7 +266,7 @@
 | `tests/fs_checked_listing/` | 13 | ~14,043 |
 | `tests/https_loopback/` | 22 | ~24,750 |
 | `tests/ir_verification/` | 2 | ~108 |
-| `tests/lang_conformance/` | 2 | ~12,329 |
+| `tests/lang_conformance/` | 3 | ~14,671 |
 | `tests/lang_conformance/control/` | 38 | ~971 |
 | `tests/lang_conformance/expressions/` | 67 | ~1,386 |
 | `tests/lang_conformance/items/` | 49 | ~785 |
@@ -587,7 +587,8 @@
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1946 tok, huge) — IR stability contract
-- `lang-conformance.md` (~4797 tok, huge) — Language conformance corpus
+- `lang-conformance-cd-status.md` (~2372 tok, huge) — Language conformance status: the pure-MIND check driver
+- `lang-conformance.md` (~5151 tok, huge) — Language conformance corpus
 - `lang-conformance-status.md` (~5618 tok, huge) — Language conformance status
 - `MHS_ROADMAP.md` (~2657 tok, huge) — MHS / Governed Device I/O Roadmap — SUPERSEDED
 - `mic3-v04-draft.md` (~1928 tok, huge) — MIC3 `0x04` core codec — implementation draft
@@ -808,6 +809,7 @@
 - `h2b_exclusion_controls_check.py` (~4235 tok, huge) — H2b exclusion positive controls.
 - `h2b_fmt_identity_check.py` (~3861 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~1760 tok, huge) — Native intrinsic id table contract for main.mind (pure text analysis).
+- `lang_conformance_cd_gate.py` (~8052 tok, huge) — Language conformance gate, check-driver column: the measured verdict of the pure-MIND check driver.
 - `lang_conformance_gate.py` (~11962 tok, huge) — Language conformance gate: the measured language status of this compiler.
 - `lockstep_lint.py` (~4258 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
@@ -1125,7 +1127,7 @@
 - `sha256_hash_smoke.py` (~1290 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~9182 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~7599 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~7688 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~9497 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~2226 tok, huge) — Shared reader for the committed std/*.mind manifest.
@@ -2333,7 +2335,7 @@
 - `check_claims.py` (~9033 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1867 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
 - `check_gate_wiring_preflight.py` (~7817 tok, huge) — Preflight cargo-test parity checks extracted from check_gate_wiring.
-- `check_gate_wiring.py` (~9688 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9767 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~9316 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -3731,6 +3733,9 @@
 - `issue_263_use_path_import.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_usize_suffix_literal.rs` (~770 tok, large) — Copyright 2025 STARGA Inc.
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
+### `tests/lang_conformance/`
+
+- `CD_KNOWN_GAPS.tsv` (~2342 tok, huge) — # Rows where the pure-MIND check driver differs from the expected check verdict 
 ### `tests/lang_conformance/control/`
 
 - `block_arg.mind` (~25 tok, tiny) — fn f(x: i64) -> i64 {

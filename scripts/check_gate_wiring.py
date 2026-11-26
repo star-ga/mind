@@ -243,8 +243,11 @@ GATED_EVENTS = ("push", "pull_request")
 # 337 -> 338 adds examples/mindc_mind/lang_conformance_gate.py, the language conformance gate: the corpus of
 # tests/lang_conformance against the verdicts the specification demands, its known-gap list as a ratchet, the
 # generated status table and its freshness check, and the planted self-test, all in one file.
+# 338 -> 339 adds examples/mindc_mind/lang_conformance_cd_gate.py, the check-driver column of the language
+# conformance corpus: the pure-MIND check driver on every row, its own known-gap list as a ratchet, its generated
+# status table and the planted self-test. A new file: the corpus gate is at its line ceiling.
 # history-lines: examples/mindc_mind/_selfhost_identity.py=657 examples/mindc_mind/_selfhost_string_rows.py=721 examples/mindc_mind/_selfhost_sources.py=726 examples/mindc_mind/native_lane_value_shapes_smoke.py=800
-HARNESS_CEILING = 338  # Exact reviewed integration inventory; no spare allowance.
+HARNESS_CEILING = 339  # Exact reviewed integration inventory; no spare allowance.
 # Read as a git PATHSPEC against the index: the tree on disk carries untracked
 # scratch files whose count is nobody's contract, and a working-tree glob would
 # make this gate's verdict depend on what happens to be lying around.

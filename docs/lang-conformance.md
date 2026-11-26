@@ -75,6 +75,24 @@ MINDC_BIN=target/release/mindc python3 scripts/run_gate.py --min-asserted <rows>
 MINDC_BIN=target/release/mindc python3 scripts/run_gate.py examples/mindc_mind/lang_conformance_gate.py --self-test
 ```
 
+## The check-driver column
+
+`examples/mindc_mind/lang_conformance_cd_gate.py` measures a second front end on the same rows: the pure-MIND check
+driver (`examples/mindc_mind/check_driver.mind`, built to a native ELF the way `self_host_check_driver_smoke.py` builds
+it). No compile path uses this front end yet, so the column measures it on its own. For each row it runs the driver on
+the program and compares its verdict with the expected check verdict and code of `ROWS.tsv`: exit 0 is accept, exit 1
+is reject with the first `ERROR:` line as the first diagnostic, and every other end of the run (a signal, a timeout,
+another status) is a crash. The rows that differ are in `tests/lang_conformance/CD_KNOWN_GAPS.tsv` with a class
+(`accepts-forbidden`, `refuses-defined`, `other-code` or `crash`) and the measured first diagnostic. The rules of the
+list are the rules of `KNOWN_GAPS.tsv`: the measured differences must equal the list, and its count may never grow.
+`docs/lang-conformance-cd-status.md` is generated from the two files (`--write-status`, `--write-gaps` as below), and
+`--self-test` proves the gate with stand-in drivers. A new row needs a line in each list where it differs.
+
+```bash
+MINDC_SO=<self-host .so> python3 scripts/run_gate.py --min-asserted <rows> examples/mindc_mind/lang_conformance_cd_gate.py
+python3 scripts/run_gate.py examples/mindc_mind/lang_conformance_cd_gate.py --self-test
+```
+
 ## How to move a row out of the gap list
 
 1. Fix the compiler so that the row gives its expected verdict.
