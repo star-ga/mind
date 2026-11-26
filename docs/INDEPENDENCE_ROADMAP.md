@@ -25,8 +25,8 @@
 > that commit. Non-test lines follow the rule of `tests/non_test_rust_line_ratchet.rs`.
 > - **The Rust host still runs the front end of every command that reads MIND source.** A native `mindc build` parses with the
 >   Rust parser (`src/build/native_bridge.rs:619`), runs the Rust type checker
->   (`src/build/native_bridge/admission.rs:226`: on the merged source it stops only on the three
->   unresolved-name codes; with the feature `cross-module-imports`, each module of a project source set
+>   (the call at `src/build/native_bridge/admission.rs:226` stops the build for the three
+>   unresolved-name codes and for no other code of the checker; with the feature `cross-module-imports`, each module of a project source set
 >   must pass the checker with no diagnostic, `src/build/native_scope.rs:641`) and lowers with the Rust
 >   lowering in its admission step
 >   (`src/build/native_bridge/admission.rs:458`) before the pure-MIND compiler runs. No host command runs
@@ -205,8 +205,10 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   **DIAGNOSTIC-RULE DECISION CORES, marked complete on 2026-07-24 for the codes of that date** — the
   text of that date: every diagnostic code the Rust checker still EMITS is now a pure-MIND decision core.
   **State on 2026-11-26:** the Rust checker grew after that date. The audit of that day counted 78
-  diagnostic codes in the type check, lint and format-check code of the Rust host; 53 of them have no
-  name in the pure-MIND compiler and library files counted at the top. No pure-MIND pass on a user command emits any code yet (see the state note at
+  distinct diagnostic codes in the non-test code of the checking part of the Rust host (`src/type_checker`,
+  `src/types`, `src/shapes`, `src/check`, `src/lint`, `src/diagnostics`, and the modules `conformance`,
+  `qualified_enums` and `std_qualified`); 53 of them have no name in the pure-MIND compiler and library
+  files counted at the top. No pure-MIND pass on a user command emits any code yet (see the state note at
   the top of B1). On 2026-07-24 the only exclusions were E2007 (feature-gate, no live oracle) and E2014
   (retired #99, u64 first-class) — both ungatable, correctly not ported. The quartet was then HARDENED via
   a multi-model audit + hunt + the differential fuzzer + 2 cross-family blind reviews
