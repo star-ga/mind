@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CI: native canary gate.** `examples/mindc_mind/native_canary_gate.py` builds the cross-substrate fixtures with `mindc build --backend native`: 7 fixtures are gated (3 clean builds give one image, 16 runs give one output, and that output equals the committed reference), 29 are refused with their refusal key, and the count of conformance programs whose native image has a source note (6 of 103) may only fall.
+
 ### Fixed
 
 - **Runtime: a growing array frees its old buffer.** `vec_push` in the runtime support library grows the array record in place and now frees the old buffer after the copy. Before, an `array<T>` of N elements kept about N elements of dead buffers until the program ended. The handle does not change, so an alias taken before a push still reads the grown array. An address from `vec_addr`, or from any other function that gives the address of a buffer, is valid only until the next operation that can grow or free that buffer: a read through an array address from `vec_addr` kept across a growth now reads freed memory, where before it read the old values. No compiler check marks such a read yet.

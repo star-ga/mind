@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3840 | **Est. tokens:** ~6,273,197
-**Generated:** 2026-11-26 10:06 UTC
+**Files:** 3870 | **Est. tokens:** ~6,293,597
+**Generated:** 2026-11-27 01:18 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,628 |
-| `docs/` | 48 | ~144,514 |
+| `docs/` | 48 | ~147,978 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,044 |
 | `docs/compiler/` | 11 | ~30,424 |
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 363 | ~1,100,593 |
+| `examples/mindc_mind/` | 366 | ~1,113,796 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -76,6 +76,7 @@
 | `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,461 |
 | `examples/mindc_mind/testdata/native_alloc_default/` | 47 | ~6,236 |
 | `examples/mindc_mind/testdata/native_avx2/` | 124 | ~88,992 |
+| `examples/mindc_mind/testdata/native_canaries/` | 2 | ~1,480 |
 | `examples/mindc_mind/testdata/native_cf/` | 24 | ~6,169 |
 | `examples/mindc_mind/testdata/native_c_variadic_emit/` | 150 | ~278,450 |
 | `examples/mindc_mind/testdata/native_c_variadic_plan/` | 147 | ~89,227 |
@@ -140,7 +141,7 @@
 | `.github/workflows/` | 10 | ~23,560 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 3 | ~25,978 |
-| `scripts/` | 36 | ~170,307 |
+| `scripts/` | 36 | ~170,409 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -289,6 +290,7 @@
 | `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
 | `tests/native_alloc_std_drivers/` | 1 | ~315 |
 | `tests/native_bridge_support/` | 2 | ~2,987 |
+| `tests/native_canaries/` | 25 | ~2,151 |
 | `tests/native_lane_extern_support/` | 1 | ~7,775 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 163 | ~10,627 |
@@ -582,7 +584,7 @@
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
-- `INDEPENDENCE_ROADMAP.md` (~19736 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~23200 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~2940 tok, huge) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -788,6 +790,7 @@
 - `_cf_harness.py` (~2041 tok, huge) — Low-level helpers of self_host_native_cf_smoke.py: the stdin image, the
 - `_cf_oracle.py` (~2027 tok, huge) — Oracle .so heap checks of self_host_native_cf_smoke (not a gate).
 - `check_driver.mind` (~9807 tok, huge) — ===========================================================================
+- `check_rules.mind` (~2380 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1442 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1215 tok, large)
 - `cutover_coverage_measure.py` (~3255 tok, huge)
@@ -807,9 +810,9 @@
 - `general_float_netverify.py` (~2020 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `h2b_exclusion_controls_check.py` (~4235 tok, huge) — H2b exclusion positive controls.
-- `h2b_fmt_identity_check.py` (~3861 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
+- `h2b_fmt_identity_check.py` (~3936 tok, huge) — H2b layout-only format identity: --emit-ir and --emit-mic3 byte-identity.
 - `intrinsic_id_table_lint.py` (~1760 tok, huge) — Native intrinsic id table contract for main.mind (pure text analysis).
-- `lang_conformance_cd_gate.py` (~8196 tok, huge) — Language conformance gate, check-driver column: the measured verdict of the pure-MIND check driver.
+- `lang_conformance_cd_gate.py` (~8669 tok, huge) — Language conformance gate, check-driver column: the measured verdict of the pure-MIND check driver.
 - `lang_conformance_gate.py` (~11962 tok, huge) — Language conformance gate: the measured language status of this compiler.
 - `lockstep_lint.py` (~4258 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1350 tok, large)
@@ -825,6 +828,8 @@
 - `native_cabi_driver.mind` (~308 tok, medium) — Author: STARGA Inc. Diagnostic stdin wrapper; no C imports or lane admission.
 - `native_cabi_registry.md` (~1708 tok, huge) — Typed native C ABI registry (candidate metadata slice)
 - `native_cabi_registry_smoke.py` (~1987 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
+- `native_canary_gate.py` (~5804 tok, huge) — Native canary gate: the cross-substrate canaries built by the pure-MIND native backend.
+- `_native_canary_selftest.py` (~4282 tok, huge) — Planted self-test of native_canary_gate.py, imported by its --self-test; not a gate by itself.
 - `native_c_call_emit_check.py` (~3683 tok, huge) — Fixed scalar call emission: frozen metadata refusals and real ABI execution.
 - `native_c_call_emit_driver.mind` (~618 tok, large) — Copyright 2026 STARGA Inc.
 - `native_c_call_emit.mind` (~1514 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1127,7 +1132,7 @@
 - `sha256_hash_smoke.py` (~1290 tok, large) — # Copyright 2025 STARGA Inc.
 - `_shadow_scope_lang.py` (~3624 tok, huge) — Mini-language of the nested-binding scoping smoke (self_host_native_shadow_scope_smoke.py).
 - `smoke_wiring_lint.py` (~9182 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~7688 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
+- `SMOKE_WIRING.tsv` (~7877 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smo
 - `source_note_driver.mind` (~349 tok, medium) — Diagnostic entry point, composed with the real compiler and stdlib by the
 - `stdlib_manifest_lint.py` (~9497 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~2226 tok, huge) — Shared reader for the committed std/*.mind manifest.
@@ -1451,6 +1456,10 @@
 - `vpsubd_i32x8.mind` (~70 tok, small) — Copyright 2026 STARGA Inc.
 - `vpsubq_i64x4.mind` (~72 tok, small) — Copyright 2026 STARGA Inc.
 - `ymm_names_inert.mind` (~189 tok, small) — Copyright 2026 STARGA Inc.
+### `examples/mindc_mind/testdata/native_canaries/`
+
+- `NATIVE_CANARIES.tsv` (~1363 tok, large) — # One row per fixture folder of tests/cross_substrate_identity/ (examples/mindc_
+- `SOURCE_NOTES.tsv` (~117 tok, small) — # Conformance programs whose native image carries a MIND note of n_type 2 (nativ
 ### `examples/mindc_mind/testdata/native_cf/`
 
 - `a1_logic_in_cond.mind` (~230 tok, medium) — A1: && / || / ! and a value-if inside if and while conditions, with
@@ -2335,7 +2344,7 @@
 - `check_claims.py` (~9033 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_commit_messages.sh` (~1867 tok, huge) — check_commit_messages.sh <rev-range> — no model or tool credit in commit
 - `check_gate_wiring_preflight.py` (~7817 tok, huge) — Preflight cargo-test parity checks extracted from check_gate_wiring.
-- `check_gate_wiring.py` (~9767 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
+- `check_gate_wiring.py` (~9869 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~813 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
 - `check_no_ai_attribution.sh` (~2217 tok, huge) — Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
 - `check_release_gating.py` (~9316 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
@@ -4267,6 +4276,33 @@
 
 - `draining_native_compiler.rs` (~391 tok, medium) — Host-native compiler fixture for admission-only controls.
 - `mod.rs` (~2596 tok, huge) — Shared harness for the native module-bridge integration controls.
+### `tests/native_canaries/`
+
+- `array-store-branch.main.mind` (~38 tok, tiny) — Native canary driver of fixture array-store-branch (see xsi_native_helpers.mind).
+- `array-store-loop.main.mind` (~37 tok, tiny) — Native canary driver of fixture array-store-loop (see xsi_native_helpers.mind).
+- `collatz.main.mind` (~36 tok, tiny) — Native canary driver of fixture collatz (see xsi_native_helpers.mind).
+- `dot-f32-v-4093.main.mind` (~89 tok, small) — Native canary probe of fixture dot-f32-v-4093: 4x4 zero buffers, enough to read the
+- `dot-i16-4096.main.mind` (~135 tok, small) — Native canary driver of fixture dot-i16-4096 (see xsi_native_helpers.mind).
+- `dot-l1-q16.main.mind` (~135 tok, small) — Native canary driver of fixture dot-l1-q16 (see xsi_native_helpers.mind).
+- `dot-l2-q16.main.mind` (~135 tok, small) — Native canary driver of fixture dot-l2-q16 (see xsi_native_helpers.mind).
+- `galperin-pi.main.mind` (~37 tok, tiny) — Native canary driver of fixture galperin-pi (see xsi_native_helpers.mind).
+- `gemm-i8-64x64x64.main.mind` (~92 tok, small) — Native canary probe of fixture gemm-i8-64x64x64: 4x4 zero buffers, enough to read the
+- `gemm-i8-mt-64x64x64.main.mind` (~93 tok, small) — Native canary probe of fixture gemm-i8-mt-64x64x64: 4x4 zero buffers, enough to read the
+- `gemm-q16-64x64x64.main.mind` (~92 tok, small) — Native canary probe of fixture gemm-q16-64x64x64: 4x4 zero buffers, enough to read the
+- `gemm-q16-fused-64x64x64.main.mind` (~94 tok, small) — Native canary probe of fixture gemm-q16-fused-64x64x64: 4x4 zero buffers, enough to read the
+- `gemv-i16-256x256.main.mind` (~91 tok, small) — Native canary probe of fixture gemv-i16-256x256: 4x4 zero buffers, enough to read the
+- `gemv-q16-256x256.main.mind` (~90 tok, small) — Native canary probe of fixture gemv-q16-256x256: 4x4 zero buffers, enough to read the
+- `grammar-mask.main.mind` (~36 tok, tiny) — Native canary driver of fixture grammar-mask (see xsi_native_helpers.mind).
+- `json-canon-kat.main.mind` (~37 tok, tiny) — Native canary driver of fixture json-canon-kat (see xsi_native_helpers.mind).
+- `lorenz-q16.main.mind` (~69 tok, small) — Native canary driver of fixture lorenz-q16 (see xsi_native_helpers.mind).
+- `matmul-f32-v-64x64.main.mind` (~91 tok, small) — Native canary probe of fixture matmul-f32-v-64x64: 4x4 zero buffers, enough to read the
+- `q16-arith-chain.main.mind` (~47 tok, tiny) — Native canary driver of fixture q16-arith-chain (see xsi_native_helpers.mind).
+- `scalar-cast-conv.main.mind` (~101 tok, small) — Native canary driver of fixture scalar-cast-conv (see xsi_native_helpers.mind).
+- `scalar-cast-conv-narrow.main.mind` (~102 tok, small) — Native canary driver of fixture scalar-cast-conv-narrow (see xsi_native_helpers.mind).
+- `scalar-float-f64.main.mind` (~52 tok, small) — Native canary driver of fixture scalar-float-f64 (see xsi_native_helpers.mind).
+- `struct-handle-roundtrip.main.mind` (~51 tok, small) — Native canary driver of fixture struct-handle-roundtrip (see xsi_native_helpers.mind).
+- `u64-ops.main.mind` (~58 tok, small) — Native canary driver of fixture u64-ops (see xsi_native_helpers.mind).
+- `xsi_native_helpers.mind` (~313 tok, medium) — Helpers of the native canary drivers (examples/mindc_mind/native_canary_gate.py).
 ### `tests/`
 
 - `native_closure_admission.rs` (~4567 tok, huge) — Copyright 2025 STARGA Inc.
