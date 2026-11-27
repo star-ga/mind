@@ -1,0 +1,6 @@
+// Native canary driver of fixture q16-arith-chain (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let r: i64 = q16_arith_chain(98304, 147456, 204800);
+    xsi_out_i64(r);
+    0
+}

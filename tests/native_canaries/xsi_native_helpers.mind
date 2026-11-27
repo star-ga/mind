@@ -1,0 +1,51 @@
+// Helpers of the native canary drivers (examples/mindc_mind/native_canary_gate.py).
+// The gate puts this text after the kernel text and before the driver `main`.
+// xsi_out_i64 writes the canonical output: the 8 little-endian bytes of an i64.
+// xsi_lcg is the 32-bit LCG of the fixtures (seed 0xDEADBEEF, A before B).
+import std.io;
+
+fn xsi_out_i64(v: i64) -> i64 {
+    let b: i64 = __mind_alloc(8);
+    __mind_store_i64(b, v);
+    print_bytes(b, 8)
+}
+
+fn xsi_lcg(st: i64) -> i64 {
+    st * 1664525 + 1013904223
+}
+
+fn xsi_u32(st: i64) -> i64 {
+    (st >> 16) & 4294967295
+}
+
+fn xsi_q16(st: i64) -> i64 {
+    let u: i64 = xsi_u32(st);
+    let mut s: i64 = u;
+    if u >= 2147483648 {
+        s = u - 4294967296;
+    }
+    s >> 12
+}
+
+fn xsi_i16(st: i64) -> i64 {
+    let u: i64 = xsi_u32(st) >> 16;
+    let mut s: i64 = u;
+    if u >= 32768 {
+        s = u - 65536;
+    }
+    s
+}
+
+fn xsi_store_i32(addr: i64, v: i64) -> i64 {
+    __mind_store_i8(addr, v & 255);
+    __mind_store_i8(addr + 1, (v >> 8) & 255);
+    __mind_store_i8(addr + 2, (v >> 16) & 255);
+    __mind_store_i8(addr + 3, (v >> 24) & 255);
+    0
+}
+
+fn xsi_store_i16(addr: i64, v: i64) -> i64 {
+    __mind_store_i8(addr, v & 255);
+    __mind_store_i8(addr + 1, (v >> 8) & 255);
+    0
+}

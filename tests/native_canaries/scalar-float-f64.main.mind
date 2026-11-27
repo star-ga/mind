@@ -1,0 +1,6 @@
+// Native canary driver of fixture scalar-float-f64 (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let r: f64 = scalar_f64_chain(1.5, 2.25, 0.5, 3.125);
+    xsi_out_i64(__mind_f64_to_bits(r));
+    0
+}

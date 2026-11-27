@@ -1,0 +1,8 @@
+// Native canary driver of fixture u64-ops (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let a: u64 = (0 - 9223372036854775803) as u64;
+    let b: u64 = 3 as u64;
+    let r: i64 = u64_ops(a, b);
+    xsi_out_i64(r);
+    0
+}

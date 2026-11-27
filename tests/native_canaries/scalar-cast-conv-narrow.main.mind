@@ -1,0 +1,11 @@
+// Native canary driver of fixture scalar-cast-conv-narrow (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let z: f64 = 0.0;
+    let one: f64 = 1.0;
+    let nan: f64 = z / z;
+    let pinf: f64 = one / z;
+    let ninf: f64 = (z - one) / z;
+    let r: i64 = scalar_cast_conv_narrow(9.7, 1000000000000000000000000000000.0, -1000000000000000000000000000000.0, nan, pinf, ninf);
+    xsi_out_i64(r);
+    0
+}

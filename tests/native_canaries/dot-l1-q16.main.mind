@@ -1,0 +1,21 @@
+// Native canary driver of fixture dot-l1-q16 (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let n: i64 = 65536;
+    let a: i64 = __mind_alloc(n * 4);
+    let b: i64 = __mind_alloc(n * 4);
+    let mut st: i64 = 3735928559;
+    let mut i: i64 = 0;
+    while i < n {
+        st = xsi_lcg(st);
+        xsi_store_i32(a + i * 4, xsi_q16(st));
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        st = xsi_lcg(st);
+        xsi_store_i32(b + i * 4, xsi_q16(st));
+        i = i + 1;
+    }
+    xsi_out_i64(dotl1q(a, b, n));
+    0
+}

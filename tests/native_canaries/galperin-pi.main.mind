@@ -1,0 +1,5 @@
+// Native canary driver of fixture galperin-pi (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    xsi_out_i64(galperin_collisions(5));
+    0
+}

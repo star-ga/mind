@@ -1,0 +1,9 @@
+// Native canary driver of fixture lorenz-q16 (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let s: i64 = __mind_alloc(24);
+    __mind_store_i64(s, 0);
+    __mind_store_i64(s + 8, 65536);
+    __mind_store_i64(s + 16, 0);
+    xsi_out_i64(lorenz_q16(s, 1000));
+    0
+}

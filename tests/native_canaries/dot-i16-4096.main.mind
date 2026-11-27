@@ -1,0 +1,21 @@
+// Native canary driver of fixture dot-i16-4096 (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let n: i64 = 4096;
+    let a: i64 = __mind_alloc(n * 2);
+    let b: i64 = __mind_alloc(n * 2);
+    let mut st: i64 = 3735928559;
+    let mut i: i64 = 0;
+    while i < n {
+        st = xsi_lcg(st);
+        xsi_store_i16(a + i * 2, xsi_i16(st));
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        st = xsi_lcg(st);
+        xsi_store_i16(b + i * 2, xsi_i16(st));
+        i = i + 1;
+    }
+    xsi_out_i64(doti16(a, b, n));
+    0
+}

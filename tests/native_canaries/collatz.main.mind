@@ -1,0 +1,5 @@
+// Native canary driver of fixture collatz (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    xsi_out_i64(collatz_hash(1, 1000));
+    0
+}

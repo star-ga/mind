@@ -1,0 +1,9 @@
+// Native canary probe of fixture gemm-i8-64x64x64: 4x4 zero buffers, enough to read the
+// refusal key. A driver that prints the reference output replaces it before the row is gated.
+fn main() -> i64 {
+    let a: i64 = __mind_alloc(4096);
+    let b: i64 = __mind_alloc(4096);
+    let c: i64 = __mind_alloc(4096);
+    xsi_out_i64(gemmi8(a, b, c, 4, 4, 4));
+    0
+}

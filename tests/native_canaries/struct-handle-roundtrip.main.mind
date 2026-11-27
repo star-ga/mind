@@ -1,0 +1,6 @@
+// Native canary driver of fixture struct-handle-roundtrip (see xsi_native_helpers.mind).
+fn main() -> i64 {
+    let r: i64 = struct_handle_roundtrip(1111, 2222, 3333, 4444);
+    xsi_out_i64(r);
+    0
+}
