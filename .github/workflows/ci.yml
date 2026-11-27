@@ -1373,7 +1373,7 @@ jobs:
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
             python3 scripts/run_gate.py --min-asserted 46 --timeout 1800 examples/mindc_mind/native_canary_gate.py
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
-            python3 scripts/run_gate.py --min-asserted 48 --timeout 1800 examples/mindc_mind/native_canary_gate.py --self-test
+            python3 scripts/run_gate.py --min-asserted 49 --timeout 1800 examples/mindc_mind/native_canary_gate.py --self-test
         working-directory: ${{ github.workspace }}
 
       # No script form of this contract is tracked; it runs as dynamic_elf_is_deterministic_across_directories (tests/native_lane_extern_fixed.rs).

@@ -27,6 +27,8 @@ prints one `BLESS <id> native-x86 <image> <seed>` line each; it never writes an 
 `--self-test` first builds one gated row with the real compiler (so with no compiler it fails and asserts
 nothing), then proves each red verdict on planted rows, stand-in compilers and planted images.
 The compiler is MINDC_BIN, else target/release/mindc of this tree; there is no fallback to a `mindc` on PATH.
+Before any verdict it must build a probe program to an ELF image that exits 7: a file that is not the
+compiler gives one FAIL line, exit 1, and no verdict.
 """
 from __future__ import annotations
 
@@ -369,6 +371,19 @@ def judge_notes(listed: set[str], measured: dict[str, str]) -> list[tuple[bool, 
     return lines
 
 
+PROBE = "fn main() -> i64 {\n    return 7;\n}\n"
+
+
+def probe_error(mindc: pathlib.Path) -> str:
+    """'' when `mindc` builds a probe program to an ELF image that exits 7, else why not (then nothing is asserted)."""
+    with tempfile.TemporaryDirectory(prefix="native-canary-probe-") as tmp:
+        b = build(mindc, PROBE, pathlib.Path(tmp) / "probe")
+        if b["kind"] != "image" or b["image"].read_bytes()[:4] != b"\x7fELF":
+            return f"{mindc} does not build a probe program to a native ELF image ({b.get('key', 'not an ELF file')})"
+        rc, _, _ = _start([str(b["image"])], pathlib.Path(tmp), TIMEOUTS["run"])
+        return "" if rc == 7 else f"the probe image of {mindc} exits {rc}, not 7"
+
+
 def seed_sha(repo: pathlib.Path) -> tuple[str, str]:
     raw = os.environ.get("MINDC_NATIVE_ELF")
     path = pathlib.Path(raw) if raw else repo / FROZEN_SEED
@@ -452,6 +467,10 @@ def main(argv: list[str]) -> int:
         print(f"FAIL  {why}")
         return 1
     if not core_limit_check(_image_runner):
+        return 1
+    why = probe_error(mindc)
+    if why:  # a file that is not the compiler: nothing is asserted
+        print(f"FAIL  no compiler: {why}")
         return 1
     ctx = Ctx(mindc=mindc, repo=ns.repo, fixtures=ns.fixtures, drivers=ns.repo / "tests" / "native_canaries", seed=seed)
     if ns.self_test:

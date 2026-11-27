@@ -235,9 +235,13 @@ def _exit_cases(ctx: g.Ctx, rows: dict, root: pathlib.Path) -> list[tuple[bool, 
                                        seed_sha256="-")]), encoding="utf-8")
     case("a gated row edited to refused", 1, "gated in a committed version and not gated now")
     table.write_text(_table_text([rows[REAL_ROW]]), encoding="utf-8")
-    rc, text = child(env_mindc=str(root / "no-such-mindc"))
-    out.append((rc == 1 and "FAIL  no compiler" in text and "[PASS]" not in text,
-                "gate run exits 1 and asserts nothing: no compiler"))
+    false = root / "fresh-false"
+    shutil.copyfile("/bin/false", false)
+    false.chmod(0o755)
+    for label, handle in (("no compiler", root / "no-such-mindc"), ("a compiler handle that is a copy of /bin/false", false)):
+        rc, text = child(env_mindc=str(handle))
+        out.append((rc == 1 and "FAIL  no compiler" in text and "[PASS]" not in text,
+                    f"gate run exits 1 and asserts nothing: {label}"))
     return out
 
 

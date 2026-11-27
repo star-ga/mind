@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3870 | **Est. tokens:** ~6,293,597
-**Generated:** 2026-11-27 01:18 UTC
+**Files:** 3870 | **Est. tokens:** ~6,293,908
+**Generated:** 2026-11-27 01:35 UTC
 
 ## Token Budget Guide
 
@@ -66,7 +66,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 366 | ~1,113,796 |
+| `examples/mindc_mind/` | 366 | ~1,114,107 |
 | `examples/mindc_mind/testdata/` | 8 | ~26,031 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/compiler_parts/` | 2 | ~4,469 |
@@ -828,8 +828,8 @@
 - `native_cabi_driver.mind` (~308 tok, medium) — Author: STARGA Inc. Diagnostic stdin wrapper; no C imports or lane admission.
 - `native_cabi_registry.md` (~1708 tok, huge) — Typed native C ABI registry (candidate metadata slice)
 - `native_cabi_registry_smoke.py` (~1987 tok, huge) — Author: STARGA Inc. Diagnostic host orchestration for the MIND MCABI001 registry.
-- `native_canary_gate.py` (~5804 tok, huge) — Native canary gate: the cross-substrate canaries built by the pure-MIND native backend.
-- `_native_canary_selftest.py` (~4282 tok, huge) — Planted self-test of native_canary_gate.py, imported by its --self-test; not a gate by itself.
+- `native_canary_gate.py` (~6061 tok, huge) — Native canary gate: the cross-substrate canaries built by the pure-MIND native backend.
+- `_native_canary_selftest.py` (~4336 tok, huge) — Planted self-test of native_canary_gate.py, imported by its --self-test; not a gate by itself.
 - `native_c_call_emit_check.py` (~3683 tok, huge) — Fixed scalar call emission: frozen metadata refusals and real ABI execution.
 - `native_c_call_emit_driver.mind` (~618 tok, large) — Copyright 2026 STARGA Inc.
 - `native_c_call_emit.mind` (~1514 tok, huge) — Copyright 2026 STARGA Inc.
