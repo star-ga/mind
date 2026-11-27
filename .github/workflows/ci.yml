@@ -1362,6 +1362,20 @@ jobs:
           MINDC_BIN=${{ github.workspace }}/target/release/mindc MIND_BIN=${{ github.workspace }}/target/release/mind MIND_BENCH_REQUIRE=1 python3 scripts/run_gate.py --min-asserted 64 --timeout 3000 examples/mindc_mind/native_lane_op_differential_smoke.py --compiler examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf
         working-directory: ${{ github.workspace }}
 
+      - name: Native canary gate (native_canary_gate.py)
+        if: ${{ !cancelled() }}
+        # The cross-substrate fixtures built by `mindc build --backend native`: 7 gated rows (3 clean builds give
+        # one image equal to the table, 16 runs give one output equal to the committed avx2 = neon reference) and
+        # 29 refused rows with their refusal key, then the source-note ratchet over tests/lang_conformance.
+        # Floor 46 = the verdicts of this command (measured). The self-test floor is its case count; its first
+        # case builds a gated row with this compiler, so with no compiler both forms fail and assert nothing.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 46 --timeout 1800 examples/mindc_mind/native_canary_gate.py
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 48 --timeout 1800 examples/mindc_mind/native_canary_gate.py --self-test
+        working-directory: ${{ github.workspace }}
+
       # No script form of this contract is tracked; it runs as dynamic_elf_is_deterministic_across_directories (tests/native_lane_extern_fixed.rs).
       # - name: Native fixed-arity extern determinism gate (native_extern_fixed_smoke.py)
       #   # Builds the closed-table extern corpus twice in two directories under

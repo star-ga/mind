@@ -31,6 +31,7 @@ _diagnostic_project	none	helper	Owned project fixtures and unscoped-import refus
 _exec_retry	none	helper	Retry of a busy exec (ETXTBSY) plus its three controls, imported by self_host_native_shadow_scope_smoke; not a gate — running it directly is a no-op.
 _frozen_native_oracle	none	helper	Manifest parsing and frozen artifact integrity checks imported by self_host_native_elf_smoke.
 _mindfuzz_twin_emit	none	helper	Twin-emitter half of mindfuzz_self_host (source emitter, self-host and reference note oracles, runtime exit check, minimizer, batch builder); not a gate — running it directly is a no-op.
+_native_canary_selftest	none	helper	Planted self-test of native_canary_gate.py (planted references and table cells, stand-in compilers, planted images with a source note, child runs of the gate), imported by its --self-test; not a gate — running it directly is a no-op.
 _process_starts	none	helper	The start rule of the harness (process starts in tracked Python and shell files, and the table of starts that feed no compiler), imported by stdlib_manifest_lint.py; split out of _selfhost_sources, which keeps start_child; not a gate — running it directly is a no-op.
 _selfhost_alloc_rows	none	helper	Rows of the allocator-class smoke (the default-profile programs with no fixture file and the planted changes of its --mutant mode), imported by self_host_native_alloc_bounded_smoke.py; not a gate — running it directly is a no-op.
 _selfhost_identity	none	helper	Two-compiler identity (--identity-vs), its partitions, and the dispatch of the compiler-only modes of native_lane_value_shapes_smoke.py, imported by it; split out of _selfhost_sources; not a gate — running it directly is a no-op.
@@ -59,6 +60,7 @@ gap_corpus_smoke	ci	gate
 general_float_netverify	ci	gate	
 lang_conformance_gate	ci	gate	Language conformance corpus (tests/lang_conformance): check, native build and run of every row against the verdict the specification demands; green only when the differences equal KNOWN_GAPS.tsv exactly; also refuses a stale docs/lang-conformance-status.md. Requires MINDC_BIN. --self-test is the planted red control.
 lang_conformance_cd_gate	ci	gate	Check-driver column of the language conformance corpus: the pure-MIND check driver on every row against the expected check verdict and code; green only when the differences equal CD_KNOWN_GAPS.tsv exactly; also refuses a stale docs/lang-conformance-cd-status.md. Requires MINDC_SO. --self-test is the planted red control.
+native_canary_gate	ci	gate	Cross-substrate fixtures built by the native backend: each gated row gives one image over 3 clean builds (equal to the table), one output over 16 runs, and that output equals the committed avx2 = neon reference (never blessed from the native side); each refused row keeps its refusal key; the gated set never shrinks over the table history; the source-note list of the conformance corpus may only fall. --self-test first builds a gated row with the compiler.
 lockstep_lint	ci	gate	
 match_struct_smoke	ci	gate	
 method_callee_smoke	ci	gate	

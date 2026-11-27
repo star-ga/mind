@@ -1,0 +1,9 @@
+# Conformance programs whose native image carries a MIND note of n_type 2 (native_canary_gate.py).
+# The count may never grow: the gate compares it with every committed version of this file.
+id	class	key
+expressions/compound_logic	source-note	n_type 2
+expressions/logic_and	source-note	n_type 2
+expressions/logic_or	source-note	n_type 2
+expressions/negzero_eq	source-note	n_type 2
+expressions/prec_logical	source-note	n_type 2
+items/fn_noreturn	source-note	n_type 2

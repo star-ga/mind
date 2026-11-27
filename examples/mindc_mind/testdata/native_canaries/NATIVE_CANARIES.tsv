@@ -1,0 +1,42 @@
+# One row per fixture folder of tests/cross_substrate_identity/ (examples/mindc_mind/native_canary_gate.py).
+# source: a file, or path#NAME for a string constant of a Rust file; fns: * (the whole text) or the kernel functions.
+# driver: a file of tests/native_canaries/ (after the helpers), or - (the source has its own main).
+# gated: image_sha256 is the native image for the seed seed_sha256; the output reference is reference_hashes.toml.
+# refused: key is the measured refusal key; the row leaves the refused set only by becoming gated.
+id	status	source	fns	driver	key	image_sha256	seed_sha256
+array-store-branch	refused	tests/cross_substrate_identity.rs#ARRAY_STORE_BRANCH_SRC	*	array-store-branch.main.mind	lane.source.index_store	-	-
+array-store-loop	refused	tests/cross_substrate_identity.rs#ARRAY_STORE_SRC	*	array-store-loop.main.mind	lane.source.index_store	-	-
+bimap-phf	refused	examples/bimap_currency/main.mind	*	-	lane.source.function_contract	-	-
+collatz	gated	examples/collatz.mind	*	collatz.main.mind	-	a081da44c444d8f71545e5cae74ef8d3b7d749d1d6465d6ad80f26fa39cafd17	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+dot-f32-v-4093	refused	tests/cross_substrate_identity.rs#SRC	dotf32	dot-f32-v-4093.main.mind	lane.call.unknown	-	-
+dot-i16-4096	refused	tests/cross_substrate_identity.rs#SRC	doti16	dot-i16-4096.main.mind	lane.call.unknown	-	-
+dot-l1-q16	refused	tests/cross_substrate_identity.rs#SRC	dotl1q	dot-l1-q16.main.mind	lane.call.unknown	-	-
+dot-l2-q16	refused	tests/cross_substrate_identity.rs#SRC	dotq	dot-l2-q16.main.mind	lane.call.unknown	-	-
+galperin-pi	gated	examples/galperin_pi.mind	*	galperin-pi.main.mind	-	48a493677cf844b1cfa816c384b241b4693d67b122365522c75be30c8cb459c6	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+gemm-i8-64x64x64	refused	tests/cross_substrate_identity.rs#SRC	gemmi8	gemm-i8-64x64x64.main.mind	lane.call.unknown	-	-
+gemm-i8-mt-64x64x64	refused	tests/cross_substrate_identity.rs#SRC	gemmi8mt	gemm-i8-mt-64x64x64.main.mind	lane.call.unknown	-	-
+gemm-i8-vnni-64x64x64	refused	tests/cross_substrate_identity.rs#SRC	gemmi8	gemm-i8-64x64x64.main.mind	lane.call.unknown	-	-
+gemm-q16-64x64x64	refused	tests/cross_substrate_identity.rs#SRC	gemmq_row,gemmq	gemm-q16-64x64x64.main.mind	lane.call.unknown	-	-
+gemm-q16-fused-64x64x64	refused	tests/cross_substrate_identity.rs#SRC	gemmqmm	gemm-q16-fused-64x64x64.main.mind	lane.call.unknown	-	-
+gemv-i16-256x256	refused	tests/cross_substrate_identity.rs#SRC	mmi16	gemv-i16-256x256.main.mind	lane.call.unknown	-	-
+gemv-q16-256x256	refused	tests/cross_substrate_identity.rs#SRC	mmq	gemv-q16-256x256.main.mind	lane.call.unknown	-	-
+grammar-mask	gated	examples/grammar_mask/main.mind	*	grammar-mask.main.mind	-	35e07e039fa0bbc5eb506fb6d56307bc5f09a967cb027578e2a79bfd0a786c30	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+json-canon-kat	refused	tests/common/json_canon_kat.rs#DRIVER_SRC	*	json-canon-kat.main.mind	error[backend-native]: `p.mind` imports `std.json_canon`, which ships with mindc	-	-
+lorenz-q16	gated	examples/lorenz_q16.mind	*	lorenz-q16.main.mind	-	60e6511f660702e630c49c79c364b501b02a48d2ce8cab8e9bc7dbdb7e27011a	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+matmul-f32-v-64x64	refused	tests/cross_substrate_identity.rs#SRC	mmf32	matmul-f32-v-64x64.main.mind	lane.call.unknown	-	-
+q16-arith-chain	gated	tests/cross_substrate_identity.rs#SRC	q16_mul,q16_arith_chain	q16-arith-chain.main.mind	-	93c47afe80a7d5f9c654ccf5872c4cefe5e53c1bdb95a5329eb2479dfabdd9d4	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+quant-american-binomial	refused	examples/quant/american_binomial/main.mind	*	-	lane.call.unknown	-	-
+quant-barrier-analytic	refused	examples/quant/barrier_analytic/main.mind	*	-	lane.call.unknown	-	-
+quant-black-scholes	refused	examples/quant/black_scholes/main.mind	*	-	lane.call.unknown	-	-
+quant-bond-curve	refused	examples/quant/bond_curve/main.mind	*	-	lane.type.branch_mismatch	-	-
+quant-crr-binomial	refused	examples/quant/crr_binomial/main.mind	*	-	lane.call.unknown	-	-
+quant-greeks-higher-order	refused	examples/quant/greeks_higher_order/main.mind	*	-	lane.call.unknown	-	-
+quant-implied-vol	refused	examples/quant/implied_vol/main.mind	*	-	lane.call.unknown	-	-
+quant-implied-vol-surface	refused	examples/quant/implied_vol_surface/main.mind	*	-	lane.call.unknown	-	-
+quant-monte-carlo-gbm	refused	examples/quant/monte_carlo_gbm/main.mind	*	-	lane.call.unknown	-	-
+quant-portfolio-risk	refused	examples/quant/portfolio_risk/main.mind	*	-	lane.call.unknown	-	-
+scalar-cast-conv	refused	tests/cross_substrate_identity.rs#SRC	scalar_cast_conv	scalar-cast-conv.main.mind	lane.source.cast	-	-
+scalar-cast-conv-narrow	refused	tests/cross_substrate_identity.rs#SRC	scalar_cast_conv_narrow	scalar-cast-conv-narrow.main.mind	lane.source.cast	-	-
+scalar-float-f64	gated	tests/cross_substrate_identity.rs#SRC	scalar_f64_chain	scalar-float-f64.main.mind	-	2b048d7e8293730666440332905850913fc58b6c77c0f058248cd53e5810cc25	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+struct-handle-roundtrip	gated	tests/cross_substrate_identity.rs#SRC	struct_handle_roundtrip	struct-handle-roundtrip.main.mind	-	2bc4a186e5a2dcca4b91cb8a5663c6eca3fb76a636ddd7946d8c32d884d1c2f4	225ce53c7ccdcdc837124066c7e13e17a1d5d1e029217313436bddd3f8e01ac4
+u64-ops	refused	tests/cross_substrate_identity.rs#SRC	u64_ops	u64-ops.main.mind	lane.type.int_width	-	-
