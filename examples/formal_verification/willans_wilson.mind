@@ -1,0 +1,108 @@
+// Public MIND educational example: exact bounded Willans n-th prime.
+// Independent trial-division comparisons; no floating point or RH authority.
+// Author: STARGA Inc.
+// Exact bounded Wilson primality and Willans n-th prime identity.
+// Experimental finite arithmetic only; NOT a general proof kernel.
+// No floating-point cosine, no factorial-sized intermediates.
+// This module intentionally refuses unsupported domains.
+fn wilson_prime(n: i64) -> i64 {
+    if n < 2 || n > 256 { return -1; }
+    let mut fact_mod: i64 = 1;
+    let mut k: i64 = 2;
+    while k < n {
+        // fact_mod < n <= 256 and k <= 255, so product <= 65280.
+        fact_mod = (fact_mod * k) % n;
+        k = k + 1;
+    }
+    if fact_mod == n - 1 { return 1; }
+    return 0;
+}
+
+fn willans_nth_prime(n: i64) -> i64 {
+    if n < 1 || n > 8 { return -1; }
+    let mut top: i64 = 1;
+    let mut shift: i64 = 0;
+    while shift < n {
+        top = top * 2;
+        shift = shift + 1;
+    }
+    let mut count_with_one: i64 = 0;
+    let mut answer: i64 = 1;
+    let mut j: i64 = 1;
+    while j <= top {
+        // The cosine-square/floor term in the published Willans
+        // identity equals 1 for j=1 or a prime j, else 0.
+        if j == 1 || wilson_prime(j) == 1 {
+            count_with_one = count_with_one + 1;
+        }
+        // floor((n/(1+pi(j)))^(1/n)) equals 1 iff 1+pi(j)<=n.
+        if count_with_one <= n {
+            answer = answer + 1;
+        }
+        j = j + 1;
+    }
+    return answer;
+}
+
+// Pure-MIND self-test with independent trial-division prime oracle.
+// The generator (Wilson factorial mod n) and the reference (trial division)
+// share no primality algorithm. Both are FINITE diagnostics, never RH authority.
+fn ref_prime(n: i64) -> i64 {
+    if n < 2 { return 0; }
+    let mut d: i64 = 2;
+    while d <= n / d {
+        if n % d == 0 { return 0; }
+        d = d + 1;
+    }
+    return 1;
+}
+fn reference_nth(n: i64) -> i64 {
+    if n < 1 || n > 8 { return -1; }
+    let mut count: i64 = 0;
+    let mut j: i64 = 2;
+    while j <= 256 {
+        if ref_prime(j) == 1 {
+            count = count + 1;
+            if count == n { return j; }
+        }
+        j = j + 1;
+    }
+    return -2;
+}
+fn emit(s: String) -> i64 {
+    let mut pos: i64 = 0;
+    while pos < s.len {
+        let got: i64 = __mind_write(1, s.addr + pos, s.len - pos, 0 - 1);
+        if got <= 0 { return 0; }
+        pos = pos + got;
+    }
+    return 1;
+}
+fn main() -> i64 {
+    // Freeze a separate oracle sanity witness BEFORE comparing algorithms.
+    if ref_prime(1) != 0 || ref_prime(2) != 1 ||
+       ref_prime(4) != 0 || ref_prime(97) != 1 ||
+       reference_nth(1) != 2 || reference_nth(8) != 19 {
+        return 2;
+    }
+    if wilson_prime(0) != -1 || wilson_prime(1) != -1 ||
+       wilson_prime(257) != -1 ||
+       willans_nth_prime(0) != -1 || willans_nth_prime(9) != -1 {
+        return 2;
+    }
+    let mut j: i64 = 2;
+    let mut count: i64 = 0;
+    while j <= 256 {
+        if wilson_prime(j) != ref_prime(j) { return 1; }
+        count = count + 1;
+        j = j + 1;
+    }
+    if count != 255 { return 2; }
+    let mut n: i64 = 1;
+    while n <= 8 {
+        if willans_nth_prime(n) != reference_nth(n) { return 1; }
+        n = n + 1;
+    }
+    if emit("EXAMPLE=WILLANS_WILSON\nSCOPE=FINITE_EXAMPLE\n") != 1 { return 3; }
+    return 0;
+}

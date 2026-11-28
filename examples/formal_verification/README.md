@@ -1,6 +1,6 @@
 # Bounded formal-mathematics examples
 
-Seven small MIND programs. Each one computes exact integer or rational values
+Eight small MIND programs. Each one computes exact integer or rational values
 over a fixed, finite input range and checks them against known values inside
 the program. Each program is a bounded, finite computation: a check over the
 inputs it lists, not a proof of a statement over all integers. No program uses
@@ -18,6 +18,7 @@ a nonzero status at the first check that fails.
 | [harmonic_exact.mind](harmonic_exact.mind) | The harmonic number `H(n)` for `n` in 0..10 as a reduced fraction of two `i64` values. | `H(5)=137/60`, `H(8)=761/280`, `H(10)=7381/2520` |
 | [farey_finite.mind](farey_finite.mind) | The Farey sequence `F(n)` for `n` in 1..8, by the next-term recurrence. At each step it checks that neighbors `a/b < c/d` have `bc - ad = 1` and that `c/d` is in lowest terms. | `|F(1)|=2`, `|F(2)|=3`, `|F(3)|=5`, `|F(5)|=11`, `|F(8)|=23` |
 | [goldbach_bounded.mind](goldbach_bounded.mind) | For each even number from 4 to 100, the smallest prime `p` such that `n - p` is also prime. | 49 even numbers each have a pair; the smallest `p` is 2 for 4, 5 for 28 and 3 for 100. This does not prove Goldbach's conjecture. |
+| [willans_wilson.mind](willans_wilson.mind) | Willans' exact n-th-prime identity using Wilson factorial modulo n, with no cosines or floating point. Compares all Wilson prime flags for 2..256 against independent trial division and the first eight n-th primes. | `p_1..p_8=2,3,5,7,11,13,17,19`; 255 Wilson comparisons; invalid-domain controls. Not an efficient prime generator or RH proof. |
 
 Each program except `implication_truth_table.mind` writes two lines when all
 of its checks pass, for example:
@@ -37,8 +38,8 @@ MINDC=/path/to/mindc bash examples/formal_verification/run_all.sh
 
 The script runs `mindc check` on each program, builds it with the native
 backend into a temporary directory, runs it, and requires exit status 0, the
-expected output and an empty stderr. It prints `EXAMPLES_PASSED=7` and exits 0
-when all seven programs pass, and exits nonzero at the first failure.
+expected output and an empty stderr. It prints `EXAMPLES_PASSED=8` and exits 0
+when all eight programs pass, and exits nonzero at the first failure.
 
 To build and run one program by hand:
 
